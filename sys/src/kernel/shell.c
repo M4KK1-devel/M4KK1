@@ -122,26 +122,23 @@ static void cmd_ps(int ac, char **av)
         mkrn_console_write_dec(cur->pid);
         col(C_WHT);
         mkrn_console_write("  ");
-        switch (cur->state) {
-            case 0:
-                col(C_GRN);
+        {
+            uint64_t st = cur->state_tags;
+            if (st & M4K_SCHED_RUNNING) {
+                col(C_CYN);
                 mkrn_console_write("RUN ");
-                break;
-            case 1:
+            } else if (st & M4K_SCHED_READY) {
                 col(C_YLW);
                 mkrn_console_write("RDY ");
-                break;
-            case 2:
-                col(C_GRY);
-                mkrn_console_write("BLK ");
-                break;
-            case 3:
+            } else if (st & M4K_ZOMBIE) {
                 col(C_RED);
                 mkrn_console_write("TER ");
-                break;
-            default:
+            } else if (st & M4K_SCHED_SLEEPING) {
+                col(C_GRY);
+                mkrn_console_write("BLK ");
+            } else {
                 mkrn_console_write("??? ");
-                break;
+            }
         }
         col(C_WHT);
         mkrn_console_write(" ");

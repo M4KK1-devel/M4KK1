@@ -28,8 +28,8 @@ typedef struct {
 
 static pipe_buffer_t pipe_buffers[MAX_PIPES];
 
-static mkrn_file_ent_t file_table[M4K_VFS_MAX_FILES];
-static mkrn_file_desc_t fd_table[M4K_VFS_MAX_FDS];
+mkrn_file_ent_t file_table[M4K_VFS_MAX_FILES];
+mkrn_file_desc_t fd_table[M4K_VFS_MAX_FDS];
 static bool bVfsInitialized = false;
 static mkrn_mount_ent_t mount_table[M4K_VFS_MAX_MOUNTS];
 static int mount_count;
@@ -469,6 +469,14 @@ mkrn_vfs_open(const char *pPathname, int flags)
     if (!pPathname || !bVfsInitialized)
         return -1;
 
+    /* Route /sys/proc/ to ProcFS */
+    if (pPathname[0] == '/' && strncmp(pPathname, "/sys/proc", 9) == 0) {
+        int fd;
+        if (mkrn_procfs_open(pPathname, flags, &fd) == 0)
+            return fd;
+        return -1;
+    }
+
     if (root_yafs_tree != 0) {
         bool bIsRoot =
             (pPathname[0] == '/' && pPathname[1] == '\0');
@@ -547,6 +555,10 @@ mkrn_vfs_read(int fd, void *pBuf, size_t count)
     if (fd < 0 || fd >= M4K_VFS_MAX_FDS || !bVfsInitialized)
         return -1;
 
+    /* Route ProcFS reads */
+    if (mkrn_procfs_is_procfs_fd(fd))
+        return mkrn_procfs_read(fd, pBuf, (uint32_t)count);
+
     if (fd_table[fd].file == &file_table[0]
         && fd_table[fd].yafs_inode == 0)
     {
@@ -609,6 +621,10 @@ mkrn_vfs_write(int fd, const void *pBuf, size_t count)
 {
     if (fd < 0 || fd >= M4K_VFS_MAX_FDS || !bVfsInitialized)
         return -1;
+
+    /* Route ProcFS writes */
+    if (mkrn_procfs_is_procfs_fd(fd))
+        return mkrn_procfs_write(fd, pBuf, (uint32_t)count);
 
     if (fd_table[fd].file == &file_table[0]
         && fd_table[fd].yafs_inode == 0)
@@ -689,6 +705,8 @@ mkrn_vfs_close(int fd)
         return -1;
     if (!fd_table[fd].in_use)
         return -1;
+    if (mkrn_procfs_is_procfs_fd(fd))
+        mkrn_procfs_close(fd);
     mkrn_memset(&fd_table[fd], 0, sizeof(mkrn_file_desc_t));
     return 0;
 }
@@ -823,6 +841,10 @@ mkrn_vfs_getdents(int fd, struct mkrn_vfs_dirent *pBuf,
 {
     if (fd < 0 || fd >= M4K_VFS_MAX_FDS || !bVfsInitialized)
         return -1;
+
+    /* Route ProcFS getdents */
+    if (mkrn_procfs_is_procfs_fd(fd))
+        return mkrn_procfs_getdents(fd, pBuf, count);
 
     if (root_yafs_tree != 0) {
         uint64_t u64DirInode = fd_table[fd].yafs_inode;

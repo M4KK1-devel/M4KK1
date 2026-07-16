@@ -171,12 +171,8 @@ struct mkrn_statfs {
 
 #define M4K_PROCBUF_MAX 64
 
-struct mkrn_procinfo {
-    u32 pid;
-    u32 ppid;
-    u32 state;
-    char name[32];
-};
+/* struct mkrn_procinfo is now defined in process.h */
+#include <process.h>
 
 /**
  * mkrn_syscall_init - Initialize the syscall subsystem

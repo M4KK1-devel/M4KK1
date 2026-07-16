@@ -23,6 +23,22 @@ mkrn_memcpy(void *pDest, const void *pSrc, size_t n)
 }
 
 void *
+mkrn_memmove(void *pDest, const void *pSrc, size_t n)
+{
+    uint8_t *pD = (uint8_t *)pDest;
+    const uint8_t *pS = (const uint8_t *)pSrc;
+
+    if (pD < pS) {
+        for (size_t i = 0; i < n; i++)
+            pD[i] = pS[i];
+    } else if (pD > pS) {
+        for (size_t i = n; i > 0; i--)
+            pD[i - 1] = pS[i - 1];
+    }
+    return pDest;
+}
+
+void *
 mkrn_memset(void *pS, int c, size_t n)
 {
     uint8_t *p = (uint8_t *)pS;
@@ -83,6 +99,31 @@ mkrn_strcmp(const char *pS1, const char *pS2)
     }
 
     return (int)(*pS1 - *pS2);
+}
+
+char *
+mkrn_strcat(char *pDest, const char *pSrc)
+{
+    char *pD = pDest;
+    while (*pD) pD++;
+    while (*pSrc) *pD++ = *pSrc++;
+    *pD = '\0';
+    return pDest;
+}
+
+int
+mkrn_strncmp(const char *pS1, const char *pS2, size_t n)
+{
+    while (n > 0 && *pS1 && *pS2 && (*pS1 == *pS2)) {
+        pS1++;
+        pS2++;
+        n--;
+    }
+
+    if (n == 0)
+        return 0;
+
+    return (int)(unsigned char)*pS1 - (int)(unsigned char)*pS2;
 }
 
 char *

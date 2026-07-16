@@ -28,6 +28,9 @@ $CC $CFLAGS -c sys/src/kernel/ldso.c -o $OBJDIR/ldso.o
 $CC $CFLAGS -c sys/src/kernel/syscall.c -o $OBJDIR/syscall.o
 $CC $CFLAGS -c sys/src/kernel/syscall_m4k.c -o $OBJDIR/syscall_m4k.o
 $CC $CFLAGS -c sys/src/kernel/m4k_syscall.c -o $OBJDIR/m4k_syscall.o 2>/dev/null || true
+$CC $CFLAGS -c sys/src/kernel/signal.c -o $OBJDIR/signal.o
+$CC $CFLAGS -c sys/src/kernel/namespace.c -o $OBJDIR/namespace.o
+$CC $CFLAGS -c sys/src/fs/procfs.c -o $OBJDIR/procfs.o
 
 echo "=== Compiling kernel shell ==="
 $CC $CFLAGS -c sys/src/kernel/shell.c -o $OBJDIR/shell.o
@@ -106,6 +109,9 @@ $LD $LDFLAGS -o m4kk1.krn \
     $OBJDIR/yafs_test.o \
     $OBJDIR/yafs_vfs.o \
     $OBJDIR/vfs.o \
+    $OBJDIR/signal.o \
+    $OBJDIR/namespace.o \
+    $OBJDIR/procfs.o \
     $OBJDIR/string.o \
     $OBJDIR/debug.o
 

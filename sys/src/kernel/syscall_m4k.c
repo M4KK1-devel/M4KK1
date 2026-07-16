@@ -1,19 +1,10 @@
-/*
- * M4KK1 4P1 - syscall_m4k.c
- * Description: M4K ABI system call implementation —
- *              handler dispatch, permission checks,
- *              syscall table management.
- *
- * Copyright (c) 2026 Yaku Makki
- * SPDX-License-Identifier: 4P1-Custom
- */
-
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
 #include <console.h>
 #include <kernel.h>
 #include <process.h>
+#include <signal.h>
 #include <m4k_syscall.h>
 #include <idt.h>
 #include <ldso.h>
@@ -47,26 +38,22 @@ static void m4k_syscall_table_init(void)
 {
     mkrn_memset(m4k_syscall_table, 0, sizeof(m4k_syscall_table));
     mkrn_memset(&m4k_syscall_stats, 0, sizeof(m4k_syscall_stats));
-
     M4K_LOG_INFO("M4KK1 system call table initialized");
 }
 
 static bool m4k_syscall_check_permission(uint32_t syscall_num, uint32_t current_permission)
 {
-    if (syscall_num >= 256 || !m4k_syscall_table[syscall_num].registered) {
+    if (syscall_num >= 256 || !m4k_syscall_table[syscall_num].registered)
         return false;
-    }
-
-    if (current_permission == M4K_PERMISSION_KERNEL) {
+    if (current_permission == M4K_PERMISSION_KERNEL)
         return true;
-    }
-
     return (current_permission & m4k_syscall_table[syscall_num].permission_mask) != 0;
 }
 
 void m4k_syscall_handler(void)
 {
     uint32_t syscall_num;
+    uint32_t idx;
     uint32_t result = 0x4D000000;
     uint32_t saved_registers[6];
 
@@ -74,22 +61,11 @@ void m4k_syscall_handler(void)
 
     m4k_syscall_stats.total_calls++;
 
-    M4K_LOG_DEBUG("M4KK1 system call invoked: 0x");
-    mkrn_console_write_hex(syscall_num);
-    mkrn_console_write("\n");
+    /* Use low byte as table index (M4K_SYS_xxx = 0x4D0000LL) */
+    idx = syscall_num & 0xFF;
 
-    if (syscall_num >= 256) {
-        M4K_LOG_WARN("Invalid M4KK1 system call number: 0x");
-        mkrn_console_write_hex(syscall_num);
-        mkrn_console_write("\n");
-        m4k_syscall_stats.failed_calls++;
-        goto m4k_syscall_return;
-    }
-
-    if (!m4k_syscall_table[syscall_num].registered) {
-        M4K_LOG_WARN("Unregistered M4KK1 system call: 0x");
-        mkrn_console_write_hex(syscall_num);
-        mkrn_console_write("\n");
+    if (idx >= 256 || !m4k_syscall_table[idx].registered) {
+        M4K_LOG_WARN("Unregistered M4KK1 system call");
         m4k_syscall_stats.failed_calls++;
         goto m4k_syscall_return;
     }
@@ -98,17 +74,7 @@ void m4k_syscall_handler(void)
     uint32_t current_permission = (current_process != NULL) ?
         M4K_PERMISSION_USER : M4K_PERMISSION_KERNEL;
 
-    if (!m4k_syscall_check_permission(syscall_num, current_permission)) {
-        M4K_LOG_WARN("Permission denied for M4KK1 system call 0x");
-        mkrn_console_write_hex(syscall_num);
-        mkrn_console_write(" (process: ");
-        if (current_process) {
-            mkrn_console_write_hex(current_process->pid);
-        } else {
-            mkrn_console_write("kernel");
-        }
-        mkrn_console_write(")\n");
-
+    if (!m4k_syscall_check_permission(idx, current_permission)) {
         m4k_syscall_stats.permission_denied++;
         result = 0x4D000001;
         goto m4k_syscall_return;
@@ -124,7 +90,7 @@ void m4k_syscall_handler(void)
         : : "r"(saved_registers) : "memory"
     );
 
-    m4k_syscall_handler_t handler = m4k_syscall_table[syscall_num].handler;
+    m4k_syscall_handler_t handler = m4k_syscall_table[idx].handler;
     if (handler != NULL) {
         uint32_t arg1, arg2, arg3, arg4, arg5;
         __asm__ volatile (
@@ -137,23 +103,13 @@ void m4k_syscall_handler(void)
         );
 
         result = handler(arg1, arg2, arg3, arg4, arg5);
-
-        M4K_LOG_DEBUG("M4KK1 system call 0x");
-        mkrn_console_write_hex(syscall_num);
-        mkrn_console_write(" returned: 0x");
-        mkrn_console_write_hex(result);
-        mkrn_console_write("\n");
     } else {
-        M4K_LOG_ERROR("M4KK1 system call handler is NULL for 0x");
-        mkrn_console_write_hex(syscall_num);
-        mkrn_console_write("\n");
         m4k_syscall_stats.failed_calls++;
         result = 0x4D000002;
     }
 
 m4k_syscall_return:
     __asm__ volatile ("movl %0, %%eax" : : "r"(result));
-
     __asm__ volatile (
         "movl 0(%0), %%ebx\n"
         "movl 4(%0), %%ecx\n"
@@ -168,49 +124,34 @@ m4k_syscall_return:
 void m4k_syscall_init(void)
 {
     m4k_syscall_table_init();
-
     mkrn_idt_register_handler(0x4D, m4k_syscall_handler);
-
     m4k_syscall_init_handlers();
-
     M4K_LOG_INFO("M4KK1 system call system initialized");
 }
 
 void m4k_syscall_register(uint32_t num, void *handler)
 {
-    if (num >= 256) {
-        M4K_LOG_ERROR("Invalid M4KK1 system call number for registration: 0x");
-        mkrn_console_write_hex(num);
-        mkrn_console_write("\n");
+    uint32_t idx = num & 0xFF;
+    if (idx >= 256) {
+        M4K_LOG_ERROR("Invalid M4KK1 system call number for registration");
         return;
     }
-
     if (handler == NULL) {
-        M4K_LOG_ERROR("Cannot register NULL handler for M4KK1 system call 0x");
-        mkrn_console_write_hex(num);
-        mkrn_console_write("\n");
+        M4K_LOG_ERROR("Cannot register NULL handler for M4KK1 system call");
         return;
     }
-
-    m4k_syscall_table[num].handler = (m4k_syscall_handler_t)handler;
-    m4k_syscall_table[num].registered = true;
-
-    m4k_syscall_table[num].permission_mask = M4K_PERMISSION_USER;
-
-    m4k_syscall_table[num].name = m4k_syscall_get_name(num);
-
-    M4K_LOG_INFO("M4KK1 system call 0x");
-    mkrn_console_write_hex(num);
-    mkrn_console_write(" registered: ");
-    mkrn_console_write(m4k_syscall_table[num].name ? m4k_syscall_table[num].name : "Unknown");
-    mkrn_console_write("\n");
+    m4k_syscall_table[idx].handler = (m4k_syscall_handler_t)handler;
+    m4k_syscall_table[idx].registered = true;
+    m4k_syscall_table[idx].permission_mask = M4K_PERMISSION_USER;
+    m4k_syscall_table[idx].name = m4k_syscall_get_name(num);
+    M4K_LOG_INFO("M4KK1 system call registered");
 }
 
 const char *m4k_syscall_get_name(uint32_t num)
 {
     switch (num) {
         case M4K_SYS_EXIT: return "m4k_exit";
-        case M4K_SYS_FORK: return "m4k_fork";
+        case M4K_SYS_SPAWN: return "m4k_spawn";
         case M4K_SYS_READ: return "m4k_read";
         case M4K_SYS_WRITE: return "m4k_write";
         case M4K_SYS_OPEN: return "m4k_open";
@@ -223,65 +164,121 @@ const char *m4k_syscall_get_name(uint32_t num)
         case M4K_SYS_SELECT: return "m4k_select";
         case M4K_SYS_POLL: return "m4k_poll";
         case M4K_SYS_EPOLL: return "m4k_epoll";
+        case M4K_SYS_FORK_ST: return "m4k_fork_status";
+        case M4K_SYS_WAIT: return "m4k_waitpid";
+        case M4K_SYS_KILL: return "m4k_kill";
+        case M4K_SYS_GETPPID: return "m4k_getppid";
+        case M4K_SYS_SETNS: return "m4k_setns";
+        case M4K_SYS_GETPID: return "m4k_getpid";
+        case M4K_SYS_GETPROCS: return "m4k_getprocs";
         default: return "unknown";
     }
 }
 
+/* ── Handler implementations ── */
+
 static uint32_t m4k_syscall_exit_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
                                       uint32_t arg4, uint32_t arg5)
 {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     uint32_t status = arg1;
-
-    M4K_LOG_INFO("M4KK1 process exit called with status: ");
-    mkrn_console_write_dec(status);
-    mkrn_console_write("\n");
-
-    mkrn_process_exit();
-
+    mkrn_process_exit((int)status);
     return 0;
 }
 
 static uint32_t m4k_syscall_read_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
                                       uint32_t arg4, uint32_t arg5)
 {
+    (void)arg4; (void)arg5;
     uint32_t fd = arg1;
     void *buf = (void *)arg2;
     uint32_t count = arg3;
 
-    M4K_LOG_DEBUG("M4KK1 Read system call: fd=");
-    mkrn_console_write_dec(fd);
-    mkrn_console_write(", count=");
-    mkrn_console_write_dec(count);
-    mkrn_console_write("\n");
-
+    if (fd == 0 && buf) {
+        /* Stub: read from console */
+        return 0;
+    }
     return 0x4D000003;
 }
 
 static uint32_t m4k_syscall_write_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
                                        uint32_t arg4, uint32_t arg5)
 {
+    (void)arg4; (void)arg5;
     uint32_t fd = arg1;
     const void *buf = (const void *)arg2;
     uint32_t count = arg3;
 
-    M4K_LOG_DEBUG("M4KK1 Write system call: fd=");
-    mkrn_console_write_dec(fd);
-    mkrn_console_write(", count=");
-    mkrn_console_write_dec(count);
-    mkrn_console_write("\n");
-
     if (fd == 1 && buf) {
-        char *str = (char *)buf;
-        uint32_t i;
-
-        for (i = 0; i < count && str[i]; i++) {
+        const char *str = (const char *)buf;
+        for (uint32_t i = 0; i < count && str[i]; i++)
             mkrn_console_put_char(str[i]);
-        }
-
-        return i;
+        return count;
     }
-
     return 0x4D000003;
+}
+
+static uint32_t m4k_syscall_fork_st_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                         uint32_t arg4, uint32_t arg5)
+{
+    (void)arg3; (void)arg4; (void)arg5;
+    uint64_t inherit_mask = ((uint64_t)arg2 << 32) | arg1;
+    uint32_t flags = arg2;
+    /* Note: properly the 64-bit mask should come in two 32-bit args */
+    return (uint32_t)mkrn_fork_status(inherit_mask, flags);
+}
+
+static uint32_t m4k_syscall_wait_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                      uint32_t arg4, uint32_t arg5)
+{
+    (void)arg4; (void)arg5;
+    pid_t pid = (pid_t)arg1;
+    int *status = (int *)arg2;
+    int options = (int)arg3;
+    return (uint32_t)mkrn_waitpid(pid, status, options);
+}
+
+static uint32_t m4k_syscall_kill_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                      uint32_t arg4, uint32_t arg5)
+{
+    (void)arg3; (void)arg4; (void)arg5;
+    pid_t pid = (pid_t)arg1;
+    int sig = (int)arg2;
+    return (uint32_t)mkrn_kill(pid, sig);
+}
+
+static uint32_t m4k_syscall_getppid_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                         uint32_t arg4, uint32_t arg5)
+{
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return mkrn_process_get_ppid();
+}
+
+static uint32_t m4k_syscall_getpid_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                        uint32_t arg4, uint32_t arg5)
+{
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return mkrn_process_get_pid();
+}
+
+static uint32_t m4k_syscall_setns_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                       uint32_t arg4, uint32_t arg5)
+{
+    (void)arg4; (void)arg5;
+    const char *path = (const char *)arg1;
+    const char *target = (const char *)arg2;
+    uint32_t flags = arg3;
+    return (uint32_t)mkrn_setns(path, target, flags);
+}
+
+static uint32_t m4k_syscall_getprocs_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                          uint32_t arg4, uint32_t arg5)
+{
+    (void)arg3; (void)arg4; (void)arg5;
+    struct mkrn_procinfo *buf = (struct mkrn_procinfo *)arg1;
+    uint32_t max = arg2;
+    if (!buf || max == 0) return (uint32_t)-1;
+    return (uint32_t)mkrn_process_fill_info(buf, max);
 }
 
 void m4k_syscall_init_handlers(void)
@@ -289,6 +286,13 @@ void m4k_syscall_init_handlers(void)
     m4k_syscall_register(M4K_SYS_EXIT, m4k_syscall_exit_impl);
     m4k_syscall_register(M4K_SYS_READ, m4k_syscall_read_impl);
     m4k_syscall_register(M4K_SYS_WRITE, m4k_syscall_write_impl);
+    m4k_syscall_register(M4K_SYS_FORK_ST, m4k_syscall_fork_st_impl);
+    m4k_syscall_register(M4K_SYS_WAIT, m4k_syscall_wait_impl);
+    m4k_syscall_register(M4K_SYS_KILL, m4k_syscall_kill_impl);
+    m4k_syscall_register(M4K_SYS_GETPPID, m4k_syscall_getppid_impl);
+    m4k_syscall_register(M4K_SYS_GETPID, m4k_syscall_getpid_impl);
+    m4k_syscall_register(M4K_SYS_SETNS, m4k_syscall_setns_impl);
+    m4k_syscall_register(M4K_SYS_GETPROCS, m4k_syscall_getprocs_impl);
 
     M4K_LOG_INFO("M4KK1 system call handlers registered");
 }

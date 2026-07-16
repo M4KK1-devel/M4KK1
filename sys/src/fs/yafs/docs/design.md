@@ -1,5 +1,7 @@
 # YAFS — Yet Another File System (also YAku File System)
 
+> **Implementation Status**: This document describes the full YAFS design. The current implementation (`sys/src/fs/yafs/`) covers Phase 1 — basic B+Tree (insert/lookup/delete/walk), superblock, free-space tracking, block I/O, and FHS directory tree creation. Encryption, snapshots, rollback, parallel reads, and the `yafsctl` tool have not been implemented.
+
 YAFS is a **log-structured, copy-on-write (CoW)** file system designed for the M4KK1
 kernel. Its design is inspired by Btrfs and ZFS but aims for an implementation
 simple enough to build from scratch in a kernel-development environment.

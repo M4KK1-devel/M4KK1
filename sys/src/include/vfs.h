@@ -279,3 +279,13 @@ int mkrn_vfs_get_mount_info(mkrn_mount_ent_t *buf, int max);
  * Return: Inode number, 0 if not found
  */
 u64 mkrn_yafs_lookup_path(u64 root_tree, const char *path);
+
+/* ── ProcFS hooks ── */
+
+int mkrn_procfs_open(const char *path, int flags, int *out_fd);
+int mkrn_procfs_close(int fd);
+int mkrn_procfs_read(int fd, void *buf, uint32_t count);
+int mkrn_procfs_write(int fd, const void *buf, uint32_t count);
+int mkrn_procfs_getdents(int fd, struct mkrn_vfs_dirent *buf, uint32_t max);
+int mkrn_procfs_is_procfs_fd(int fd);
+void mkrn_procfs_init(void);

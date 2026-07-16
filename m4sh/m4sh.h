@@ -92,6 +92,10 @@ static int musr_strchr(const char *s, int c)
 #define S_UMOUNT    0x88
 #define S_MOUNTINFO 0x89
 #define S_EXIT      0x01
+#define S_FORK      0x02
+#define S_WAITPID   0x07
+#define S_GETPPID   0x0A
+#define S_KILL      0x64
 #define O_RDONLY    0x00000001
 #define O_CREAT     0x00000100
 #define O_WRONLY    0x00000002
@@ -224,6 +228,23 @@ static int musr_sc_uname(struct utsname *u)
 static int musr_sc_getpid(void)
 {
     return (int)musr_sc0(S_GETPID);
+}
+static int musr_sc_getppid(void)
+{
+    return (int)musr_sc0(S_GETPPID);
+}
+static int musr_sc_fork(void)
+{
+    return (int)musr_sc0(S_FORK);
+}
+static int musr_sc_waitpid(int pid, int *status, int opts)
+{
+    return (int)musr_sc3(S_WAITPID, (uint32_t)pid,
+                         (uint32_t)status, (uint32_t)opts);
+}
+static int musr_sc_kill(int pid, int sig)
+{
+    return (int)musr_sc2(S_KILL, (uint32_t)pid, (uint32_t)sig);
 }
 static int musr_sc_time(void)
 {

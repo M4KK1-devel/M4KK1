@@ -543,7 +543,7 @@ static u32 mkrn_syscall_exit_impl(u32 uArg1, u32 uArg2,
     mkrn_console_write_dec(uStatus);
     mkrn_console_write("\n");
 
-    mkrn_process_exit();
+    mkrn_process_exit((int)uArg1);
 
     return 0;
 }
@@ -551,11 +551,16 @@ static u32 mkrn_syscall_exit_impl(u32 uArg1, u32 uArg2,
 static u32 mkrn_syscall_fork_impl(u32 uArg1, u32 uArg2,
     u32 uArg3, u32 uArg4, u32 uArg5)
 {
-    (void)uArg1; (void)uArg2; (void)uArg3;
-    (void)uArg4; (void)uArg5;
-    M4K_LOG_INFO(
-        "Fork system call invoked - not implemented\n");
-    return M4K_SC_ERROR;
+    /* fork_status(inherit_mask=0, flags=RFPROC|RFFDG|RFNAMEG|RFENVG) */
+    uint64_t inherit_mask = ((uint64_t)uArg2 << 32) | uArg1;
+    uint32_t flags = uArg3;
+    if (flags == 0) {
+        /* Legacy fork: inherit nothing special, copy everything */
+        flags = RFPROC | RFFDG | RFNAMEG | RFENVG;
+    }
+    uint32_t ret = (uint32_t)mkrn_fork_status(inherit_mask, flags);
+    if ((int32_t)ret < 0) return M4K_SC_ERROR;
+    return ret;
 }
 
 static u32 mkrn_syscall_getpid_impl(u32 uArg1, u32 uArg2,
@@ -704,17 +709,23 @@ static u32 mkrn_syscall_execve_impl(u32 uArg1, u32 uArg2,
 static u32 mkrn_syscall_waitpid_impl(u32 uArg1, u32 uArg2,
     u32 uArg3, u32 uArg4, u32 uArg5)
 {
-    u32 uPid = uArg1;
-    void *pStatus = (void *)uArg2;
-    u32 uOptions = uArg3;
+    (void)uArg4; (void)uArg5;
+    pid_t pid = (pid_t)uArg1;
+    int *status = (int *)uArg2;
+    int options = (int)uArg3;
 
-    M4K_LOG_DEBUG("Waitpid system call: pid=");
-    mkrn_console_write_dec(uPid);
-    mkrn_console_write(", options=");
-    mkrn_console_write_hex(uOptions);
-    mkrn_console_write("\n");
+    pid_t ret = mkrn_waitpid(pid, status, options);
+    if (ret < 0) return M4K_SC_ERROR;
+    return (u32)ret;
+}
 
-    return M4K_SC_ERROR;
+static u32 mkrn_syscall_kill_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg3; (void)uArg4; (void)uArg5;
+    pid_t pid = (pid_t)uArg1;
+    int sig = (int)uArg2;
+    return (mkrn_kill(pid, sig) == 0) ? M4K_SC_SUCCESS : M4K_SC_ERROR;
 }
 
 static u32 mkrn_syscall_brk_impl(u32 uArg1, u32 uArg2,
@@ -1112,6 +1123,8 @@ static void mkrn_syscall_init_handlers(void)
         M4K_SC_SYSINFO, mkrn_syscall_sysinfo_impl);
     mkrn_syscall_register(
         M4K_SC_GETPROCS, mkrn_syscall_getprocs_impl);
+    mkrn_syscall_register(
+        M4K_SC_KILL, mkrn_syscall_kill_impl);
     mkrn_syscall_register(
         M4K_SC_STATFS, mkrn_syscall_statfs_impl);
     mkrn_syscall_register(

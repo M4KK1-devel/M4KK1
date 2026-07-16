@@ -1,5 +1,7 @@
 # Swap2 - 改进版交换系统设计文档
 
+> **Implementation Status**: This document describes a planned future design. No Swap2 code has been implemented yet. The current kernel uses a simple physical page allocator only (`sys/src/mm/memory.c`).
+
 ## 概述
 
 Swap2是传统swap系统的革命性改进，旨在提供更高的性能、更强的可靠性和更多的功能特性。它不仅仅是一个简单的交换空间管理系统，还集成了压缩、日志、快照等多种先进技术。

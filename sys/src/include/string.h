@@ -18,7 +18,8 @@
 #define strlen  mkrn_strlen
 #define strcpy  mkrn_strcpy
 #define strncpy mkrn_strncpy
-#define strcmp  mkrn_strcmp
+#define strcmp   mkrn_strcmp
+#define strncmp  mkrn_strncmp
 #define strdup  mkrn_strdup
 
 /**

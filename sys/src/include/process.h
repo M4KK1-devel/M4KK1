@@ -1,130 +1,137 @@
-/*
- * M4KK1 4P1 - process.h
- * Description: Process management and scheduler declarations.
- *
- * Copyright (c) 2026 Yaku Makki
- * SPDX-License-Identifier: 4P1-Custom
- */
-
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
+#include <namespace.h>
+#include <signal.h>
 
-#define M4K_PROC_RUNNING     0
-#define M4K_PROC_READY       1
-#define M4K_PROC_BLOCKED     2
-#define M4K_PROC_TERMINATED  3
+typedef int32_t pid_t;
+
+/* ── State Tag Bitmask (replaces old M4K_PROC_RUNNING/READY/BLOCKED/TERMINATED) ── */
+
+/* Scheduling class (exactly one SHALL be set for a live process) */
+#define M4K_SCHED_READY     0x00000001ULL
+#define M4K_SCHED_RUNNING   0x00000002ULL
+#define M4K_SCHED_SLEEPING  0x00000004ULL
+
+/* Waiting reasons (zero or more, informational) */
+#define M4K_WAIT_FS         0x00000100ULL
+#define M4K_WAIT_PIPE       0x00000200ULL
+#define M4K_WAIT_TIMER      0x00000400ULL
+#define M4K_WAIT_IPC        0x00000800ULL
+#define M4K_WAIT_CHILD      0x00001000ULL
+
+/* Debug / control */
+#define M4K_TRACED          0x00010000ULL
+#define M4K_STOPPED         0x00020000ULL
+
+/* Lifecycle */
+#define M4K_ZOMBIE          0x01000000ULL
+#define M4K_IDLE            0x02000000ULL
+
+/* Convenience masks */
+#define M4K_STATE_SCHED_MASK   0x00000007ULL
+#define M4K_STATE_WAIT_MASK    0x00001F00ULL
+#define M4K_STATE_CTRL_MASK    0x00030000ULL
+#define M4K_STATE_LIFE_MASK    0x03000000ULL
+#define M4K_STATE_RESERVED     0xFC0000F8ULL
+
+/* ── Fork/Clone Flags ── */
+
+#define RFPROC      0x0001
+#define RFFDG       0x0002
+#define RFNAMEG     0x0004
+#define RFENVG      0x0008
+#define RFMEM       0x0010
+#define RFNOWAIT    0x0020
+
+/* Spawn flags */
+#define M4K_SPAWN_NEW_NS      0x0001
+#define M4K_SPAWN_NEW_FD      0x0002
+#define M4K_SPAWN_NEW_ENV     0x0004
+#define M4K_SPAWN_NOWAIT      0x0008
+#define M4K_SPAWN_TRACE       0x0010
+
+/* ── Priorities ── */
 
 #define M4K_PRIO_HIGH   0
 #define M4K_PRIO_NORMAL 1
 #define M4K_PRIO_LOW    2
 
+/* ── Process structure (4P1 Process Model) ── */
+
 typedef struct mkrn_process {
-    u32 pid;
-    u32 ppid;
-    u32 state;
-    u32 priority;
-    u32 thread_esp;
-    u32 sleep_ticks;
+    uint32_t pid;
+    uint32_t ppid;
+    uint32_t uid;
+    uint32_t priority;
+    uint32_t thread_esp;
+    uint32_t sleep_ticks;
+    uint32_t exit_status;
+    uint32_t pending_signals;
+    uint32_t zombie_children;
+
+    uint64_t state_tags;
+
     char name[32];
     char cwd[256];
+    char **argv;
+    char **envp;
+
+    m4k_namespace_t ns;
+
     struct mkrn_process *next;
+    struct mkrn_process *children;
+    struct mkrn_process *sibling;
+    struct mkrn_process *wait_next;
 } mkrn_process_t;
 
 typedef struct {
     mkrn_process_t *current;
-    mkrn_process_t *ready_queue;
-    u32 process_count;
-    u32 next_pid;
+    uint32_t process_count;
+    uint32_t next_pid;
 } mkrn_process_ctrl_t;
 
-struct procinfo;
+/* ── procinfo for getprocs syscall ── */
 
-/**
- * mkrn_process_init - Initialize process subsystem
- *
- * Return: void
- */
+struct mkrn_procinfo {
+    uint32_t pid;
+    uint32_t ppid;
+    uint64_t state;
+    char name[32];
+};
+
+/* Backward compat alias for syscall.c */
+#define procinfo mkrn_procinfo
+
+/* ── Public API ── */
+
 void mkrn_process_init(void);
-
-/**
- * mkrn_execve - Execute a new process from ELF data
- * @elf_data: Pointer to ELF binary data
- * @size: Size of ELF data
- *
- * Return: 0 on success, -1 on failure
- */
-int mkrn_execve(u8 *elf_data, u32 size);
-
-/**
- * mkrn_sched_start - Start the scheduler
- *
- * Return: void
- */
+int mkrn_execve(uint8_t *elf_data, uint32_t size);
 void mkrn_sched_start(void);
-
-/**
- * mkrn_process_yield - Yield the current process
- *
- * Return: void
- */
 void mkrn_process_yield(void);
-
-/**
- * mkrn_process_switch_first - Switch to first process
- *
- * Return: void
- */
 void mkrn_process_switch_first(void);
 
-/**
- * mkrn_process_exit - Terminate current process
- *
- * Return: void
- */
-void mkrn_process_exit(void);
-
-/**
- * mkrn_process_block - Block current process
- *
- * Return: void
- */
+void mkrn_process_exit(int status);
 void mkrn_process_block(void);
-
-/**
- * mkrn_process_wakeup - Wake up a blocked process
- * @process: Process to wake up
- *
- * Return: void
- */
 void mkrn_process_wakeup(mkrn_process_t *process);
 
-/**
- * mkrn_process_get_current - Get current process
- *
- * Return: Pointer to current process
- */
 mkrn_process_t *mkrn_process_get_current(void);
+uint32_t mkrn_process_get_pid(void);
+uint32_t mkrn_process_get_ppid(void);
+uint32_t mkrn_process_get_count(void);
 
-/**
- * mkrn_process_get_pid - Get current process PID
- *
- * Return: Current PID
- */
-u32 mkrn_process_get_pid(void);
+int mkrn_process_fill_info(struct mkrn_procinfo *buf, uint32_t max);
 
-/**
- * mkrn_process_get_count - Get number of processes
- *
- * Return: Process count
- */
-u32 mkrn_process_get_count(void);
+/* 4P1 new APIs */
 
-/**
- * mkrn_process_fill_info - Fill process info buffer
- * @buf: Buffer to fill
- * @max: Maximum number of entries
- *
- * Return: Number of entries filled
- */
-int mkrn_process_fill_info(struct procinfo *buf, u32 max);
+pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags);
+pid_t mkrn_spawn(const char *path, char *const argv[], char *const envp[], uint32_t flags);
+pid_t mkrn_waitpid(pid_t pid, int *status, int options);
+int mkrn_kill(pid_t pid, int sig);
+int mkrn_setns(const char *path, const char *target, uint32_t flags);
+/* Internal helpers */
+mkrn_process_t *mkrn_process_find(pid_t pid);
+int mkrn_process_enqueue_ready(mkrn_process_t *p);
+void mkrn_process_reparent_children(mkrn_process_t *parent);
+int mkrn_process_has_pending_signal(mkrn_process_t *p);

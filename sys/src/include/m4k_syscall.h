@@ -1,18 +1,10 @@
-/*
- * M4KK1 4P1 - m4k_syscall.h
- * Description: M4KK1 system call ABI interface definitions.
- *
- * Copyright (c) 2026 Yaku Makki
- * SPDX-License-Identifier: 4P1-Custom
- */
-
 #pragma once
 
 #include <stdint.h>
 
 /* System call numbers use 0x4D0xxxx range (4D = M4) */
 #define M4K_SYS_EXIT        0x4D000001
-#define M4K_SYS_FORK        0x4D000002
+#define M4K_SYS_SPAWN       0x4D000002  /* replaces old FORK */
 #define M4K_SYS_READ        0x4D000003
 #define M4K_SYS_WRITE       0x4D000004
 #define M4K_SYS_OPEN        0x4D000005
@@ -26,12 +18,21 @@
 #define M4K_SYS_POLL        0x4D00000D
 #define M4K_SYS_EPOLL       0x4D00000E
 
-/* Process cloning flags */
-#define M4K_CLONE_VM        0x00000100  /* Share virtual memory */
-#define M4K_CLONE_FS        0x00000200  /* Share filesystem info */
-#define M4K_CLONE_FILES     0x00000400  /* Share file descriptor table */
-#define M4K_CLONE_SIGHAND   0x00000800  /* Share signal handlers */
-#define M4K_CLONE_THREAD    0x00010000  /* Create thread */
+/* 4P1 v1.1 Process Management syscalls */
+#define M4K_SYS_FORK_ST     0x4D000010  /* fork_status */
+#define M4K_SYS_WAIT        0x4D000011  /* m4k_waitpid */
+#define M4K_SYS_KILL        0x4D000012  /* m4k_kill */
+#define M4K_SYS_GETPPID     0x4D000013  /* m4k_getppid */
+#define M4K_SYS_SETNS       0x4D000014  /* m4k_setns */
+#define M4K_SYS_GETPID      0x4D000015
+#define M4K_SYS_GETPROCS    0x4D000016
+
+/* Process cloning flags (backward compat) */
+#define M4K_CLONE_VM        0x00000100
+#define M4K_CLONE_FS        0x00000200
+#define M4K_CLONE_FILES     0x00000400
+#define M4K_CLONE_SIGHAND   0x00000800
+#define M4K_CLONE_THREAD    0x00010000
 
 /* File flags */
 #define M4K_O_RDONLY        0x00000001

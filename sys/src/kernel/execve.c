@@ -129,7 +129,7 @@ int mkrn_execve(u8 *elf_data, u32 size)
     *--sp = 0;
 
     init->thread_esp = (u32)sp;
-    init->state = M4K_PROC_READY;
+    init->state_tags = M4K_SCHED_READY;
 
     M4K_LOG_INFO("execve: init process ready, stack at 0x");
     mkrn_console_write_hex((u32)stack);
@@ -153,7 +153,7 @@ static void setup_idle_stack(mkrn_process_t *proc)
     *--sp = 0;
 
     proc->thread_esp = (u32)sp;
-    proc->state = M4K_PROC_READY;
+    proc->state_tags = M4K_SCHED_READY;
 }
 
 mkrn_process_t *mkrn_execve_create_idle(void)

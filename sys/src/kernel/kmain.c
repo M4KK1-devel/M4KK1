@@ -127,6 +127,7 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
     mkrn_syscall_init();
     m4k_syscall_init();
     mkrn_vfs_init();
+    mkrn_procfs_init();
     mkrn_console_write(
         "   Standard and M4KK1 system calls initialized.\n");
 
