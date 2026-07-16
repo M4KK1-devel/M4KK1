@@ -1,0 +1,28 @@
+# Build artifacts
+build_objs/
+*.o
+*.a
+*.elf
+*.bin
+*.img
+*.iso
+*.krn
+
+# Generated files
+init/init_elf.c
+init/init.elf
+init/init.o
+m4sh/m4sh.elf
+m4sh/**/*.o
+pkg/**/*.o
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+.DS_Store

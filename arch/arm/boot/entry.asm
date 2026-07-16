@@ -1,10 +1,13 @@
-; M4KK1 ARM Architecture - Boot Entry Point
-; 独特的M4KK1 ARM引导实现
+; M4KK1 4P1 - entry.asm
+; Description: Boot entry point for ARM.
+;
+; Copyright (c) 2026 Yaku Makki
+; SPDX-License-Identifier: 4P1-Custom
 
 .section ".text.boot"
 
 .global _start
-.extern kmain
+.extern mkrn_main
 .extern m4k_stack_top
 
 ; M4KK1独特的ARM引导标识
@@ -39,7 +42,7 @@ _start:
     ldr r1, =M4K_BOOT_MAGIC ; M4KK1魔数
 
     ; 调用M4KK1内核主函数
-    bl kmain
+    bl mkrn_main
 
     ; M4KK1独特的死循环
 .halt:

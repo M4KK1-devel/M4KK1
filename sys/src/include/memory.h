@@ -1,184 +1,257 @@
-/**
- * M4KK1 Memory Management Header
- * 内存管理函数定义
+/*
+ * M4KK1 4P1 - memory.h
+ * Description: Memory management function declarations.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
-#ifndef __MEMORY_H__
-#define __MEMORY_H__
+#pragma once
 
 #include <stdint.h>
 #include <stddef.h>
 #include "multiboot.h"
 
-/**
- * 内存区域类型
- */
-#define MEMORY_TYPE_FREE        1
-#define MEMORY_TYPE_RESERVED    2
-#define MEMORY_TYPE_ACPI        3
-#define MEMORY_TYPE_NVS         4
-#define MEMORY_TYPE_BAD         5
+#define M4K_MEM_TYPE_FREE        1
+#define M4K_MEM_TYPE_RESERVED    2
+#define M4K_MEM_TYPE_ACPI        3
+#define M4K_MEM_TYPE_NVS         4
+#define M4K_MEM_TYPE_BAD         5
+
+typedef struct mkrn_mem_region {
+    u32 start;
+    u32 size;
+    u32 type;
+    struct mkrn_mem_region *next;
+} mkrn_mem_region_t;
+
+typedef struct mkrn_mem_block {
+    u32 start;
+    u32 size;
+    u8 used;
+    struct mkrn_mem_block *next;
+} mkrn_mem_block_t;
+
+#define M4K_PAGE_SIZE 4096
+#define M4K_PAGE_MASK (~(M4K_PAGE_SIZE - 1))
+
+#define M4K_PAGE_PRESENT    0x001
+#define M4K_PAGE_READWRITE  0x002
+#define M4K_PAGE_USER       0x004
+#define M4K_PAGE_ACCESSED   0x020
+#define M4K_PAGE_DIRTY      0x040
+
+#define M4K_KERNEL_BASE     0xC0000000
+#define M4K_KERNEL_HEAP     0xC0400000
+#define M4K_KERNEL_STACK    0xC07FE000
 
 /**
- * 内存区域结构
+ * mkrn_memory_init - Initialize memory management
+ * @mb_info: Multiboot information structure
+ *
+ * Return: void
  */
-typedef struct memory_region {
-    uint32_t start;
-    uint32_t size;
-    uint32_t type;
-    struct memory_region *next;
-} memory_region_t;
+void mkrn_memory_init(multiboot_info_t *mb_info);
 
 /**
- * 内存块结构
+ * mkrn_memory_get_total - Get total memory size
+ *
+ * Return: Total memory in bytes
  */
-typedef struct memory_block {
-    uint32_t start;
-    uint32_t size;
-    uint8_t used;
-    struct memory_block *next;
-} memory_block_t;
+u32 mkrn_memory_get_total(void);
 
 /**
- * 页面大小
+ * mkrn_memory_get_free - Get free memory size
+ *
+ * Return: Free memory in bytes
  */
-#define PAGE_SIZE 4096
-#define PAGE_MASK (~(PAGE_SIZE - 1))
+u32 mkrn_memory_get_free(void);
 
 /**
- * 页面标志
+ * mkrn_memory_get_used - Get used memory size
+ *
+ * Return: Used memory in bytes
  */
-#define PAGE_PRESENT    0x001
-#define PAGE_READWRITE  0x002
-#define PAGE_USER       0x004
-#define PAGE_ACCESSED   0x020
-#define PAGE_DIRTY      0x040
+u32 mkrn_memory_get_used(void);
 
 /**
- * 内核内存布局
+ * mkrn_memory_alloc - Allocate memory
+ * @size: Allocation size
+ *
+ * Return: Pointer to allocated memory, NULL on failure
  */
-#define KERNEL_BASE     0xC0000000
-#define KERNEL_HEAP     0xC0400000
-#define KERNEL_STACK    0xC07FE000
+void *mkrn_memory_alloc(size_t size);
 
 /**
- * 初始化内存管理
+ * mkrn_memory_free - Free allocated memory
+ * @ptr: Pointer to free
+ *
+ * Return: void
  */
-void memory_init(multiboot_info_t *mb_info);
+void mkrn_memory_free(void *ptr);
 
 /**
- * 获取总内存大小（字节）
+ * mkrn_memory_alloc_page - Allocate page-aligned memory
+ * @pages: Number of pages
+ *
+ * Return: Pointer to allocated memory, NULL on failure
  */
-uint32_t memory_get_total(void);
+void *mkrn_memory_alloc_page(size_t pages);
 
 /**
- * 获取可用内存大小（字节）
+ * mkrn_memory_free_page - Free page-aligned memory
+ * @ptr: Pointer to free
+ * @pages: Number of pages
+ *
+ * Return: void
  */
-uint32_t memory_get_free(void);
+void mkrn_memory_free_page(void *ptr, size_t pages);
 
 /**
- * 获取已用内存大小（字节）
+ * mkrn_alloc - Allocate kernel memory
+ * @size: Allocation size
+ *
+ * Return: Pointer to allocated memory, NULL on failure
  */
-uint32_t memory_get_used(void);
+void *mkrn_alloc(size_t size);
 
 /**
- * 分配内存
+ * mkrn_free - Free kernel memory
+ * @ptr: Pointer to free
+ *
+ * Return: void
  */
-void *memory_alloc(size_t size);
+void mkrn_free(void *ptr);
 
 /**
- * 释放内存
+ * mkrn_memcpy - Copy memory block
+ * @dest: Destination
+ * @src: Source
+ * @n: Number of bytes
+ *
+ * Return: Pointer to destination
  */
-void memory_free(void *ptr);
+void *mkrn_memcpy(void *dest, const void *src, size_t n);
 
 /**
- * 分配页面对齐的内存
+ * mkrn_memset - Set memory block
+ * @s: Memory pointer
+ * @c: Value to set
+ * @n: Number of bytes
+ *
+ * Return: Pointer to memory
  */
-void *memory_alloc_page(size_t pages);
+void *mkrn_memset(void *s, int c, size_t n);
 
 /**
- * 释放页面对齐的内存
+ * mkrn_memcmp - Compare memory blocks
+ * @s1: First block
+ * @s2: Second block
+ * @n: Number of bytes
+ *
+ * Return: 0 if equal, difference otherwise
  */
-void memory_free_page(void *ptr, size_t pages);
+int mkrn_memcmp(const void *s1, const void *s2, size_t n);
 
 /**
- * 分配内核内存
+ * mkrn_memmove - Move memory block
+ * @dest: Destination
+ * @src: Source
+ * @n: Number of bytes
+ *
+ * Return: Pointer to destination
  */
-void *kmalloc(size_t size);
+void *mkrn_memmove(void *dest, const void *src, size_t n);
 
 /**
- * 释放内核内存
+ * mkrn_memchr - Find character in memory
+ * @s: Memory pointer
+ * @c: Character to find
+ * @n: Number of bytes
+ *
+ * Return: Pointer to character, NULL if not found
  */
-void kfree(void *ptr);
+void *mkrn_memchr(const void *s, int c, size_t n);
 
 /**
- * 复制内存
+ * mkrn_strlen - Get string length
+ * @s: Null-terminated string
+ *
+ * Return: Length of string
  */
-void *memcpy(void *dest, const void *src, size_t n);
+size_t mkrn_strlen(const char *s);
 
 /**
- * 设置内存
+ * mkrn_strcpy - Copy string
+ * @dest: Destination buffer
+ * @src: Source string
+ *
+ * Return: Pointer to destination
  */
-void *memset(void *s, int c, size_t n);
+char *mkrn_strcpy(char *dest, const char *src);
 
 /**
- * 比较内存
+ * mkrn_strcat - Concatenate strings
+ * @dest: Destination buffer
+ * @src: Source string
+ *
+ * Return: Pointer to destination
  */
-int memcmp(const void *s1, const void *s2, size_t n);
+char *mkrn_strcat(char *dest, const char *src);
 
 /**
- * 移动内存
+ * mkrn_strcmp - Compare strings
+ * @s1: First string
+ * @s2: Second string
+ *
+ * Return: 0 if equal, difference otherwise
  */
-void *memmove(void *dest, const void *src, size_t n);
+int mkrn_strcmp(const char *s1, const char *s2);
 
 /**
- * 查找字符
+ * mkrn_strncpy - Copy string with length limit
+ * @dest: Destination buffer
+ * @src: Source string
+ * @n: Maximum length
+ *
+ * Return: Pointer to destination
  */
-void *memchr(const void *s, int c, size_t n);
+char *mkrn_strncpy(char *dest, const char *src, size_t n);
 
 /**
- * 获取字符串长度
+ * mkrn_strncat - Concatenate strings with length limit
+ * @dest: Destination buffer
+ * @src: Source string
+ * @n: Maximum length
+ *
+ * Return: Pointer to destination
  */
-size_t strlen(const char *s);
+char *mkrn_strncat(char *dest, const char *src, size_t n);
 
 /**
- * 复制字符串
+ * mkrn_strncmp - Compare strings with length limit
+ * @s1: First string
+ * @s2: Second string
+ * @n: Maximum length
+ *
+ * Return: 0 if equal, difference otherwise
  */
-char *strcpy(char *dest, const char *src);
+int mkrn_strncmp(const char *s1, const char *s2, size_t n);
 
 /**
- * 连接字符串
+ * mkrn_strchr - Find character in string
+ * @s: String to search
+ * @c: Character to find
+ *
+ * Return: Pointer to character, NULL if not found
  */
-char *strcat(char *dest, const char *src);
+char *mkrn_strchr(const char *s, int c);
 
 /**
- * 比较字符串
+ * mkrn_strstr - Find substring in string
+ * @haystack: String to search
+ * @needle: Substring to find
+ *
+ * Return: Pointer to substring, NULL if not found
  */
-int strcmp(const char *s1, const char *s2);
-
-/**
- * 复制内存块
- */
-char *strncpy(char *dest, const char *src, size_t n);
-
-/**
- * 连接字符串（限制长度）
- */
-char *strncat(char *dest, const char *src, size_t n);
-
-/**
- * 比较字符串（限制长度）
- */
-int strncmp(const char *s1, const char *s2, size_t n);
-
-/**
- * 查找字符在字符串中的位置
- */
-char *strchr(const char *s, int c);
-
-/**
- * 查找字符串在另一个字符串中的位置
- */
-char *strstr(const char *haystack, const char *needle);
-
-#endif /* __MEMORY_H__ */
+char *mkrn_strstr(const char *haystack, const char *needle);

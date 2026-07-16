@@ -1,134 +1,183 @@
-/**
- * M4KK1 Network Protocol Stack
- * 网络协议栈接口定义
+/*
+ * M4KK1 4P1 - net.h
+ * Description: Network protocol stack interface declarations.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
-#ifndef _M4K_NET_H
-#define _M4K_NET_H
+#pragma once
 
 #include <stdint.h>
 #include <stdbool.h>
 
-/* 网络设备类型 */
-#define NET_DEV_ETHERNET    1
-#define NET_DEV_WIFI        2
-#define NET_DEV_LOOPBACK    3
+/* Network device types */
+#define M4K_NET_DEV_ETHERNET    1
+#define M4K_NET_DEV_WIFI        2
+#define M4K_NET_DEV_LOOPBACK    3
 
-/* IP协议类型 */
-#define IP_PROTOCOL_ICMP    1
-#define IP_PROTOCOL_TCP     6
-#define IP_PROTOCOL_UDP     17
+/* IP protocol types */
+#define M4K_IP_PROTOCOL_ICMP    1
+#define M4K_IP_PROTOCOL_TCP     6
+#define M4K_IP_PROTOCOL_UDP     17
 
-/* 以太网协议类型 */
-#define ETH_TYPE_IP         0x0800
-#define ETH_TYPE_ARP        0x0806
-#define ETH_TYPE_IPV6       0x86DD
+/* Ethernet protocol types */
+#define M4K_ETH_TYPE_IP         0x0800
+#define M4K_ETH_TYPE_ARP        0x0806
+#define M4K_ETH_TYPE_IPV6       0x86DD
 
-/* 以太网头部 */
 typedef struct {
-    uint8_t dst_mac[6];
-    uint8_t src_mac[6];
-    uint16_t type;
-} __attribute__((packed)) eth_header_t;
+    u8 dst_mac[6];
+    u8 src_mac[6];
+    u16 type;
+} __attribute__((packed)) mkrn_eth_header_t;
 
-/* IP头部 */
 typedef struct {
-    uint8_t  ver_ihl;
-    uint8_t  tos;
-    uint16_t total_len;
-    uint16_t id;
-    uint16_t frag_offset;
-    uint8_t  ttl;
-    uint8_t  protocol;
-    uint16_t checksum;
-    uint32_t src_ip;
-    uint32_t dst_ip;
-} __attribute__((packed)) ip_header_t;
+    u8 ver_ihl;
+    u8 tos;
+    u16 total_len;
+    u16 id;
+    u16 frag_offset;
+    u8 ttl;
+    u8 protocol;
+    u16 checksum;
+    u32 src_ip;
+    u32 dst_ip;
+} __attribute__((packed)) mkrn_ip_header_t;
 
-/* UDP头部 */
 typedef struct {
-    uint16_t src_port;
-    uint16_t dst_port;
-    uint16_t length;
-    uint16_t checksum;
-} __attribute__((packed)) udp_header_t;
+    u16 src_port;
+    u16 dst_port;
+    u16 length;
+    u16 checksum;
+} __attribute__((packed)) mkrn_udp_header_t;
 
-/* ICMP头部 */
 typedef struct {
-    uint8_t type;
-    uint8_t code;
-    uint16_t checksum;
-    uint32_t data;
-} __attribute__((packed)) icmp_header_t;
+    u8 type;
+    u8 code;
+    u16 checksum;
+    u32 data;
+} __attribute__((packed)) mkrn_icmp_header_t;
 
-/* 网络设备接口 */
-typedef struct net_device {
+typedef struct mkrn_net_device {
     char name[16];
-    uint32_t type;
-    uint8_t mac_addr[6];
-    uint32_t ip_addr;
-    uint32_t netmask;
-    uint32_t gateway;
-    bool up;
-
-    /* 设备操作函数 */
-    int (*init)(struct net_device *dev);
-    int (*transmit)(struct net_device *dev, uint8_t *data, uint32_t len);
-    int (*receive)(struct net_device *dev, uint8_t *buffer, uint32_t len);
-    void (*poll)(struct net_device *dev);
-
-    /* 私有数据 */
+    u32 type;
+    u8 mac_addr[6];
+    u32 ip_addr;
+    u32 netmask;
+    u32 gateway;
+    b up;
+    int (*init)(struct mkrn_net_device *dev);
+    int (*transmit)(struct mkrn_net_device *dev, u8 *data, u32 len);
+    int (*receive)(struct mkrn_net_device *dev, u8 *buffer, u32 len);
+    void (*poll)(struct mkrn_net_device *dev);
     void *priv;
-} net_device_t;
+} mkrn_net_device_t;
 
-/* 网络协议处理函数类型 */
-typedef void (*net_protocol_handler_t)(uint8_t *packet, uint16_t len,
-                                      uint32_t src_ip, uint32_t dst_ip);
+typedef void (*mkrn_net_protocol_handler_t)(u8 *packet, u16 len, u32 src_ip, u32 dst_ip);
 
-/* 网络API函数 */
-int net_init(void);
-int net_device_register(net_device_t *dev);
-int net_device_unregister(const char *name);
-net_device_t *net_device_find(const char *name);
+/**
+ * mkrn_net_init - Initialize the network stack
+ *
+ * Return: 0 on success, -1 on failure
+ */
+int mkrn_net_init(void);
 
-int net_protocol_register(uint8_t protocol, net_protocol_handler_t handler);
-int net_protocol_unregister(uint8_t protocol);
+/**
+ * mkrn_net_device_register - Register a network device
+ * @dev: Device to register
+ *
+ * Return: 0 on success, -1 on failure
+ */
+int mkrn_net_device_register(mkrn_net_device_t *dev);
 
-int net_send_packet(uint32_t dst_ip, uint8_t protocol, uint8_t *data, uint16_t len);
-int net_send_ethernet(uint8_t *dst_mac, uint16_t type, uint8_t *data, uint16_t len);
+/**
+ * mkrn_net_device_unregister - Unregister a network device
+ * @name: Device name
+ *
+ * Return: 0 on success, -1 on failure
+ */
+int mkrn_net_device_unregister(const char *name);
 
-void net_poll(void);
+/**
+ * mkrn_net_device_find - Find a network device by name
+ * @name: Device name
+ *
+ * Return: Device pointer, NULL if not found
+ */
+mkrn_net_device_t *mkrn_net_device_find(const char *name);
 
-/* TCP函数 */
-void tcp_init(void);
-int tcp_listen(uint32_t local_ip, uint16_t local_port);
-int tcp_connect(uint32_t local_ip, uint16_t local_port,
-                uint32_t remote_ip, uint16_t remote_port);
-int tcp_send(tcp_pcb_t *pcb, uint8_t *data, uint16_t len);
-int tcp_close(tcp_pcb_t *pcb);
-void tcp_handle_packet(uint8_t *packet, uint16_t len, uint32_t src_ip, uint32_t dst_ip);
+/**
+ * mkrn_net_protocol_register - Register a protocol handler
+ * @protocol: Protocol number
+ * @handler: Handler function
+ *
+ * Return: 0 on success, -1 on failure
+ */
+int mkrn_net_protocol_register(u8 protocol, mkrn_net_protocol_handler_t handler);
 
-/* UDP函数 */
-int udp_send(uint32_t src_ip, uint16_t src_port,
-             uint32_t dst_ip, uint16_t dst_port,
-             uint8_t *data, uint16_t len);
-void udp_handle_packet(uint8_t *packet, uint16_t len, uint32_t src_ip, uint32_t dst_ip);
+/**
+ * mkrn_net_protocol_unregister - Unregister a protocol handler
+ * @protocol: Protocol number
+ *
+ * Return: 0 on success, -1 on failure
+ */
+int mkrn_net_protocol_unregister(u8 protocol);
 
-/* ICMP函数 */
-void icmp_handle_packet(uint8_t *packet, uint16_t len, uint32_t src_ip, uint32_t dst_ip);
-int icmp_send_echo_request(uint32_t dst_ip, uint16_t id, uint16_t seq);
-int icmp_send_echo_reply(uint32_t dst_ip, uint16_t id, uint16_t seq);
+/**
+ * mkrn_net_send_packet - Send an IP packet
+ * @dst_ip: Destination IP address
+ * @protocol: Protocol number
+ * @data: Packet data
+ * @len: Data length
+ *
+ * Return: 0 on success, -1 on failure
+ */
+int mkrn_net_send_packet(u32 dst_ip, u8 protocol, u8 *data, u16 len);
 
-/* ARP函数 */
-void arp_handle_packet(uint8_t *packet, uint16_t len);
-int arp_resolve(uint32_t ip_addr, uint8_t *mac_addr);
-int arp_send_request(uint32_t target_ip);
-int arp_send_reply(uint32_t dst_ip, uint8_t *dst_mac);
+/**
+ * mkrn_net_send_ethernet - Send an Ethernet frame
+ * @dst_mac: Destination MAC address
+ * @type: Ethernet type
+ * @data: Frame data
+ * @len: Data length
+ *
+ * Return: 0 on success, -1 on failure
+ */
+int mkrn_net_send_ethernet(u8 *dst_mac, u16 type, u8 *data, u16 len);
 
-/* 网络工具函数 */
-uint16_t net_checksum(uint16_t *data, uint16_t len);
-uint32_t net_ip_to_string(uint32_t ip, char *buffer);
-uint32_t net_string_to_ip(const char *string);
-void net_print_packet(uint8_t *packet, uint16_t len);
+/**
+ * mkrn_net_poll - Poll all network devices
+ *
+ * Return: void
+ */
+void mkrn_net_poll(void);
 
-#endif /* _M4K_NET_H */
+/* TCP functions */
+void mkrn_tcp_init(void);
+int mkrn_tcp_listen(u32 local_ip, u16 local_port);
+int mkrn_tcp_connect(u32 local_ip, u16 local_port, u32 remote_ip, u16 remote_port);
+int mkrn_tcp_send(tcp_pcb_t *pcb, u8 *data, u16 len);
+int mkrn_tcp_close(tcp_pcb_t *pcb);
+void mkrn_tcp_handle_packet(u8 *packet, u16 len, u32 src_ip, u32 dst_ip);
+
+/* UDP functions */
+int mkrn_udp_send(u32 src_ip, u16 src_port, u32 dst_ip, u16 dst_port, u8 *data, u16 len);
+void mkrn_udp_handle_packet(u8 *packet, u16 len, u32 src_ip, u32 dst_ip);
+
+/* ICMP functions */
+void mkrn_icmp_handle_packet(u8 *packet, u16 len, u32 src_ip, u32 dst_ip);
+int mkrn_icmp_send_echo_request(u32 dst_ip, u16 id, u16 seq);
+int mkrn_icmp_send_echo_reply(u32 dst_ip, u16 id, u16 seq);
+
+/* ARP functions */
+void mkrn_arp_handle_packet(u8 *packet, u16 len);
+int mkrn_arp_resolve(u32 ip_addr, u8 *mac_addr);
+int mkrn_arp_send_request(u32 target_ip);
+int mkrn_arp_send_reply(u32 dst_ip, u8 *dst_mac);
+
+/* Network utility functions */
+u16 mkrn_net_checksum(u16 *data, u16 len);
+u32 mkrn_net_ip_to_string(u32 ip, char *buffer);
+u32 mkrn_net_string_to_ip(const char *string);
+void mkrn_net_print_packet(u8 *packet, u16 len);

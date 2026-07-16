@@ -1,18 +1,20 @@
-/**
- * M4KK1 DHCP Implementation
- * Basic DHCP client implementation for M4KK1 OS
+/*
+ * M4KK1 4P1 - dhcp.c
+ * Description: Basic DHCP client implementation.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
 #include <stdint.h>
 #include <string.h>
 #include "net.h"
 
-// DHCP message structure (simplified)
 typedef struct {
-    uint8_t op;
-    uint8_t htype;
-    uint8_t hlen;
-    uint8_t hops;
+    uint8_t  op;
+    uint8_t  htype;
+    uint8_t  hlen;
+    uint8_t  hops;
     uint32_t xid;
     uint16_t secs;
     uint16_t flags;
@@ -20,13 +22,12 @@ typedef struct {
     uint32_t yiaddr;
     uint32_t siaddr;
     uint32_t giaddr;
-    uint8_t chaddr[16];
-    uint8_t sname[64];
-    uint8_t file[128];
+    uint8_t  chaddr[16];
+    uint8_t  sname[64];
+    uint8_t  file[128];
     uint32_t cookie;
 } __attribute__((packed)) dhcp_header_t;
 
-// DHCP states
 typedef enum {
     DHCP_INIT,
     DHCP_SELECTING,
@@ -36,61 +37,59 @@ typedef enum {
     DHCP_REBINDING
 } dhcp_state_t;
 
-// DHCP client state
-static dhcp_state_t dhcp_state = DHCP_INIT;
-static uint32_t dhcp_server_ip = 0;
-static uint32_t offered_ip = 0;
-static uint32_t lease_time = 0;
+static dhcp_state_t eDhcpState = DHCP_INIT;
+static uint32_t u32DhcpServerIp = 0;
+static uint32_t u32OfferedIp = 0;
+static uint32_t u32LeaseTime = 0;
 
-// Initialize DHCP client
-void dhcp_init(void) {
-    dhcp_state = DHCP_INIT;
-    dhcp_server_ip = 0;
-    offered_ip = 0;
-    lease_time = 0;
+void
+mkrn_dhcp_init(void)
+{
+    eDhcpState = DHCP_INIT;
+    u32DhcpServerIp = 0;
+    u32OfferedIp = 0;
+    u32LeaseTime = 0;
 }
 
-// Send DHCP discover
-int dhcp_discover(void) {
-    // Send DHCP discover message (simplified)
-    // In real implementation, this would broadcast a DHCP discover packet
-
-    dhcp_state = DHCP_SELECTING;
+int
+mkrn_dhcp_discover(void)
+{
+    eDhcpState = DHCP_SELECTING;
     return 0;
 }
 
-// Send DHCP request
-int dhcp_request(uint32_t requested_ip) {
-    // Send DHCP request message (simplified)
-    // In real implementation, this would send a DHCP request packet
-
-    dhcp_state = DHCP_REQUESTING;
+int
+mkrn_dhcp_request(uint32_t u32RequestedIp)
+{
+    (void)u32RequestedIp;
+    eDhcpState = DHCP_REQUESTING;
     return 0;
 }
 
-// Process DHCP offer
-void dhcp_process_offer(uint32_t server_ip, uint32_t offered_ip_addr, uint32_t lease) {
-    dhcp_server_ip = server_ip;
-    offered_ip = offered_ip_addr;
-    lease_time = lease;
-
-    // Send DHCP request
-    dhcp_request(offered_ip);
+void
+mkrn_dhcp_process_offer(uint32_t u32ServerIp,
+                        uint32_t u32OfferedIpAddr,
+                        uint32_t u32Lease)
+{
+    u32DhcpServerIp = u32ServerIp;
+    u32OfferedIp = u32OfferedIpAddr;
+    u32LeaseTime = u32Lease;
+    mkrn_dhcp_request(u32OfferedIp);
 }
 
-// Process DHCP ACK
-void dhcp_process_ack(uint32_t assigned_ip, uint32_t lease) {
-    // Set IP configuration
-    // ip_set_config(assigned_ip, dhcp_server_ip, 0xFFFFFF00); // 255.255.255.0
-
-    dhcp_state = DHCP_BOUND;
-    lease_time = lease;
+void
+mkrn_dhcp_process_ack(uint32_t u32AssignedIp,
+                      uint32_t u32Lease)
+{
+    (void)u32AssignedIp;
+    eDhcpState = DHCP_BOUND;
+    u32LeaseTime = u32Lease;
 }
 
-// Get current IP address
-uint32_t dhcp_get_ip(void) {
-    if (dhcp_state == DHCP_BOUND) {
-        return offered_ip;
-    }
+uint32_t
+mkrn_dhcp_get_ip(void)
+{
+    if (eDhcpState == DHCP_BOUND)
+        return u32OfferedIp;
     return 0;
 }

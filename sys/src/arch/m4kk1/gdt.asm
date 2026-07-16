@@ -100,10 +100,11 @@ gdt_ptr_data:
 
 SECTION .text
 
-; 加载GDT
+; 加载GDT (参数: GDT指针地址)
 GLOBAL gdt_load
 gdt_load:
-    lgdt [gdt_ptr_data]     ; 加载GDT指针
+    mov eax, [esp + 4]      ; 获取GDT指针参数
+    lgdt [eax]              ; 加载GDT指针
 
     ; 重新加载段寄存器
     mov ax, KERNEL_DATA_SEG

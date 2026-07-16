@@ -1,5 +1,5 @@
 # M4KK1文件系统Makefile
-# 构建YFS文件系统
+# 构建文件系统
 
 # 源代码文件
 fs_src := $(wildcard *.c */*.c)

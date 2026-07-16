@@ -1,48 +1,9 @@
-/**
- * M4KK1 x86_64 Architecture - Memory Management Implementation
- * x86_64架构内存管理实现 - 独特的M4KK1内存管理
+/*
+ * M4KK1 4P1 - memory.c
+ * Description: x86_64 memory management with 4-level paging.
  *
- * 文件: memory.c
- * 作者: M4KK1 Development Team
- * 版本: v0.2.0-multarch
- * 日期: 2025-10-16
- *
- * 描述:
- *   实现x86_64架构的完整内存管理功能，包括：
- *   - 4级页表管理 (PML4 -> PDP -> PD -> PT)
- *   - 物理内存分配和释放
- *   - 虚拟内存映射和管理
- *   - 内存保护和权限控制
- *   - 内存统计和调试功能
- *
- * 架构特性:
- *   - 4级页表结构，支持48位虚拟地址
- *   - 2MB大页面和1GB巨页面支持
- *   - 物理内存位图管理
- *   - 内核空间直接映射
- *   - 用户空间按需分页
- *
- * 内存布局:
- *   - 0x0000000000000000 - 0x00007FFFFFFFFFFF: 用户空间 (128TB)
- *   - 0xFFFF800000000000 - 0xFFFFFFFFFFFFFFFF: 内核空间 (128TB)
- *   - 0xFFFFFFFF80000000 - 0xFFFFFFFFFFFFFFFF: 直接映射区域
- *   - 0xFFFFFFFFC0000000 - 0xFFFFFFFFFFFFFFFF: 内核代码和数据
- *
- * 页表结构:
- *   - PML4 (Level 4): 512个条目，9位索引
- *   - PDP (Level 3): 512个条目，9位索引
- *   - PD (Level 2): 512个条目，9位索引
- *   - PT (Level 1): 512个条目，9位索引 + 12位页内偏移
- *
- * 修改历史:
- *   v0.2.0: 实现完整的x86_64内存管理
- *   v0.1.0: 初始内存管理实现
- *
- * 依赖:
- *   - m4k_arch.h: 架构特定定义
- *   - memory.h: 通用内存管理接口
- *   - console.h: 控制台输出
- *   - string.h: 字符串操作
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
 #include "../../../include/m4k_arch.h"
@@ -50,13 +11,11 @@
 #include "../../../include/console.h"
 #include "../../../include/string.h"
 
-/* 页表结构定义 */
 typedef uint64_t pml4_t;
 typedef uint64_t pdp_t;
 typedef uint64_t pd_t;
 typedef uint64_t pt_t;
 
-/* 页表条目标志 */
 #define PTE_PRESENT         (1ULL << 0)
 #define PTE_WRITE           (1ULL << 1)
 #define PTE_USER            (1ULL << 2)
@@ -68,64 +27,68 @@ typedef uint64_t pt_t;
 #define PTE_GLOBAL          (1ULL << 8)
 #define PTE_NX              (1ULL << 63)
 
-/* 全局页表 */
 static pml4_t *kernel_pml4 = NULL;
 static uint64_t *physical_map = NULL;
 
-/* 物理内存管理 */
-#define PHYSICAL_MEMORY_BASE    0x100000    /* 1MB */
-#define PHYSICAL_MEMORY_SIZE    0x40000000  /* 1GB */
+#define PHYSICAL_MEMORY_BASE    0x100000
+#define PHYSICAL_MEMORY_SIZE    0x40000000
 #define PAGE_FRAME_COUNT        (PHYSICAL_MEMORY_SIZE / PAGE_SIZE)
 
-/* 页帧位图 */
 static uint8_t *page_frames = NULL;
 static uint64_t total_pages = 0;
 static uint64_t free_pages = 0;
 
 /**
- * 初始化x86_64内存管理
+ * mkrn_memory_init - Initialize x86_64 memory management
+ * @total_memory: Total physical memory size in bytes
+ *
+ * Set up the kernel PML4 page table, initialize the physical
+ * memory bitmap, mark reserved pages, and load the new page
+ * table into CR3.
  */
-void m4k_memory_init(uint64_t total_memory) {
+void mkrn_memory_init(uint64_t total_memory)
+{
     uint64_t i;
 
-    /* 初始化页表 */
     kernel_pml4 = (pml4_t *)PML4_BASE;
-    memset(kernel_pml4, 0, PAGE_SIZE);
+    mkrn_memset(kernel_pml4, 0, PAGE_SIZE);
 
-    /* 映射内核空间 */
     for (i = 0; i < 512; i++) {
-        uint64_t entry = (i * 0x80000000ULL) | PTE_PRESENT | PTE_WRITE | PTE_GLOBAL;
+        uint64_t entry = (i * 0x80000000ULL)
+                         | PTE_PRESENT | PTE_WRITE | PTE_GLOBAL;
         kernel_pml4[i] = entry;
     }
 
-    /* 初始化物理内存位图 */
     total_pages = total_memory / PAGE_SIZE;
     page_frames = (uint8_t *)PAGE_FRAMES_BASE;
-    memset(page_frames, 0, (total_pages + 7) / 8);
+    mkrn_memset(page_frames, 0, (total_pages + 7) / 8);
     free_pages = total_pages;
 
-    /* 标记已用页面 */
     for (i = 0; i < PHYSICAL_MEMORY_BASE / PAGE_SIZE; i++) {
         page_frames[i / 8] |= (1 << (i % 8));
         free_pages--;
     }
 
-    /* 加载页表 */
     __asm__ volatile ("movq %0, %%cr3" : : "r"(kernel_pml4));
 
-    console_write("M4KK1 x86_64 memory management initialized\n");
-    console_write("Total memory: ");
-    console_write_hex(total_memory / 1024 / 1024);
-    console_write(" MB\n");
-    console_write("Free memory: ");
-    console_write_hex((free_pages * PAGE_SIZE) / 1024 / 1024);
-    console_write(" MB\n");
+    mkrn_console_write("M4KK1 x86_64 memory management initialized\n");
+    mkrn_console_write("Total memory: ");
+    mkrn_console_write_hex(total_memory / 1024 / 1024);
+    mkrn_console_write(" MB\n");
+    mkrn_console_write("Free memory: ");
+    mkrn_console_write_hex((free_pages * PAGE_SIZE) / 1024 / 1024);
+    mkrn_console_write(" MB\n");
 }
 
 /**
- * 分配物理页面
+ * mkrn_alloc_physical_page - Allocate a single physical page
+ *
+ * Search the page frame bitmap for a free page and mark it used.
+ *
+ * Return: Physical address of the allocated page, or 0 on failure
  */
-uint64_t m4k_alloc_physical_page(void) {
+uint64_t mkrn_alloc_physical_page(void)
+{
     uint64_t i, j;
 
     for (i = 0; i < total_pages / 8; i++) {
@@ -140,13 +103,17 @@ uint64_t m4k_alloc_physical_page(void) {
         }
     }
 
-    return 0; /* 内存不足 */
+    return 0;
 }
 
 /**
- * 释放物理页面
+ * mkrn_free_physical_page - Free a physical page
+ * @address: Physical address of the page to free
+ *
+ * Clear the corresponding bit in the page frame bitmap.
  */
-void m4k_free_physical_page(uint64_t address) {
+void mkrn_free_physical_page(uint64_t address)
+{
     uint64_t page_index = address / PAGE_SIZE;
 
     if (page_index < total_pages) {
@@ -159,9 +126,17 @@ void m4k_free_physical_page(uint64_t address) {
 }
 
 /**
- * 映射虚拟地址到物理地址
+ * mkrn_map_page - Map a virtual address to a physical address
+ * @virtual_addr: Virtual address to map
+ * @physical_addr: Target physical address
+ * @flags: Page table flags (PTE_*)
+ *
+ * Walk the 4-level page table, allocating intermediate tables
+ * as needed, and set the final PTE.
  */
-void m4k_map_page(uint64_t virtual_addr, uint64_t physical_addr, uint64_t flags) {
+void mkrn_map_page(uint64_t virtual_addr, uint64_t physical_addr,
+                   uint64_t flags)
+{
     uint64_t pml4_index = (virtual_addr >> 39) & 0x1FF;
     uint64_t pdp_index = (virtual_addr >> 30) & 0x1FF;
     uint64_t pd_index = (virtual_addr >> 21) & 0x1FF;
@@ -172,56 +147,59 @@ void m4k_map_page(uint64_t virtual_addr, uint64_t physical_addr, uint64_t flags)
     pd_t *pd;
     pt_t *pt;
 
-    /* 检查PML4条目 */
     if (!(pml4[pml4_index] & PTE_PRESENT)) {
-        /* 分配新的PDP */
-        uint64_t pdp_addr = m4k_alloc_physical_page();
+        uint64_t pdp_addr = mkrn_alloc_physical_page();
         if (!pdp_addr) return;
 
-        pml4[pml4_index] = pdp_addr | PTE_PRESENT | PTE_WRITE | PTE_USER;
+        pml4[pml4_index] = pdp_addr
+                           | PTE_PRESENT | PTE_WRITE | PTE_USER;
         pdp = (pdp_t *)pdp_addr;
-        memset(pdp, 0, PAGE_SIZE);
+        mkrn_memset(pdp, 0, PAGE_SIZE);
     } else {
-        pdp = (pdp_t *)((pml4[pml4_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+        pdp = (pdp_t *)((pml4[pml4_index] & 0xFFFFFFFFFF000)
+                        + MEM_BASE);
     }
 
-    /* 检查PDP条目 */
     if (!(pdp[pdp_index] & PTE_PRESENT)) {
-        /* 分配新的页目录 */
-        uint64_t pd_addr = m4k_alloc_physical_page();
+        uint64_t pd_addr = mkrn_alloc_physical_page();
         if (!pd_addr) return;
 
-        pdp[pdp_index] = pd_addr | PTE_PRESENT | PTE_WRITE | PTE_USER;
+        pdp[pdp_index] = pd_addr
+                         | PTE_PRESENT | PTE_WRITE | PTE_USER;
         pd = (pd_t *)pd_addr;
-        memset(pd, 0, PAGE_SIZE);
+        mkrn_memset(pd, 0, PAGE_SIZE);
     } else {
-        pd = (pd_t *)((pdp[pdp_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+        pd = (pd_t *)((pdp[pdp_index] & 0xFFFFFFFFFF000)
+                      + MEM_BASE);
     }
 
-    /* 检查页目录条目 */
     if (!(pd[pd_index] & PTE_PRESENT)) {
-        /* 分配新的页表 */
-        uint64_t pt_addr = m4k_alloc_physical_page();
+        uint64_t pt_addr = mkrn_alloc_physical_page();
         if (!pt_addr) return;
 
-        pd[pd_index] = pt_addr | PTE_PRESENT | PTE_WRITE | PTE_USER;
+        pd[pd_index] = pt_addr
+                       | PTE_PRESENT | PTE_WRITE | PTE_USER;
         pt = (pt_t *)pt_addr;
-        memset(pt, 0, PAGE_SIZE);
+        mkrn_memset(pt, 0, PAGE_SIZE);
     } else {
-        pt = (pt_t *)((pd[pd_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+        pt = (pt_t *)((pd[pd_index] & 0xFFFFFFFFFF000)
+                      + MEM_BASE);
     }
 
-    /* 设置页表条目 */
     pt[pt_index] = physical_addr | flags | PTE_PRESENT;
 
-    /* 刷新TLB */
     __asm__ volatile ("invlpg (%0)" : : "r"(virtual_addr));
 }
 
 /**
- * 取消映射虚拟地址
+ * mkrn_unmap_page - Unmap a virtual address
+ * @virtual_addr: Virtual address to unmap
+ *
+ * Free the physical page and clear the PTE entry, then
+ * invalidate the TLB for this address.
  */
-void m4k_unmap_page(uint64_t virtual_addr) {
+void mkrn_unmap_page(uint64_t virtual_addr)
+{
     uint64_t pml4_index = (virtual_addr >> 39) & 0x1FF;
     uint64_t pdp_index = (virtual_addr >> 30) & 0x1FF;
     uint64_t pd_index = (virtual_addr >> 21) & 0x1FF;
@@ -232,31 +210,36 @@ void m4k_unmap_page(uint64_t virtual_addr) {
     pd_t *pd;
     pt_t *pt;
 
-    /* 遍历页表结构 */
     if (!(pml4[pml4_index] & PTE_PRESENT)) return;
-    pdp = (pdp_t *)((pml4[pml4_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pdp = (pdp_t *)((pml4[pml4_index] & 0xFFFFFFFFFF000)
+                    + MEM_BASE);
 
     if (!(pdp[pdp_index] & PTE_PRESENT)) return;
-    pd = (pd_t *)((pdp[pdp_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pd = (pd_t *)((pdp[pdp_index] & 0xFFFFFFFFFF000)
+                  + MEM_BASE);
 
     if (!(pd[pd_index] & PTE_PRESENT)) return;
-    pt = (pt_t *)((pd[pd_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pt = (pt_t *)((pd[pd_index] & 0xFFFFFFFFFF000)
+                  + MEM_BASE);
 
-    /* 释放物理页面 */
     uint64_t physical_addr = pt[pt_index] & 0xFFFFFFFFFF000;
-    m4k_free_physical_page(physical_addr);
+    mkrn_free_physical_page(physical_addr);
 
-    /* 清除页表条目 */
     pt[pt_index] = 0;
 
-    /* 刷新TLB */
     __asm__ volatile ("invlpg (%0)" : : "r"(virtual_addr));
 }
 
 /**
- * 获取物理地址
+ * mkrn_get_physical_address - Translate virtual to physical address
+ * @virtual_addr: Virtual address to translate
+ *
+ * Walk the page tables to find the physical address mapping.
+ *
+ * Return: Physical address, or 0 if not mapped
  */
-uint64_t m4k_get_physical_address(uint64_t virtual_addr) {
+uint64_t mkrn_get_physical_address(uint64_t virtual_addr)
+{
     uint64_t pml4_index = (virtual_addr >> 39) & 0x1FF;
     uint64_t pdp_index = (virtual_addr >> 30) & 0x1FF;
     uint64_t pd_index = (virtual_addr >> 21) & 0x1FF;
@@ -267,19 +250,20 @@ uint64_t m4k_get_physical_address(uint64_t virtual_addr) {
     pd_t *pd;
     pt_t *pt;
 
-    /* 遍历页表结构 */
     if (!(pml4[pml4_index] & PTE_PRESENT)) return 0;
-    pdp = (pdp_t *)((pml4[pml4_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pdp = (pdp_t *)((pml4[pml4_index] & 0xFFFFFFFFFF000)
+                    + MEM_BASE);
 
     if (!(pdp[pdp_index] & PTE_PRESENT)) return 0;
-    pd = (pd_t *)((pdp[pdp_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pd = (pd_t *)((pdp[pdp_index] & 0xFFFFFFFFFF000)
+                  + MEM_BASE);
 
     if (!(pd[pd_index] & PTE_PRESENT)) return 0;
-    pt = (pt_t *)((pd[pd_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pt = (pt_t *)((pd[pd_index] & 0xFFFFFFFFFF000)
+                  + MEM_BASE);
 
     if (!(pt[pt_index] & PTE_PRESENT)) return 0;
 
-    /* 计算物理地址 */
     uint64_t offset = virtual_addr & 0xFFF;
     uint64_t physical_base = pt[pt_index] & 0xFFFFFFFFFF000;
 
@@ -287,72 +271,90 @@ uint64_t m4k_get_physical_address(uint64_t virtual_addr) {
 }
 
 /**
- * 获取内存统计信息
+ * mkrn_get_memory_stats - Get memory usage statistics
+ * @total: Output pointer for total memory in bytes
+ * @free: Output pointer for free memory in bytes
+ * @used: Output pointer for used memory in bytes
  */
-void m4k_get_memory_stats(uint64_t *total, uint64_t *free, uint64_t *used) {
+void mkrn_get_memory_stats(uint64_t *total, uint64_t *free,
+                           uint64_t *used)
+{
     if (total) *total = total_pages * PAGE_SIZE;
     if (free) *free = free_pages * PAGE_SIZE;
     if (used) *used = (total_pages - free_pages) * PAGE_SIZE;
 }
 
 /**
- * 复制页表
+ * mkrn_copy_page_tables - Copy kernel page table entries
+ * @dest_pml4: Destination PML4 table
+ * @src_pml4: Source PML4 table
+ *
+ * Copy kernel-space mappings (entries 256-511) from source
+ * to destination page table.
  */
-void m4k_copy_page_tables(pml4_t *dest_pml4, pml4_t *src_pml4) {
+void mkrn_copy_page_tables(pml4_t *dest_pml4, pml4_t *src_pml4)
+{
     uint64_t i;
 
-    /* 复制内核空间映射 */
     for (i = 256; i < 512; i++) {
         dest_pml4[i] = src_pml4[i];
     }
 }
 
 /**
- * 切换地址空间
+ * mkrn_switch_address_space - Switch to a different address space
+ * @new_pml4: PML4 table of the target address space
+ *
+ * Load the new page table base into CR3.
  */
-void m4k_switch_address_space(pml4_t *new_pml4) {
+void mkrn_switch_address_space(pml4_t *new_pml4)
+{
     __asm__ volatile ("movq %0, %%cr3" : : "r"(new_pml4));
 }
 
 /**
- * 刷新TLB
+ * mkrn_flush_tlb - Flush the entire TLB
+ *
+ * Reload CR3 to invalidate all cached translations.
  */
-void m4k_flush_tlb(void) {
-    __asm__ volatile ("movq %%cr3, %%rax; movq %%rax, %%cr3" : : : "rax");
+void mkrn_flush_tlb(void)
+{
+    __asm__ volatile (
+        "movq %%cr3, %%rax; movq %%rax, %%cr3" : : : "rax");
 }
 
 /**
- * 刷新特定地址的TLB
+ * mkrn_flush_tlb_entry - Flush TLB for a single address
+ * @address: Virtual address to invalidate
  */
-void m4k_flush_tlb_entry(uint64_t address) {
+void mkrn_flush_tlb_entry(uint64_t address)
+{
     __asm__ volatile ("invlpg (%0)" : : "r"(address));
 }
 
 /**
- * 初始化内存管理
+ * mkrn_get_memory_size - Get detected physical memory size
+ *
+ * Query BIOS or hardware for total physical memory.
+ * Currently returns a fixed 1 GB value.
+ *
+ * Return: Physical memory size in bytes
  */
-void m4k_arch_memory_init(void) {
-    /* 获取内存信息 */
-    uint64_t total_memory = m4k_get_memory_size();
-
-    /* 初始化内存管理 */
-    m4k_memory_init(total_memory);
-
-    console_write("M4KK1 x86_64 memory management initialized\n");
+uint64_t mkrn_get_memory_size(void)
+{
+    return 0x40000000;
 }
 
 /**
- * 获取内存大小（从BIOS或硬件检测）
+ * mkrn_alloc_contiguous_pages - Allocate contiguous physical pages
+ * @count: Number of pages to allocate
+ *
+ * Search the page frame bitmap for a run of free pages.
+ *
+ * Return: Physical address of the first page, or 0 on failure
  */
-uint64_t m4k_get_memory_size(void) {
-    /* 临时返回固定值，实际应该从硬件检测 */
-    return 0x40000000; /* 1GB */
-}
-
-/**
- * 分配连续的物理页面
- */
-uint64_t m4k_alloc_contiguous_pages(uint32_t count) {
+uint64_t mkrn_alloc_contiguous_pages(uint32_t count)
+{
     uint64_t start_page = 0;
     uint64_t consecutive = 0;
     uint64_t i;
@@ -368,9 +370,9 @@ uint64_t m4k_alloc_contiguous_pages(uint32_t count) {
             consecutive++;
 
             if (consecutive == count) {
-                /* 标记页面为已用 */
                 uint64_t j;
-                for (j = start_page; j < start_page + count; j++) {
+                for (j = start_page; j < start_page + count;
+                     j++) {
                     uint64_t b_idx = j / 8;
                     uint64_t b_bit = j % 8;
                     page_frames[b_idx] |= (1 << b_bit);
@@ -383,13 +385,16 @@ uint64_t m4k_alloc_contiguous_pages(uint32_t count) {
         }
     }
 
-    return 0; /* 分配失败 */
+    return 0;
 }
 
 /**
- * 释放连续的物理页面
+ * mkrn_free_contiguous_pages - Free contiguous physical pages
+ * @address: Physical address of the first page
+ * @count: Number of pages to free
  */
-void m4k_free_contiguous_pages(uint64_t address, uint32_t count) {
+void mkrn_free_contiguous_pages(uint64_t address, uint32_t count)
+{
     uint64_t start_page = address / PAGE_SIZE;
     uint64_t i;
 
@@ -403,9 +408,13 @@ void m4k_free_contiguous_pages(uint64_t address, uint32_t count) {
 }
 
 /**
- * 检查虚拟地址是否有效
+ * mkrn_is_virtual_address_valid - Check if a virtual address is mapped
+ * @virtual_addr: Virtual address to check
+ *
+ * Return: true if the address has a valid mapping, false otherwise
  */
-bool m4k_is_virtual_address_valid(uint64_t virtual_addr) {
+bool mkrn_is_virtual_address_valid(uint64_t virtual_addr)
+{
     uint64_t pml4_index = (virtual_addr >> 39) & 0x1FF;
     uint64_t pdp_index = (virtual_addr >> 30) & 0x1FF;
     uint64_t pd_index = (virtual_addr >> 21) & 0x1FF;
@@ -416,23 +425,29 @@ bool m4k_is_virtual_address_valid(uint64_t virtual_addr) {
     pd_t *pd;
     pt_t *pt;
 
-    /* 检查页表结构 */
     if (!(pml4[pml4_index] & PTE_PRESENT)) return false;
-    pdp = (pdp_t *)((pml4[pml4_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pdp = (pdp_t *)((pml4[pml4_index] & 0xFFFFFFFFFF000)
+                    + MEM_BASE);
 
     if (!(pdp[pdp_index] & PTE_PRESENT)) return false;
-    pd = (pd_t *)((pdp[pdp_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pd = (pd_t *)((pdp[pdp_index] & 0xFFFFFFFFFF000)
+                  + MEM_BASE);
 
     if (!(pd[pd_index] & PTE_PRESENT)) return false;
-    pt = (pt_t *)((pd[pd_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pt = (pt_t *)((pd[pd_index] & 0xFFFFFFFFFF000)
+                  + MEM_BASE);
 
     return (pt[pt_index] & PTE_PRESENT) != 0;
 }
 
 /**
- * 获取页面权限
+ * mkrn_get_page_flags - Get page table flags for a virtual address
+ * @virtual_addr: Virtual address to query
+ *
+ * Return: Page table entry flags, or 0 if not mapped
  */
-uint64_t m4k_get_page_flags(uint64_t virtual_addr) {
+uint64_t mkrn_get_page_flags(uint64_t virtual_addr)
+{
     uint64_t pml4_index = (virtual_addr >> 39) & 0x1FF;
     uint64_t pdp_index = (virtual_addr >> 30) & 0x1FF;
     uint64_t pd_index = (virtual_addr >> 21) & 0x1FF;
@@ -443,23 +458,30 @@ uint64_t m4k_get_page_flags(uint64_t virtual_addr) {
     pd_t *pd;
     pt_t *pt;
 
-    /* 遍历页表结构 */
     if (!(pml4[pml4_index] & PTE_PRESENT)) return 0;
-    pdp = (pdp_t *)((pml4[pml4_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pdp = (pdp_t *)((pml4[pml4_index] & 0xFFFFFFFFFF000)
+                    + MEM_BASE);
 
     if (!(pdp[pdp_index] & PTE_PRESENT)) return 0;
-    pd = (pd_t *)((pdp[pdp_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pd = (pd_t *)((pdp[pdp_index] & 0xFFFFFFFFFF000)
+                  + MEM_BASE);
 
     if (!(pd[pd_index] & PTE_PRESENT)) return 0;
-    pt = (pt_t *)((pd[pd_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pt = (pt_t *)((pd[pd_index] & 0xFFFFFFFFFF000)
+                  + MEM_BASE);
 
     return pt[pt_index] & 0xFFFFFFFFFF000FFF;
 }
 
 /**
- * 设置页面权限
+ * mkrn_set_page_flags - Set page table flags for a virtual address
+ * @virtual_addr: Virtual address to modify
+ * @flags: New PTE flags
+ *
+ * Update the flags and invalidate the TLB entry.
  */
-void m4k_set_page_flags(uint64_t virtual_addr, uint64_t flags) {
+void mkrn_set_page_flags(uint64_t virtual_addr, uint64_t flags)
+{
     uint64_t pml4_index = (virtual_addr >> 39) & 0x1FF;
     uint64_t pdp_index = (virtual_addr >> 30) & 0x1FF;
     uint64_t pd_index = (virtual_addr >> 21) & 0x1FF;
@@ -470,28 +492,33 @@ void m4k_set_page_flags(uint64_t virtual_addr, uint64_t flags) {
     pd_t *pd;
     pt_t *pt;
 
-    /* 遍历页表结构 */
     if (!(pml4[pml4_index] & PTE_PRESENT)) return;
-    pdp = (pdp_t *)((pml4[pml4_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pdp = (pdp_t *)((pml4[pml4_index] & 0xFFFFFFFFFF000)
+                    + MEM_BASE);
 
     if (!(pdp[pdp_index] & PTE_PRESENT)) return;
-    pd = (pd_t *)((pdp[pdp_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pd = (pd_t *)((pdp[pdp_index] & 0xFFFFFFFFFF000)
+                  + MEM_BASE);
 
     if (!(pd[pd_index] & PTE_PRESENT)) return;
-    pt = (pt_t *)((pd[pd_index] & 0xFFFFFFFFFF000) + MEM_BASE);
+    pt = (pt_t *)((pd[pd_index] & 0xFFFFFFFFFF000)
+                  + MEM_BASE);
 
-    /* 更新标志 */
     uint64_t physical_addr = pt[pt_index] & 0xFFFFFFFFFF000;
     pt[pt_index] = physical_addr | flags | PTE_PRESENT;
 
-    /* 刷新TLB */
     __asm__ volatile ("invlpg (%0)" : : "r"(virtual_addr));
 }
 
 /**
- * 复制内存内容
+ * mkrn_copy_page - Copy one page of memory
+ * @dest: Destination physical/virtual address
+ * @src: Source physical/virtual address
+ *
+ * Copy PAGE_SIZE bytes using 64-bit word moves.
  */
-void m4k_copy_page(uint64_t dest, uint64_t src) {
+void mkrn_copy_page(uint64_t dest, uint64_t src)
+{
     uint64_t *dest_ptr = (uint64_t *)dest;
     uint64_t *src_ptr = (uint64_t *)src;
     uint64_t i;
@@ -502,16 +529,23 @@ void m4k_copy_page(uint64_t dest, uint64_t src) {
 }
 
 /**
- * 清零页面
+ * mkrn_zero_page - Zero out a page
+ * @address: Address of the page to zero
  */
-void m4k_zero_page(uint64_t address) {
-    memset((void *)address, 0, PAGE_SIZE);
+void mkrn_zero_page(uint64_t address)
+{
+    mkrn_memset((void *)address, 0, PAGE_SIZE);
 }
 
 /**
- * 比较页面内容
+ * mkrn_compare_pages - Compare two pages for equality
+ * @page1: Address of first page
+ * @page2: Address of second page
+ *
+ * Return: true if pages are identical, false otherwise
  */
-bool m4k_compare_pages(uint64_t page1, uint64_t page2) {
+bool mkrn_compare_pages(uint64_t page1, uint64_t page2)
+{
     uint64_t *ptr1 = (uint64_t *)page1;
     uint64_t *ptr2 = (uint64_t *)page2;
     uint64_t i;
@@ -526,164 +560,190 @@ bool m4k_compare_pages(uint64_t page1, uint64_t page2) {
 }
 
 /**
- * 获取页面引用计数
+ * mkrn_get_page_refcount - Get page reference count
+ * @virtual_addr: Virtual address of the page
+ *
+ * Return: Current reference count (stub, returns 1)
  */
-uint32_t m4k_get_page_refcount(uint64_t virtual_addr) {
-    /* 临时实现，实际应该维护引用计数 */
+uint32_t mkrn_get_page_refcount(uint64_t virtual_addr)
+{
     return 1;
 }
 
 /**
- * 增加页面引用计数
+ * mkrn_inc_page_refcount - Increment page reference count
+ * @virtual_addr: Virtual address of the page
  */
-void m4k_inc_page_refcount(uint64_t virtual_addr) {
-    /* 临时实现 */
+void mkrn_inc_page_refcount(uint64_t virtual_addr)
+{
 }
 
 /**
- * 减少页面引用计数
+ * mkrn_dec_page_refcount - Decrement page reference count
+ * @virtual_addr: Virtual address of the page
  */
-void m4k_dec_page_refcount(uint64_t virtual_addr) {
-    /* 临时实现 */
+void mkrn_dec_page_refcount(uint64_t virtual_addr)
+{
 }
 
 /**
- * 锁定页面到内存
+ * mkrn_lock_page - Lock a page in memory
+ * @virtual_addr: Virtual address of the page
  */
-void m4k_lock_page(uint64_t virtual_addr) {
-    /* 临时实现 */
+void mkrn_lock_page(uint64_t virtual_addr)
+{
 }
 
 /**
- * 解锁页面
+ * mkrn_unlock_page - Unlock a previously locked page
+ * @virtual_addr: Virtual address of the page
  */
-void m4k_unlock_page(uint64_t virtual_addr) {
-    /* 临时实现 */
+void mkrn_unlock_page(uint64_t virtual_addr)
+{
 }
 
 /**
- * 检查页面是否被锁定
+ * mkrn_is_page_locked - Check if a page is locked
+ * @virtual_addr: Virtual address to check
+ *
+ * Return: true if locked, false otherwise (stub returns false)
  */
-bool m4k_is_page_locked(uint64_t virtual_addr) {
-    /* 临时实现 */
+bool mkrn_is_page_locked(uint64_t virtual_addr)
+{
     return false;
 }
 
 /**
- * 获取页面修改时间
+ * mkrn_get_page_mtime - Get page modification time
+ * @virtual_addr: Virtual address of the page
+ *
+ * Return: Modification timestamp (stub, returns 0)
  */
-uint64_t m4k_get_page_mtime(uint64_t virtual_addr) {
-    /* 临时实现 */
+uint64_t mkrn_get_page_mtime(uint64_t virtual_addr)
+{
     return 0;
 }
 
 /**
- * 设置页面修改时间
+ * mkrn_set_page_mtime - Set page modification time
+ * @virtual_addr: Virtual address of the page
+ * @mtime: Modification timestamp
  */
-void m4k_set_page_mtime(uint64_t virtual_addr, uint64_t mtime) {
-    /* 临时实现 */
+void mkrn_set_page_mtime(uint64_t virtual_addr, uint64_t mtime)
+{
 }
 
 /**
- * 预取页面到缓存
+ * mkrn_prefault_page - Pre-fault a page into the TLB
+ * @virtual_addr: Virtual address to pre-fault
  */
-void m4k_prefault_page(uint64_t virtual_addr) {
-    /* 临时实现 */
+void mkrn_prefault_page(uint64_t virtual_addr)
+{
 }
 
 /**
- * 刷新页面缓存
+ * mkrn_flush_page_cache - Flush cache for a page
+ * @virtual_addr: Virtual address to flush
  */
-void m4k_flush_page_cache(uint64_t virtual_addr) {
-    /* 临时实现 */
+void mkrn_flush_page_cache(uint64_t virtual_addr)
+{
 }
 
 /**
- * 获取页面缓存状态
+ * mkrn_get_page_cache_state - Get page cache state
+ * @virtual_addr: Virtual address to query
+ *
+ * Return: Cache state flags (stub, returns 0)
  */
-uint32_t m4k_get_page_cache_state(uint64_t virtual_addr) {
-    /* 临时实现 */
+uint32_t mkrn_get_page_cache_state(uint64_t virtual_addr)
+{
     return 0;
 }
 
 /**
- * 设置页面缓存策略
+ * mkrn_set_page_cache_policy - Set page cache policy
+ * @virtual_addr: Virtual address to configure
+ * @policy: Cache policy value
  */
-void m4k_set_page_cache_policy(uint64_t virtual_addr, uint32_t policy) {
-    /* 临时实现 */
+void mkrn_set_page_cache_policy(uint64_t virtual_addr,
+                                uint32_t policy)
+{
 }
 
 /**
- * 统计内存使用情况
+ * mkrn_memory_statistics - Print memory usage statistics
+ *
+ * Display total, free, and used memory with percentage usage.
  */
-void m4k_memory_statistics(void) {
+void mkrn_memory_statistics(void)
+{
     uint64_t total, free, used;
 
-    m4k_get_memory_stats(&total, &free, &used);
+    mkrn_get_memory_stats(&total, &free, &used);
 
-    console_write("=== M4KK1 x86_64 Memory Statistics ===\n");
-    console_write("Total memory: ");
-    console_write_hex(total / 1024 / 1024);
-    console_write(" MB\n");
-    console_write("Free memory: ");
-    console_write_hex(free / 1024 / 1024);
-    console_write(" MB\n");
-    console_write("Used memory: ");
-    console_write_hex(used / 1024 / 1024);
-    console_write(" MB\n");
-    console_write("Usage: ");
-    console_write_dec((used * 100) / total);
-    console_write("%\n");
-    console_write("=====================================\n");
+    mkrn_console_write("=== M4KK1 x86_64 Memory Statistics ===\n");
+    mkrn_console_write("Total memory: ");
+    mkrn_console_write_hex(total / 1024 / 1024);
+    mkrn_console_write(" MB\n");
+    mkrn_console_write("Free memory: ");
+    mkrn_console_write_hex(free / 1024 / 1024);
+    mkrn_console_write(" MB\n");
+    mkrn_console_write("Used memory: ");
+    mkrn_console_write_hex(used / 1024 / 1024);
+    mkrn_console_write(" MB\n");
+    mkrn_console_write("Usage: ");
+    mkrn_console_write_dec((used * 100) / total);
+    mkrn_console_write("%\n");
+    mkrn_console_write("=====================================\n");
 }
 
 /**
- * 调试：转储页表
+ * mkrn_dump_page_table - Dump page table entries for an address
+ * @virtual_addr: Virtual address to dump
+ *
+ * Display the PML4 and PDP entries for debugging.
  */
-void m4k_dump_page_table(uint64_t virtual_addr) {
+void mkrn_dump_page_table(uint64_t virtual_addr)
+{
     uint64_t pml4_index = (virtual_addr >> 39) & 0x1FF;
     uint64_t pdp_index = (virtual_addr >> 30) & 0x1FF;
     uint64_t pd_index = (virtual_addr >> 21) & 0x1FF;
     uint64_t pt_index = (virtual_addr >> 12) & 0x1FF;
 
-    console_write("Page table dump for address 0x");
-    console_write_hex(virtual_addr);
-    console_write("\n");
-    console_write("PML4[");
-    console_write_hex(pml4_index);
-    console_write("] = 0x");
-    console_write_hex(kernel_pml4[pml4_index]);
-    console_write("\n");
+    mkrn_console_write("Page table dump for address 0x");
+    mkrn_console_write_hex(virtual_addr);
+    mkrn_console_write("\n");
+    mkrn_console_write("PML4[");
+    mkrn_console_write_hex(pml4_index);
+    mkrn_console_write("] = 0x");
+    mkrn_console_write_hex(kernel_pml4[pml4_index]);
+    mkrn_console_write("\n");
 
     if (kernel_pml4[pml4_index] & PTE_PRESENT) {
-        pml4_t *pdp = (pml4_t *)((kernel_pml4[pml4_index] & 0xFFFFFFFFFF000) + MEM_BASE);
-        console_write("PDP[");
-        console_write_hex(pdp_index);
-        console_write("] = 0x");
-        console_write_hex(pdp[pdp_index]);
-        console_write("\n");
+        pml4_t *pdp = (pml4_t *)(
+            (kernel_pml4[pml4_index] & 0xFFFFFFFFFF000)
+            + MEM_BASE);
+        mkrn_console_write("PDP[");
+        mkrn_console_write_hex(pdp_index);
+        mkrn_console_write("] = 0x");
+        mkrn_console_write_hex(pdp[pdp_index]);
+        mkrn_console_write("\n");
     }
 
-    console_write("=====================================\n");
+    mkrn_console_write("=====================================\n");
 }
 
 /**
- * 内存管理初始化
+ * mkrn_arch_memory_init - Initialize x86_64 arch memory subsystem
+ *
+ * Query total memory size and initialize the page frame allocator
+ * and page table hierarchy.
  */
-void m4k_arch_memory_init(void) {
-    /* 获取内存信息 */
-    uint64_t total_memory = m4k_get_memory_size();
+void mkrn_arch_memory_init(void)
+{
+    uint64_t total_memory = mkrn_get_memory_size();
+    mkrn_memory_init(total_memory);
 
-    /* 初始化内存管理 */
-    m4k_memory_init(total_memory);
-
-    console_write("M4KK1 x86_64 memory management initialized\n");
-}
-
-/**
- * 获取内存大小（从BIOS或硬件检测）
- */
-uint64_t m4k_get_memory_size(void) {
-    /* 临时返回固定值，实际应该从硬件检测 */
-    return 0x40000000; /* 1GB */
+    mkrn_console_write(
+        "M4KK1 x86_64 memory management initialized\n");
 }

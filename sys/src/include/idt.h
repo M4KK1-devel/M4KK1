@@ -1,160 +1,164 @@
-/**
- * M4KK1 IDT (Interrupt Descriptor Table) Header
- * 中断描述符表定义和操作函数
+/*
+ * M4KK1 4P1 - idt.h
+ * Description: Interrupt Descriptor Table definitions and operations.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
-#ifndef __IDT_H__
-#define __IDT_H__
+#pragma once
 
 #include <stdint.h>
 
-/**
- * IDT条目结构
- */
 typedef struct {
-    uint16_t base_low;
-    uint16_t selector;
-    uint8_t always0;
-    uint8_t flags;
-    uint16_t base_high;
-} __attribute__((packed)) idt_entry_t;
+    u16 base_low;
+    u16 selector;
+    u8 always0;
+    u8 flags;
+    u16 base_high;
+} __attribute__((packed)) mkrn_idt_entry_t;
 
-/**
- * IDT指针结构
- */
 typedef struct {
-    uint16_t limit;
-    uint32_t base;
-} __attribute__((packed)) idt_ptr_t;
+    u16 limit;
+    u32 base;
+} __attribute__((packed)) mkrn_idt_ptr_t;
+
+typedef void (*mkrn_int_handler_t)(void);
+
+/* IDT flag bits */
+#define M4K_IDT_PRESENT         0x80
+#define M4K_IDT_DPL_0           0x00
+#define M4K_IDT_DPL_1           0x20
+#define M4K_IDT_DPL_2           0x40
+#define M4K_IDT_DPL_3           0x60
+#define M4K_IDT_STORAGE_SEGMENT 0x10
+#define M4K_IDT_GATE_16BIT      0x00
+#define M4K_IDT_GATE_32BIT      0x08
+#define M4K_IDT_TRAP_GATE       0x07
+#define M4K_IDT_INTERRUPT_GATE  0x06
+#define M4K_IDT_INTERRUPT_GATE_32 0x0E
+#define M4K_IDT_TASK_GATE       0x05
+
+/* Interrupt vector numbers */
+#define M4K_IDT_DIVIDE_BY_ZERO          0x00
+#define M4K_IDT_DEBUG                   0x01
+#define M4K_IDT_NMI                     0x02
+#define M4K_IDT_BREAKPOINT              0x03
+#define M4K_IDT_OVERFLOW                0x04
+#define M4K_IDT_BOUND_RANGE             0x05
+#define M4K_IDT_INVALID_OPCODE          0x06
+#define M4K_IDT_DEVICE_NOT_AVAILABLE    0x07
+#define M4K_IDT_DOUBLE_FAULT            0x08
+#define M4K_IDT_COPROCESSOR_SEGMENT     0x09
+#define M4K_IDT_INVALID_TSS             0x0A
+#define M4K_IDT_SEGMENT_NOT_PRESENT     0x0B
+#define M4K_IDT_STACK_SEGMENT_FAULT     0x0C
+#define M4K_IDT_GENERAL_PROTECTION      0x0D
+#define M4K_IDT_PAGE_FAULT              0x0E
+#define M4K_IDT_RESERVED                0x0F
+#define M4K_IDT_FPU_ERROR               0x10
+#define M4K_IDT_ALIGNMENT_CHECK         0x11
+#define M4K_IDT_MACHINE_CHECK           0x12
+#define M4K_IDT_SIMD_ERROR              0x13
+#define M4K_IDT_VIRT_EXCEPTION          0x14
+#define M4K_IDT_CONTROL_PROTECTION      0x15
+
+#define M4K_IDT_TIMER                   0x20
+#define M4K_IDT_KEYBOARD                0x21
+#define M4K_IDT_CASCADE                 0x22
+#define M4K_IDT_COM2                    0x23
+#define M4K_IDT_COM1                    0x24
+#define M4K_IDT_LPT2                    0x25
+#define M4K_IDT_FLOPPY                  0x26
+#define M4K_IDT_LPT1                    0x27
+#define M4K_IDT_RTC                     0x28
+#define M4K_IDT_FREE1                   0x29
+#define M4K_IDT_FREE2                   0x2A
+#define M4K_IDT_FREE3                   0x2B
+#define M4K_IDT_MOUSE                   0x2C
+#define M4K_IDT_FPU                     0x2D
+#define M4K_IDT_PRIMARY_ATA             0x2E
+#define M4K_IDT_SECONDARY_ATA           0x2F
 
 /**
- * 中断处理函数类型
+ * mkrn_idt_init - Initialize the IDT
+ *
+ * Return: void
  */
-typedef void (*interrupt_handler_t)(void);
+void mkrn_idt_init(void);
+void mkrn_idt_init_c(void);
 
 /**
- * IDT标志位
+ * mkrn_idt_set_gate - Set an IDT entry
+ * @num: Interrupt vector number
+ * @base: Handler function address
+ * @selector: Code segment selector
+ * @flags: Gate flags
+ *
+ * Return: void
  */
-#define IDT_PRESENT         0x80
-#define IDT_DPL_0           0x00
-#define IDT_DPL_1           0x20
-#define IDT_DPL_2           0x40
-#define IDT_DPL_3           0x60
-#define IDT_STORAGE_SEGMENT 0x10
-#define IDT_GATE_16BIT      0x00
-#define IDT_GATE_32BIT      0x08
-#define IDT_TRAP_GATE       0x07
-#define IDT_INTERRUPT_GATE  0x06
-#define IDT_TASK_GATE       0x05
+void mkrn_idt_set_gate(u8 num, u32 base, u16 selector, u8 flags);
+void mkrn_idt_set_gate_c(u8 num, u32 base, u16 selector, u8 flags);
 
 /**
- * 中断号定义
+ * mkrn_idt_register_handler - Register an interrupt handler
+ * @num: Interrupt vector number
+ * @handler: Handler function pointer
+ *
+ * Return: void
  */
-#define IDT_DIVIDE_BY_ZERO          0x00
-#define IDT_DEBUG                   0x01
-#define IDT_NMI                     0x02
-#define IDT_BREAKPOINT              0x03
-#define IDT_OVERFLOW                0x04
-#define IDT_BOUND_RANGE             0x05
-#define IDT_INVALID_OPCODE          0x06
-#define IDT_DEVICE_NOT_AVAILABLE    0x07
-#define IDT_DOUBLE_FAULT            0x08
-#define IDT_COPROCESSOR_SEGMENT     0x09
-#define IDT_INVALID_TSS             0x0A
-#define IDT_SEGMENT_NOT_PRESENT     0x0B
-#define IDT_STACK_SEGMENT_FAULT     0x0C
-#define IDT_GENERAL_PROTECTION      0x0D
-#define IDT_PAGE_FAULT              0x0E
-#define IDT_RESERVED                0x0F
-#define IDT_FPU_ERROR               0x10
-#define IDT_ALIGNMENT_CHECK         0x11
-#define IDT_MACHINE_CHECK           0x12
-#define IDT_SIMD_ERROR              0x13
-#define IDT_VIRT_EXCEPTION          0x14
-#define IDT_CONTROL_PROTECTION      0x15
-
-#define IDT_TIMER                   0x20
-#define IDT_KEYBOARD                0x21
-#define IDT_CASCADE                 0x22
-#define IDT_COM2                    0x23
-#define IDT_COM1                    0x24
-#define IDT_LPT2                    0x25
-#define IDT_FLOPPY                  0x26
-#define IDT_LPT1                    0x27
-#define IDT_RTC                     0x28
-#define IDT_FREE1                   0x29
-#define IDT_FREE2                   0x2A
-#define IDT_FREE3                   0x2B
-#define IDT_MOUSE                   0x2C
-#define IDT_FPU                     0x2D
-#define IDT_PRIMARY_ATA             0x2E
-#define IDT_SECONDARY_ATA           0x2F
+void mkrn_idt_register_handler(u8 num, mkrn_int_handler_t handler);
 
 /**
- * 初始化IDT
+ * mkrn_idt_enable_interrupts - Enable interrupts (STI)
+ *
+ * Return: void
  */
-void idt_init(void);
+void mkrn_idt_enable_interrupts(void);
 
 /**
- * 设置IDT条目
+ * mkrn_idt_disable_interrupts - Disable interrupts (CLI)
+ *
+ * Return: void
  */
-void idt_set_gate(uint8_t num, uint32_t base, uint16_t selector, uint8_t flags);
+void mkrn_idt_disable_interrupts(void);
 
-/**
- * 注册中断处理函数
- */
-void idt_register_handler(uint8_t num, interrupt_handler_t handler);
-
-/**
- * 启用中断
- */
-void idt_enable_interrupts(void);
-
-/**
- * 禁用中断
- */
-void idt_disable_interrupts(void);
-
-/**
- * 中断处理函数声明
- */
-extern void idt_handler_00(void);
-extern void idt_handler_01(void);
-extern void idt_handler_02(void);
-extern void idt_handler_03(void);
-extern void idt_handler_04(void);
-extern void idt_handler_05(void);
-extern void idt_handler_06(void);
-extern void idt_handler_07(void);
-extern void idt_handler_08(void);
-extern void idt_handler_09(void);
-extern void idt_handler_0A(void);
-extern void idt_handler_0B(void);
-extern void idt_handler_0C(void);
-extern void idt_handler_0D(void);
-extern void idt_handler_0E(void);
-extern void idt_handler_0F(void);
-extern void idt_handler_10(void);
-extern void idt_handler_11(void);
-extern void idt_handler_12(void);
-extern void idt_handler_13(void);
-extern void idt_handler_14(void);
-extern void idt_handler_15(void);
-extern void idt_handler_20(void);
-extern void idt_handler_21(void);
-extern void idt_handler_22(void);
-extern void idt_handler_23(void);
-extern void idt_handler_24(void);
-extern void idt_handler_25(void);
-extern void idt_handler_26(void);
-extern void idt_handler_27(void);
-extern void idt_handler_28(void);
-extern void idt_handler_29(void);
-extern void idt_handler_2A(void);
-extern void idt_handler_2B(void);
-extern void idt_handler_2C(void);
-extern void idt_handler_2D(void);
-extern void idt_handler_2E(void);
-extern void idt_handler_2F(void);
-
-#endif /* __IDT_H__ */
+/* External interrupt handler declarations */
+extern void mkrn_idt_handler_00(void);
+extern void mkrn_idt_handler_01(void);
+extern void mkrn_idt_handler_02(void);
+extern void mkrn_idt_handler_03(void);
+extern void mkrn_idt_handler_04(void);
+extern void mkrn_idt_handler_05(void);
+extern void mkrn_idt_handler_06(void);
+extern void mkrn_idt_handler_07(void);
+extern void mkrn_idt_handler_08(void);
+extern void mkrn_idt_handler_09(void);
+extern void mkrn_idt_handler_0A(void);
+extern void mkrn_idt_handler_0B(void);
+extern void mkrn_idt_handler_0C(void);
+extern void mkrn_idt_handler_0D(void);
+extern void mkrn_idt_handler_0E(void);
+extern void mkrn_idt_handler_0F(void);
+extern void mkrn_idt_handler_10(void);
+extern void mkrn_idt_handler_11(void);
+extern void mkrn_idt_handler_12(void);
+extern void mkrn_idt_handler_13(void);
+extern void mkrn_idt_handler_14(void);
+extern void mkrn_idt_handler_15(void);
+extern void mkrn_idt_handler_20(void);
+extern void mkrn_idt_handler_21(void);
+extern void mkrn_idt_handler_22(void);
+extern void mkrn_idt_handler_23(void);
+extern void mkrn_idt_handler_24(void);
+extern void mkrn_idt_handler_25(void);
+extern void mkrn_idt_handler_26(void);
+extern void mkrn_idt_handler_27(void);
+extern void mkrn_idt_handler_28(void);
+extern void mkrn_idt_handler_29(void);
+extern void mkrn_idt_handler_2A(void);
+extern void mkrn_idt_handler_2B(void);
+extern void mkrn_idt_handler_2C(void);
+extern void mkrn_idt_handler_2D(void);
+extern void mkrn_idt_handler_2E(void);
+extern void mkrn_idt_handler_2F(void);

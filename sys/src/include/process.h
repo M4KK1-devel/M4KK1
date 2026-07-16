@@ -1,191 +1,130 @@
-/**
- * M4KK1 Process Management Header
- * 进程管理函数定义
+/*
+ * M4KK1 4P1 - process.h
+ * Description: Process management and scheduler declarations.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
-#ifndef __PROCESS_H__
-#define __PROCESS_H__
+#pragma once
 
 #include <stdint.h>
 
-/**
- * 进程状态
- */
-#define PROCESS_STATE_RUNNING   0
-#define PROCESS_STATE_READY     1
-#define PROCESS_STATE_BLOCKED   2
-#define PROCESS_STATE_TERMINATED 3
+#define M4K_PROC_RUNNING     0
+#define M4K_PROC_READY       1
+#define M4K_PROC_BLOCKED     2
+#define M4K_PROC_TERMINATED  3
 
-/**
- * 进程优先级
- */
-#define PROCESS_PRIORITY_HIGH   0
-#define PROCESS_PRIORITY_NORMAL 1
-#define PROCESS_PRIORITY_LOW    2
+#define M4K_PRIO_HIGH   0
+#define M4K_PRIO_NORMAL 1
+#define M4K_PRIO_LOW    2
 
-/**
- * 进程结构
- */
-typedef struct process {
-    uint32_t pid;
-    uint32_t ppid;
-    uint32_t state;
-    uint32_t priority;
-    uint32_t esp;
-    uint32_t ebp;
-    uint32_t eip;
-    uint32_t eax;
-    uint32_t ebx;
-    uint32_t ecx;
-    uint32_t edx;
-    uint32_t esi;
-    uint32_t edi;
-    uint32_t flags;
-    uint32_t cr3;
-    uint32_t sleep_ticks;
+typedef struct mkrn_process {
+    u32 pid;
+    u32 ppid;
+    u32 state;
+    u32 priority;
+    u32 thread_esp;
+    u32 sleep_ticks;
     char name[32];
-    struct process *next;
-} process_t;
+    char cwd[256];
+    struct mkrn_process *next;
+} mkrn_process_t;
 
-/**
- * 进程控制块
- */
 typedef struct {
-    process_t *current;
-    process_t *ready_queue;
-    process_t *blocked_queue;
-    uint32_t process_count;
-    uint32_t next_pid;
-} process_control_t;
+    mkrn_process_t *current;
+    mkrn_process_t *ready_queue;
+    u32 process_count;
+    u32 next_pid;
+} mkrn_process_ctrl_t;
+
+struct procinfo;
 
 /**
- * 初始化进程管理
+ * mkrn_process_init - Initialize process subsystem
+ *
+ * Return: void
  */
-void process_init(void);
+void mkrn_process_init(void);
 
 /**
- * 创建初始进程
+ * mkrn_execve - Execute a new process from ELF data
+ * @elf_data: Pointer to ELF binary data
+ * @size: Size of ELF data
+ *
+ * Return: 0 on success, -1 on failure
  */
-void process_create_init(void);
+int mkrn_execve(u8 *elf_data, u32 size);
 
 /**
- * 创建新进程
+ * mkrn_sched_start - Start the scheduler
+ *
+ * Return: void
  */
-process_t *process_create(const char *name, uint32_t priority);
+void mkrn_sched_start(void);
 
 /**
- * 销毁进程
+ * mkrn_process_yield - Yield the current process
+ *
+ * Return: void
  */
-void process_destroy(process_t *process);
+void mkrn_process_yield(void);
 
 /**
- * 获取当前进程
+ * mkrn_process_switch_first - Switch to first process
+ *
+ * Return: void
  */
-process_t *process_get_current(void);
+void mkrn_process_switch_first(void);
 
 /**
- * 设置当前进程
+ * mkrn_process_exit - Terminate current process
+ *
+ * Return: void
  */
-void process_set_current(process_t *process);
+void mkrn_process_exit(void);
 
 /**
- * 调度进程
+ * mkrn_process_block - Block current process
+ *
+ * Return: void
  */
-void process_schedule(void);
+void mkrn_process_block(void);
 
 /**
- * 启动调度器
+ * mkrn_process_wakeup - Wake up a blocked process
+ * @process: Process to wake up
+ *
+ * Return: void
  */
-void scheduler_start(void);
+void mkrn_process_wakeup(mkrn_process_t *process);
 
 /**
- * 阻塞当前进程
+ * mkrn_process_get_current - Get current process
+ *
+ * Return: Pointer to current process
  */
-void process_block(void);
+mkrn_process_t *mkrn_process_get_current(void);
 
 /**
- * 唤醒进程
+ * mkrn_process_get_pid - Get current process PID
+ *
+ * Return: Current PID
  */
-void process_wakeup(process_t *process);
+u32 mkrn_process_get_pid(void);
 
 /**
- * 睡眠指定毫秒数
+ * mkrn_process_get_count - Get number of processes
+ *
+ * Return: Process count
  */
-void process_sleep(uint32_t milliseconds);
+u32 mkrn_process_get_count(void);
 
 /**
- * 退出当前进程
+ * mkrn_process_fill_info - Fill process info buffer
+ * @buf: Buffer to fill
+ * @max: Maximum number of entries
+ *
+ * Return: Number of entries filled
  */
-void process_exit(void);
-
-/**
- * 获取进程ID
- */
-uint32_t process_get_pid(void);
-
-/**
- * 获取父进程ID
- */
-uint32_t process_get_ppid(void);
-
-/**
- * 设置进程优先级
- */
-void process_set_priority(uint32_t priority);
-
-/**
- * 获取进程优先级
- */
-uint32_t process_get_priority(void);
-
-/**
- * 获取进程状态
- */
-uint32_t process_get_state(void);
-
-/**
- * 设置进程状态
- */
-void process_set_state(uint32_t state);
-
-/**
- * 获取进程数量
- */
-uint32_t process_get_count(void);
-
-/**
- * 进程切换
- */
-void process_switch(void);
-
-/**
- * 保存进程上下文
- */
-void process_save_context(process_t *process);
-
-/**
- * 恢复进程上下文
- */
-void process_restore_context(process_t *process);
-
-/**
- * 进程间通信 - 发送消息
- */
-int32_t ipc_send(uint32_t receiver_pid, void *data, uint32_t size, uint32_t type);
-
-/**
- * 进程间通信 - 接收消息
- */
-int32_t ipc_receive(uint32_t *sender_pid, void *data, uint32_t *size, uint32_t type);
-
-/**
- * 切换到指定进程（内部函数）
- */
-void process_switch_to(process_t *process);
-
-/**
- * 获取定时器频率（内部函数）
- */
-uint32_t timer_get_frequency(void);
-
-#endif /* __PROCESS_H__ */
+int mkrn_process_fill_info(struct procinfo *buf, u32 max);

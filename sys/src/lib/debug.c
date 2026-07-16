@@ -1,26 +1,20 @@
-/**
- * M4KK1内核调试输出函数
- * 提供汇编代码中需要的调试输出功能
+/*
+ * M4KK1 4P1 - debug.c
+ * Description: Kernel debug output stubs for asm calls.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
 #include <stdint.h>
 #include <console.h>
 
-/**
- * 打印字符串（用于汇编代码调用）
- */
-void print_string(void) {
-    // 这个函数需要从汇编代码中获取字符串地址
-    // 由于汇编调用约定，我们需要从汇编代码中处理参数传递
-    // 这里提供一个空的实现，避免链接错误
+void
+print_string(void)
+{
 }
 
-/**
- * 打印十六进制数（用于汇编代码调用）
- */
-void print_hex(void) {
-    // 从栈中获取要打印的数值
-    // 这里提供一个空的实现，避免链接错误
+void
+print_hex(void)
+{
 }
-
-// timer_handler 在 timer.c 中定义，这里不需要重复定义

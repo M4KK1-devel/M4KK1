@@ -9,15 +9,10 @@ SECTIONS {
     /* 内核起始地址为1MB */
     . = 0x100000;
 
-    /* 内核魔数 */
-    .kernel_magic :
-    {
-        LONG(0x4D344B4B)  /* M4KK */
-    }
-
-    /* 引导代码段 */
+    /* 引导代码段 (Multiboot头必须在前8192字节内) */
     .text ALIGN(4096) : {
         *(.multiboot)
+        LONG(0x4D344B4B)  /* M4KK魔数 */
         *(.text.boot)
         *(.text)
         *(.text.*)
@@ -74,4 +69,4 @@ SECTIONS {
 KERNEL_MAGIC = 0x4D344B4B;
 KERNEL_BASE = 0x100000;
 KERNEL_HEAP_SIZE = 0x100000;
-KERNEL_STACK_SIZE = 16384;
+KERNEL_STACK_SIZE = 32768;

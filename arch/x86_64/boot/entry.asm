@@ -1,5 +1,8 @@
-; M4KK1 x86_64 Architecture - Boot Entry Point
-; 独特的M4KK1引导实现，确保与标准不兼容
+; M4KK1 4P1 - entry.asm
+; Description: Boot entry point for x86_64.
+;
+; Copyright (c) 2026 Yaku Makki
+; SPDX-License-Identifier: 4P1-Custom
 
 BITS 64
 
@@ -22,7 +25,7 @@ multiboot_header:
 
 section .text
 global _start
-extern kmain
+extern mkrn_main
 extern m4k_stack_top
 
 _start:
@@ -37,7 +40,7 @@ _start:
     mov rsi, M4K_BOOT_MAGIC ; 魔数
 
     ; 调用M4KK1内核主函数
-    call kmain
+    call mkrn_main
 
     ; M4KK1独特的死循环
 .halt:

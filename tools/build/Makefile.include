@@ -1,16 +1,19 @@
-# M4KK1通用Makefile包含文件
-# 定义通用构建规则和变量
+# M4KK1 4P1 - Makefile.include
+# Description: Common Makefile include with shared build rules.
+#
+# Copyright (c) 2026 Yaku Makki
+# SPDX-License-Identifier: 4P1-Custom
 
-# 编译器设置
+# Compiler settings
 HOSTCC ?= gcc
 HOSTCXX ?= g++
 HOSTCFLAGS := -Wall -Wextra -O2 -g
 HOSTCXXFLAGS := -Wall -Wextra -O2 -g -std=c++17
 
-# 导出变量
+# Export variables
 export HOSTCC HOSTCXX HOSTCFLAGS HOSTCXXFLAGS
 
-# 通用构建规则
+# Common build rules
 %.o: %.c
 	$(HOSTCC) $(HOSTCFLAGS) -c $< -o $@
 
@@ -20,21 +23,21 @@ export HOSTCC HOSTCXX HOSTCFLAGS HOSTCXXFLAGS
 %.o: %.asm
 	$(AS) $(ASFLAGS) $< -o $@
 
-# 清理规则
+# Clean rule
 .PHONY: clean
 clean:
 	rm -f *.o *.a *.so *.prg
 	rm -rf *.dSYM
 
-# 安装规则
+# Install rule
 .PHONY: install
 install: all
 
-# 帮助规则
+# Help rule
 .PHONY: help
 help:
-	@echo "通用构建规则"
-	@echo "  make all     - 构建所有目标"
-	@echo "  make clean   - 清理构建文件"
-	@echo "  make install - 安装构建结果"
-	@echo "  make help    - 显示此帮助"
+	@echo "Common build rules"
+	@echo "  make all     - Build all targets"
+	@echo "  make clean   - Clean build files"
+	@echo "  make install - Install build results"
+	@echo "  make help    - Show this help"

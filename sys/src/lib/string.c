@@ -1,111 +1,103 @@
-/**
- * M4KK1基础字符串和内存函数
- * 实现基本的C库函数
+/*
+ * M4KK1 4P1 - string.c
+ * Description: Basic C string and memory functions.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
 #include <stdint.h>
 #include <stddef.h>
 #include "../include/memory.h"
 
-/**
- * 复制内存块
- */
-void *memcpy(void *dest, const void *src, size_t n) {
-    uint8_t *d = (uint8_t *)dest;
-    const uint8_t *s = (const uint8_t *)src;
+void *
+mkrn_memcpy(void *pDest, const void *pSrc, size_t n)
+{
+    uint8_t *pD = (uint8_t *)pDest;
+    const uint8_t *pS = (const uint8_t *)pSrc;
 
-    for (size_t i = 0; i < n; i++) {
-        d[i] = s[i];
-    }
+    for (size_t i = 0; i < n; i++)
+        pD[i] = pS[i];
 
-    return dest;
+    return pDest;
 }
 
-/**
- * 填充内存块
- */
-void *memset(void *s, int c, size_t n) {
-    uint8_t *p = (uint8_t *)s;
+void *
+mkrn_memset(void *pS, int c, size_t n)
+{
+    uint8_t *p = (uint8_t *)pS;
 
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++)
         p[i] = (uint8_t)c;
-    }
 
-    return s;
+    return pS;
 }
 
-/**
- * 复制字符串
- */
-char *strcpy(char *dest, const char *src) {
-    char *d = dest;
+char *
+mkrn_strcpy(char *pDest, const char *pSrc)
+{
+    char *pD = pDest;
 
-    while (*src) {
-        *d++ = *src++;
-    }
-    *d = '\0';
+    while (*pSrc)
+        *pD++ = *pSrc++;
+    *pD = '\0';
 
-    return dest;
+    return pDest;
 }
 
-/**
- * 复制字符串（带长度限制）
- */
-char *strncpy(char *dest, const char *src, size_t n) {
-    char *d = dest;
+char *
+mkrn_strncpy(char *pDest, const char *pSrc, size_t n)
+{
+    char *pD = pDest;
 
-    while (n > 0 && *src) {
-        *d++ = *src++;
+    while (n > 0 && *pSrc) {
+        *pD++ = *pSrc++;
         n--;
     }
 
     while (n > 0) {
-        *d++ = '\0';
+        *pD++ = '\0';
         n--;
     }
 
-    return dest;
+    return pDest;
 }
 
-/**
- * 字符串长度
- */
-size_t strlen(const char *s) {
+size_t
+mkrn_strlen(const char *pS)
+{
     size_t len = 0;
 
-    while (*s++) {
+    while (*pS++)
         len++;
-    }
 
     return len;
 }
 
-/**
- * 字符串比较
- */
-int strcmp(const char *s1, const char *s2) {
-    while (*s1 && *s2 && (*s1 == *s2)) {
-        s1++;
-        s2++;
+int
+mkrn_strcmp(const char *pS1, const char *pS2)
+{
+    while (*pS1 && *pS2 && (*pS1 == *pS2)) {
+        pS1++;
+        pS2++;
     }
 
-    return (int)(*s1 - *s2);
+    return (int)(*pS1 - *pS2);
 }
 
-/**
- * 字符串复制（动态分配）
- */
-char *strdup(const char *s) {
-    size_t len = strlen(s) + 1;
-    /* 暂时禁用kmalloc调用，避免循环依赖 */
-    // char *new_str = (char *)kmalloc(len);
+char *
+mkrn_strdup(const char *pS)
+{
+    size_t len = mkrn_strlen(pS) + 1;
+    (void)len;
+    char *pNewStr = (char *)0x100000;
 
-    /* 临时实现：返回固定地址 */
-    char *new_str = (char *)0x100000;
+    if (pNewStr)
+        mkrn_memcpy(pNewStr, pS, len);
 
-    if (new_str) {
-        memcpy(new_str, s, len);
-    }
-
-    return new_str;
+    return pNewStr;
 }
+
+/* Compatibility alias for compiler-generated memcpy calls */
+__attribute__((weak, alias("mkrn_memcpy"))) void *
+memcpy(void *pDest, const void *pSrc, size_t n);

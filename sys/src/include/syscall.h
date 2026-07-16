@@ -1,184 +1,222 @@
-/**
- * M4KK1 System Call Header
- * 系统调用函数定义
+/*
+ * M4KK1 4P1 - syscall.h
+ * Description: Kernel syscall handler definitions and syscall numbers.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
-#ifndef __SYSCALL_H__
-#define __SYSCALL_H__
+#pragma once
 
 #include <stdint.h>
 
+#define M4K_SC_EXIT        0x01
+#define M4K_SC_FORK        0x02
+#define M4K_SC_READ        0x03
+#define M4K_SC_WRITE       0x04
+#define M4K_SC_OPEN        0x05
+#define M4K_SC_CLOSE       0x06
+#define M4K_SC_WAITPID     0x07
+#define M4K_SC_EXECVE      0x08
+#define M4K_SC_GETPID      0x09
+#define M4K_SC_GETPPID     0x0A
+#define M4K_SC_BRK         0x0B
+#define M4K_SC_MMAP        0x0C
+#define M4K_SC_MUNMAP      0x0D
+#define M4K_SC_MPROTECT    0x0E
+#define M4K_SC_MSYNC       0x0F
+#define M4K_SC_GETCWD      0x10
+#define M4K_SC_CHDIR       0x11
+#define M4K_SC_MKDIR       0x12
+#define M4K_SC_RMDIR       0x13
+#define M4K_SC_LINK        0x14
+#define M4K_SC_UNLINK      0x15
+#define M4K_SC_RENAME      0x16
+#define M4K_SC_STAT        0x17
+#define M4K_SC_FSTAT       0x18
+#define M4K_SC_LSTAT       0x19
+#define M4K_SC_ACCESS      0x1A
+#define M4K_SC_CHMOD       0x1B
+#define M4K_SC_CHOWN       0x1C
+#define M4K_SC_UTIME       0x1D
+#define M4K_SC_TIME        0x1E
+#define M4K_SC_TIMES       0x1F
+#define M4K_SC_GETUID      0x20
+#define M4K_SC_GETGID      0x21
+#define M4K_SC_SETUID      0x22
+#define M4K_SC_SETGID      0x23
+#define M4K_SC_GETEUID     0x24
+#define M4K_SC_GETEGID     0x25
+#define M4K_SC_SETEUID     0x26
+#define M4K_SC_SETEGID     0x27
+#define M4K_SC_PIPE        0x28
+#define M4K_SC_DUP         0x29
+#define M4K_SC_DUP2        0x2A
+#define M4K_SC_SELECT      0x2B
+#define M4K_SC_POLL        0x2C
+#define M4K_SC_EPOLL_CREATE 0x2D
+#define M4K_SC_EPOLL_CTL   0x2E
+#define M4K_SC_EPOLL_WAIT  0x2F
+#define M4K_SC_SOCKET      0x30
+#define M4K_SC_BIND        0x31
+#define M4K_SC_LISTEN      0x32
+#define M4K_SC_ACCEPT      0x33
+#define M4K_SC_CONNECT     0x34
+#define M4K_SC_SEND        0x35
+#define M4K_SC_RECV        0x36
+#define M4K_SC_SENDTO      0x37
+#define M4K_SC_RECVFROM    0x38
+#define M4K_SC_SHUTDOWN    0x39
+#define M4K_SC_SETSOCKOPT  0x3A
+#define M4K_SC_GETSOCKOPT  0x3B
+#define M4K_SC_IOCTL       0x3C
+#define M4K_SC_FCNTL       0x3D
+#define M4K_SC_READDIR     0x3E
+#define M4K_SC_TELLDIR     0x3F
+#define M4K_SC_SEEKDIR     0x40
+#define M4K_SC_CLOSEDIR    0x41
+#define M4K_SC_OPENDIR     0x42
+#define M4K_SC_MKNOD       0x43
+#define M4K_SC_MKFIFO      0x44
+#define M4K_SC_TRUNCATE    0x45
+#define M4K_SC_FTRUNCATE   0x46
+#define M4K_SC_GETDENTS    0x47
+#define M4K_SC_SYNC        0x48
+#define M4K_SC_FSYNC       0x49
+#define M4K_SC_FDATASYNC   0x4A
+#define M4K_SC_MLOCK       0x4B
+#define M4K_SC_MUNLOCK     0x4C
+#define M4K_SC_MLOCKALL    0x4D
+#define M4K_SC_MUNLOCKALL  0x4E
+#define M4K_SC_NANOSLEEP   0x4F
+#define M4K_SC_CLOCK_GETTIME 0x50
+#define M4K_SC_CLOCK_SETTIME 0x51
+#define M4K_SC_CLOCK_GETRES  0x52
+#define M4K_SC_SCHED_YIELD   0x53
+#define M4K_SC_SCHED_SETSCHEDULER 0x54
+#define M4K_SC_SCHED_GETSCHEDULER 0x55
+#define M4K_SC_SCHED_SETPARAM    0x56
+#define M4K_SC_SCHED_GETPARAM    0x57
+#define M4K_SC_SCHED_SETAFFINITY 0x58
+#define M4K_SC_SCHED_GETAFFINITY 0x59
+#define M4K_SC_PRLIMIT64         0x5A
+#define M4K_SC_GETRUSAGE         0x5B
+#define M4K_SC_GETTIMEOFDAY      0x5C
+#define M4K_SC_SETTIMEOFDAY      0x5D
+#define M4K_SC_ADJTIMEX          0x5E
+#define M4K_SC_TIMER_CREATE      0x5F
+#define M4K_SC_TIMER_DELETE      0x60
+#define M4K_SC_TIMER_SETTIME     0x61
+#define M4K_SC_TIMER_GETTIME     0x62
+#define M4K_SC_TIMER_GETOVERRUN  0x63
+#define M4K_SC_KILL              0x64
+#define M4K_SC_TKILL             0x65
+#define M4K_SC_TGKILL            0x66
+#define M4K_SC_SIGACTION         0x67
+#define M4K_SC_SIGPROCMASK       0x68
+#define M4K_SC_SIGPENDING        0x69
+#define M4K_SC_SIGSUSPEND        0x6A
+#define M4K_SC_SIGTIMEDWAIT      0x6B
+#define M4K_SC_SIGRETURN         0x6C
+#define M4K_SC_REBOOT            0x6D
+#define M4K_SC_KEXEC_LOAD        0x6E
+#define M4K_SC_EXIT_GROUP        0x6F
+#define M4K_SC_WAIT4             0x70
+#define M4K_SC_CLONE             0x71
+#define M4K_SC_VFORK             0x72
+#define M4K_SC_UNAME             0x73
+#define M4K_SC_SEMGET            0x74
+#define M4K_SC_SEMOP             0x75
+#define M4K_SC_SEMCTL            0x76
+#define M4K_SC_SEMTIMEDOP        0x77
+#define M4K_SC_MSGGET            0x78
+#define M4K_SC_MSGSND            0x79
+#define M4K_SC_MSGRCV            0x7A
+#define M4K_SC_MSGCTL            0x7B
+#define M4K_SC_SHMGET            0x7C
+#define M4K_SC_SHMAT             0x7D
+#define M4K_SC_SHMDT             0x7E
+#define M4K_SC_SHMCTL            0x7F
+
+/* Dynamic linker syscalls */
+#define M4K_SC_DL_LOAD_LIBRARY   0x80
+#define M4K_SC_DL_UNLOAD_LIBRARY 0x81
+#define M4K_SC_DL_FIND_SYMBOL    0x82
+#define M4K_SC_DL_GET_ERROR      0x83
+
+/* M4KK1 extended syscalls */
+#define M4K_SC_SYSINFO          0x84
+#define M4K_SC_GETPROCS         0x85
+#define M4K_SC_STATFS           0x86
+#define M4K_SC_MOUNT            0x87
+#define M4K_SC_UMOUNT           0x88
+#define M4K_SC_MOUNTINFO        0x89
+
+#define M4K_SC_SUCCESS 0
+#define M4K_SC_ERROR   (-1)
+
+struct mkrn_sysinfo {
+    u32 total_ram;
+    u32 free_ram;
+    u32 used_ram;
+    u32 process_count;
+};
+
+struct mkrn_statfs {
+    u32 block_size;
+    u32 total_blocks;
+    u32 free_blocks;
+    u32 used_blocks;
+};
+
+#define M4K_PROCBUF_MAX 64
+
+struct mkrn_procinfo {
+    u32 pid;
+    u32 ppid;
+    u32 state;
+    char name[32];
+};
+
 /**
- * 系统调用号
+ * mkrn_syscall_init - Initialize the syscall subsystem
+ *
+ * Return: void
  */
-#define SYSCALL_EXIT        0x01
-#define SYSCALL_FORK        0x02
-#define SYSCALL_READ        0x03
-#define SYSCALL_WRITE       0x04
-#define SYSCALL_OPEN        0x05
-#define SYSCALL_CLOSE       0x06
-#define SYSCALL_WAITPID     0x07
-#define SYSCALL_EXECVE      0x08
-#define SYSCALL_GETPID      0x09
-#define SYSCALL_GETPPID     0x0A
-#define SYSCALL_BRK         0x0B
-#define SYSCALL_MMAP        0x0C
-#define SYSCALL_MUNMAP      0x0D
-#define SYSCALL_MPROTECT    0x0E
-#define SYSCALL_MSYNC       0x0F
-#define SYSCALL_GETCWD      0x10
-#define SYSCALL_CHDIR       0x11
-#define SYSCALL_MKDIR       0x12
-#define SYSCALL_RMDIR       0x13
-#define SYSCALL_LINK        0x14
-#define SYSCALL_UNLINK      0x15
-#define SYSCALL_RENAME      0x16
-#define SYSCALL_STAT        0x17
-#define SYSCALL_FSTAT       0x18
-#define SYSCALL_LSTAT       0x19
-#define SYSCALL_ACCESS      0x1A
-#define SYSCALL_CHMOD       0x1B
-#define SYSCALL_CHOWN       0x1C
-#define SYSCALL_UTIME       0x1D
-#define SYSCALL_TIME        0x1E
-#define SYSCALL_TIMES       0x1F
-#define SYSCALL_GETUID      0x20
-#define SYSCALL_GETGID      0x21
-#define SYSCALL_SETUID      0x22
-#define SYSCALL_SETGID      0x23
-#define SYSCALL_GETEUID     0x24
-#define SYSCALL_GETEGID     0x25
-#define SYSCALL_SETEUID     0x26
-#define SYSCALL_SETEGID     0x27
-#define SYSCALL_PIPE        0x28
-#define SYSCALL_DUP         0x29
-#define SYSCALL_DUP2        0x2A
-#define SYSCALL_SELECT      0x2B
-#define SYSCALL_POLL        0x2C
-#define SYSCALL_EPOLL_CREATE 0x2D
-#define SYSCALL_EPOLL_CTL   0x2E
-#define SYSCALL_EPOLL_WAIT  0x2F
-#define SYSCALL_SOCKET      0x30
-#define SYSCALL_BIND        0x31
-#define SYSCALL_LISTEN      0x32
-#define SYSCALL_ACCEPT      0x33
-#define SYSCALL_CONNECT     0x34
-#define SYSCALL_SEND        0x35
-#define SYSCALL_RECV        0x36
-#define SYSCALL_SENDTO      0x37
-#define SYSCALL_RECVFROM    0x38
-#define SYSCALL_SHUTDOWN    0x39
-#define SYSCALL_SETSOCKOPT  0x3A
-#define SYSCALL_GETSOCKOPT  0x3B
-#define SYSCALL_IOCTL       0x3C
-#define SYSCALL_FCNTL       0x3D
-#define SYSCALL_READDIR     0x3E
-#define SYSCALL_TELLDIR     0x3F
-#define SYSCALL_SEEKDIR     0x40
-#define SYSCALL_CLOSEDIR    0x41
-#define SYSCALL_OPENDIR     0x42
-#define SYSCALL_MKNOD       0x43
-#define SYSCALL_MKFIFO      0x44
-#define SYSCALL_TRUNCATE    0x45
-#define SYSCALL_FTRUNCATE   0x46
-#define SYSCALL_GETDENTS    0x47
-#define SYSCALL_SYNC        0x48
-#define SYSCALL_FSYNC       0x49
-#define SYSCALL_FDATASYNC   0x4A
-#define SYSCALL_MLOCK       0x4B
-#define SYSCALL_MUNLOCK     0x4C
-#define SYSCALL_MLOCKALL    0x4D
-#define SYSCALL_MUNLOCKALL  0x4E
-#define SYSCALL_NANOSLEEP   0x4F
-#define SYSCALL_CLOCK_GETTIME 0x50
-#define SYSCALL_CLOCK_SETTIME 0x51
-#define SYSCALL_CLOCK_GETRES  0x52
-#define SYSCALL_SCHED_YIELD   0x53
-#define SYSCALL_SCHED_SETSCHEDULER 0x54
-#define SYSCALL_SCHED_GETSCHEDULER 0x55
-#define SYSCALL_SCHED_SETPARAM    0x56
-#define SYSCALL_SCHED_GETPARAM    0x57
-#define SYSCALL_SCHED_SETAFFINITY 0x58
-#define SYSCALL_SCHED_GETAFFINITY 0x59
-#define SYSCALL_PRLIMIT64         0x5A
-#define SYSCALL_GETRUSAGE         0x5B
-#define SYSCALL_GETTIMEOFDAY      0x5C
-#define SYSCALL_SETTIMEOFDAY      0x5D
-#define SYSCALL_ADJTIMEX          0x5E
-#define SYSCALL_TIMER_CREATE      0x5F
-#define SYSCALL_TIMER_DELETE      0x60
-#define SYSCALL_TIMER_SETTIME     0x61
-#define SYSCALL_TIMER_GETTIME     0x62
-#define SYSCALL_TIMER_GETOVERRUN  0x63
-#define SYSCALL_KILL              0x64
-#define SYSCALL_TKILL             0x65
-#define SYSCALL_TGKILL            0x66
-#define SYSCALL_SIGACTION         0x67
-#define SYSCALL_SIGPROCMASK       0x68
-#define SYSCALL_SIGPENDING        0x69
-#define SYSCALL_SIGSUSPEND        0x6A
-#define SYSCALL_SIGTIMEDWAIT      0x6B
-#define SYSCALL_SIGRETURN         0x6C
-#define SYSCALL_REBOOT            0x6D
-#define SYSCALL_KEXEC_LOAD        0x6E
-#define SYSCALL_EXIT_GROUP        0x6F
-#define SYSCALL_WAIT4             0x70
-#define SYSCALL_CLONE             0x71
-#define SYSCALL_VFORK             0x72
-#define SYSCALL_UNAME             0x73
-#define SYSCALL_SEMGET            0x74
-#define SYSCALL_SEMOP             0x75
-#define SYSCALL_SEMCTL            0x76
-#define SYSCALL_SEMTIMEDOP        0x77
-#define SYSCALL_MSGGET            0x78
-#define SYSCALL_MSGSND            0x79
-#define SYSCALL_MSGRCV            0x7A
-#define SYSCALL_MSGCTL            0x7B
-#define SYSCALL_SHMGET            0x7C
-#define SYSCALL_SHMAT             0x7D
-#define SYSCALL_SHMDT             0x7E
-#define SYSCALL_SHMCTL            0x7F
-
-/* 动态链接器相关系统调用 */
-#define SYSCALL_DL_LOAD_LIBRARY   0x80
-#define SYSCALL_DL_UNLOAD_LIBRARY 0x81
-#define SYSCALL_DL_FIND_SYMBOL    0x82
-#define SYSCALL_DL_GET_ERROR      0x83
+void mkrn_syscall_init(void);
 
 /**
- * 系统调用返回值
+ * mkrn_syscall_handler - Handle a system call
+ *
+ * Return: void
  */
-#define SYSCALL_SUCCESS 0
-#define SYSCALL_ERROR   (-1)
+void mkrn_syscall_handler(void);
 
 /**
- * 初始化系统调用
+ * mkrn_syscall_register - Register a syscall handler
+ * @num: Syscall number
+ * @handler: Handler function pointer
+ *
+ * Return: void
  */
-void syscall_init(void);
+void mkrn_syscall_register(u32 num, void *handler);
 
 /**
- * 系统调用处理函数
+ * mkrn_syscall_execute - Execute a system call
+ * @num: Syscall number
+ * @arg1: First argument
+ * @arg2: Second argument
+ * @arg3: Third argument
+ * @arg4: Fourth argument
+ * @arg5: Fifth argument
+ *
+ * Return: Result of the syscall
  */
-void syscall_handler(void);
+u32 mkrn_syscall_execute(u32 num, u32 arg1, u32 arg2, u32 arg3, u32 arg4, u32 arg5);
 
-/**
- * 注册系统调用处理函数
- */
-void syscall_register(uint32_t num, void *handler);
-
-/**
- * 执行系统调用
- */
-uint32_t syscall_execute(uint32_t num, uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4, uint32_t arg5);
-
-/**
- * 系统调用宏
- */
-#define SYSCALL0(num) syscall_execute(num, 0, 0, 0, 0, 0)
-#define SYSCALL1(num, arg1) syscall_execute(num, (uint32_t)arg1, 0, 0, 0, 0)
-#define SYSCALL2(num, arg1, arg2) syscall_execute(num, (uint32_t)arg1, (uint32_t)arg2, 0, 0, 0)
-#define SYSCALL3(num, arg1, arg2, arg3) syscall_execute(num, (uint32_t)arg1, (uint32_t)arg2, (uint32_t)arg3, 0, 0)
-#define SYSCALL4(num, arg1, arg2, arg3, arg4) syscall_execute(num, (uint32_t)arg1, (uint32_t)arg2, (uint32_t)arg3, (uint32_t)arg4, 0)
-#define SYSCALL5(num, arg1, arg2, arg3, arg4, arg5) syscall_execute(num, (uint32_t)arg1, (uint32_t)arg2, (uint32_t)arg3, (uint32_t)arg4, (uint32_t)arg5)
-
-#endif /* __SYSCALL_H__ */
+#define M4K_SCALL0(num) mkrn_syscall_execute(num, 0, 0, 0, 0, 0)
+#define M4K_SCALL1(num, arg1) mkrn_syscall_execute(num, (u32)arg1, 0, 0, 0, 0)
+#define M4K_SCALL2(num, arg1, arg2) mkrn_syscall_execute(num, (u32)arg1, (u32)arg2, 0, 0, 0)
+#define M4K_SCALL3(num, arg1, arg2, arg3) mkrn_syscall_execute(num, (u32)arg1, (u32)arg2, (u32)arg3, 0, 0)
+#define M4K_SCALL4(num, arg1, arg2, arg3, arg4) mkrn_syscall_execute(num, (u32)arg1, (u32)arg2, (u32)arg3, (u32)arg4, 0)
+#define M4K_SCALL5(num, arg1, arg2, arg3, arg4, arg5) mkrn_syscall_execute(num, (u32)arg1, (u32)arg2, (u32)arg3, (u32)arg4, (u32)arg5)

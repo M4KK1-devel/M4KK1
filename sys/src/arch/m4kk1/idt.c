@@ -1,6 +1,11 @@
-/**
- * M4KK1 IDT (Interrupt Descriptor Table) Implementation
- * 中断描述符表C语言实现
+/*
+ * M4KK1 4P1 - idt.c
+ * Description: IDT management — gate setup, handler
+ *              registration, exception dispatch, PIC
+ *              EOI, and interrupt-state helpers.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
 #include "../../include/idt.h"
@@ -9,24 +14,19 @@
 #include "../../include/console.h"
 #include "../../include/kernel.h"
 
-/* 汇编函数声明 */
 extern void idt_init(void);
-extern void idt_set_gate(uint8_t num, uint32_t base, uint16_t selector, uint8_t flags);
+extern void idt_set_gate(uint8_t num, uint32_t base,
+                         uint16_t selector,
+                         uint8_t flags);
 extern void pic_init(void);
 extern void enable_interrupts(void);
 extern void disable_interrupts(void);
 extern uint32_t interrupts_enabled(void);
 extern void pic_send_eoi(uint32_t irq_num);
 
-/**
- * 中断处理函数数组
- * 用于存储用户注册的中断处理函数
- */
-static interrupt_handler_t interrupt_handlers[256];
+static mkrn_int_handler_t
+    interrupt_handlers[256];
 
-/**
- * 异常消息数组
- */
 static const char *exception_messages[32] = {
     "Division by zero",
     "Debug",
@@ -63,223 +63,218 @@ static const char *exception_messages[32] = {
 };
 
 /**
- * 初始化IDT系统
- * 调用汇编函数进行底层初始化
+ * @brief  Initialize the IDT system.
  */
-void idt_init_c(void)
+void
+mkrn_idt_init(void)
 {
-    /* 清空中断处理函数数组 */
-    memset(interrupt_handlers, 0, sizeof(interrupt_handlers));
+    mkrn_memset(interrupt_handlers, 0,
+           sizeof(interrupt_handlers));
 
-    /* 调用汇编初始化函数 */
-    idt_init();
-
-    /* 初始化PIC */
     pic_init();
 
-    /* 打印初始化信息 */
-    KLOG_INFO("IDT initialized successfully");
+    idt_init();
+
+    M4K_LOG_INFO("IDT initialized successfully");
 }
 
 /**
- * 设置IDT条目
- * @param num 中断向量号
- * @param base 中断处理函数地址
- * @param selector 段选择子
- * @param flags 标志位
+ * @brief  Set an IDT gate entry.
  */
-void idt_set_gate_c(uint8_t num, uint32_t base, uint16_t selector, uint8_t flags)
+void
+mkrn_idt_set_gate(uint8_t u8Num, uint32_t u32Base,
+                  uint16_t u16Selector,
+                  uint8_t u8Flags)
 {
-    /* 调用汇编函数设置IDT条目 */
-    idt_set_gate(num, base, selector, flags);
+    idt_set_gate(u8Num, u32Base, u16Selector,
+                 u8Flags);
 }
 
 /**
- * 注册中断处理函数
- * @param num 中断向量号
- * @param handler 中断处理函数指针
+ * @brief  Register an interrupt handler.
  */
-void idt_register_handler(uint8_t num, interrupt_handler_t handler)
+void
+mkrn_idt_register_handler(
+    uint8_t u8Num,
+    mkrn_int_handler_t handler)
 {
-    if (num < 256) {
-        interrupt_handlers[num] = handler;
-        KLOG_INFO("Interrupt handler registered for vector 0x");
-        console_write_hex(num);
-        console_write("\n");
-    } else {
-        KLOG_WARN("Invalid interrupt vector number: 0x");
-        console_write_hex(num);
-        console_write("\n");
-    }
+    interrupt_handlers[u8Num] = handler;
+    M4K_LOG_INFO(
+        "Interrupt handler registered for "
+        "vector 0x");
+    mkrn_console_write_hex(u8Num);
+    mkrn_console_write("\n");
 }
 
 /**
- * 取消注册中断处理函数
- * @param num 中断向量号
+ * @brief  Unregister an interrupt handler.
  */
-void idt_unregister_handler(uint8_t num)
+void
+mkrn_idt_unregister_handler(uint8_t u8Num)
 {
-    if (num < 256) {
-        interrupt_handlers[num] = NULL;
-        KLOG_INFO("Interrupt handler unregistered for vector 0x");
-        console_write_hex(num);
-        console_write("\n");
-    }
+    interrupt_handlers[u8Num] = NULL;
+    M4K_LOG_INFO(
+        "Interrupt handler unregistered for "
+        "vector 0x");
+    mkrn_console_write_hex(u8Num);
+    mkrn_console_write("\n");
 }
 
 /**
- * 获取中断处理函数
- * @param num 中断向量号
- * @return 中断处理函数指针，未注册则返回NULL
+ * @brief  Get the handler registered for a vector.
  */
-interrupt_handler_t idt_get_handler(uint8_t num)
+mkrn_int_handler_t
+mkrn_idt_get_handler(uint8_t u8Num)
 {
-    if (num < 256) {
-        return interrupt_handlers[num];
-    }
-    return NULL;
+    return interrupt_handlers[u8Num];
 }
 
 /**
- * 启用中断
+ * @brief  Enable interrupts.
  */
-void idt_enable_interrupts(void)
+void
+mkrn_idt_enable_interrupts(void)
 {
     enable_interrupts();
-    KLOG_INFO("Interrupts enabled");
+    M4K_LOG_INFO("Interrupts enabled");
 }
 
 /**
- * 禁用中断
+ * @brief  Disable interrupts.
  */
-void idt_disable_interrupts(void)
+void
+mkrn_idt_disable_interrupts(void)
 {
     disable_interrupts();
-    KLOG_INFO("Interrupts disabled");
+    M4K_LOG_INFO("Interrupts disabled");
 }
 
 /**
- * 检查中断是否启用
- * @return 1表示启用，0表示禁用
+ * @brief  Check whether interrupts are enabled.
  */
-uint32_t idt_interrupts_enabled(void)
+uint32_t
+mkrn_idt_interrupts_enabled(void)
 {
     return interrupts_enabled();
 }
 
 /**
- * 处理异常
- * @param vector 异常向量号
+ * @brief  Handle an exception (fault / trap).
  */
-void idt_handle_exception(uint32_t vector)
+void
+mkrn_idt_handle_exception(uint32_t u32Vector)
 {
-    const char *message = NULL;
+    const char *pMessage = NULL;
 
-    /* 获取异常消息 */
-    if (vector < 32 && exception_messages[vector]) {
-        message = exception_messages[vector];
+    if (u32Vector < 32
+        && exception_messages[u32Vector])
+        pMessage = exception_messages[u32Vector];
+    else
+        pMessage = "Unknown exception";
+
+    M4K_LOG_ERROR("*** EXCEPTION OCCURRED ***");
+    M4K_LOG_ERROR("Vector: 0x");
+    mkrn_console_write_hex(u32Vector);
+    mkrn_console_write("\n");
+    M4K_LOG_ERROR("Error: ");
+    mkrn_console_write(pMessage);
+    mkrn_console_write("\n");
+
+    if (interrupt_handlers[u32Vector]) {
+        M4K_LOG_INFO(
+            "Calling registered exception "
+            "handler...");
+        interrupt_handlers[u32Vector]();
     } else {
-        message = "Unknown exception";
-    }
+        M4K_LOG_ERROR(
+            "No handler registered for this "
+            "exception.");
+        M4K_LOG_ERROR("System halted.");
 
-    /* 打印异常信息 */
-    KLOG_ERROR("*** EXCEPTION OCCURRED ***");
-    KLOG_ERROR("Vector: 0x");
-    console_write_hex(vector);
-    console_write("\n");
-    KLOG_ERROR("Error: ");
-    console_write(message);
-    console_write("\n");
-
-    /* 如果有注册的处理函数，调用它 */
-    if (interrupt_handlers[vector]) {
-        KLOG_INFO("Calling registered exception handler...");
-        interrupt_handlers[vector]();
-    } else {
-        KLOG_ERROR("No handler registered for this exception.");
-        KLOG_ERROR("System halted.");
-
-        /* 停止系统 */
-        idt_disable_interrupts();
-        while (1) {
-            /* 无限循环 */
-        }
+        mkrn_idt_disable_interrupts();
+        while (1) {}
     }
 }
 
 /**
- * 处理IRQ中断
- * @param irq_num IRQ号
+ * @brief  Handle an IRQ interrupt.
  */
-void idt_handle_irq(uint32_t irq_num)
+void
+mkrn_idt_handle_irq(uint32_t u32IrqNum)
 {
-    uint32_t vector = irq_num + 0x20; /* IRQ基础向量号 */
+    uint32_t u32Vector = u32IrqNum + 0x20;
 
-    /* 发送EOI到PIC */
-    pic_send_eoi(irq_num );
+    pic_send_eoi(u32IrqNum);
 
-    /* 如果有注册的处理函数，调用它 */
-    if (interrupt_handlers[vector]) {
-        interrupt_handlers[vector]();
-    } else {
-        KLOG_WARN("Unhandled IRQ ");
-        console_write_dec(irq_num );
-        console_write(" (vector 0x");
-        console_write_hex(vector);
-        console_write(")\n");
+    if (interrupt_handlers[u32Vector])
+        interrupt_handlers[u32Vector]();
+    else {
+        M4K_LOG_WARN("Unhandled IRQ ");
+        mkrn_console_write_dec(u32IrqNum);
+        mkrn_console_write(" (vector 0x");
+        mkrn_console_write_hex(u32Vector);
+        mkrn_console_write(")\n");
     }
 }
 
 /**
- * 获取异常描述信息
- * @param vector 异常向量号
- * @return 异常描述字符串
+ * @brief  Get the description string for an
+ *         exception vector.
  */
-const char *idt_get_exception_message(uint32_t vector)
+const char *
+mkrn_idt_get_exception_message(uint32_t u32Vector)
 {
-    if (vector < 32 && exception_messages[vector]) {
-        return exception_messages[vector];
-    }
+    if (u32Vector < 32
+        && exception_messages[u32Vector])
+        return exception_messages[u32Vector];
     return "Unknown exception";
 }
 
 /**
- * 打印IDT状态信息
+ * @brief  Print the current IDT status.
  */
-void idt_print_status(void)
+void
+mkrn_idt_print_status(void)
 {
-    uint32_t i, count = 0;
+    uint32_t u32Count = 0;
 
-    KLOG_INFO("IDT Status:");
-    KLOG_INFO("Registered handlers:");
+    M4K_LOG_INFO("IDT Status:");
+    M4K_LOG_INFO("Registered handlers:");
 
-    for (i = 0; i < 256; i++) {
+    for (uint32_t i = 0; i < 256; i++) {
         if (interrupt_handlers[i]) {
             if (i < 32) {
-                KLOG_INFO("  Vector 0x");
-                console_write_hex(i);
-                console_write(" (Exception): ");
-                console_write(idt_get_exception_message(i));
-                console_write("\n");
+                M4K_LOG_INFO("  Vector 0x");
+                mkrn_console_write_hex(i);
+                mkrn_console_write(
+                    " (Exception): ");
+                mkrn_console_write(
+                    mkrn_idt_get_exception_message(
+                        i));
+                mkrn_console_write("\n");
             } else if (i >= 0x20 && i < 0x30) {
-                KLOG_INFO("  Vector 0x");
-                console_write_hex(i);
-                console_write(" (IRQ ");
-                console_write_dec(i - 0x20);
-                console_write("): Registered\n");
+                M4K_LOG_INFO("  Vector 0x");
+                mkrn_console_write_hex(i);
+                mkrn_console_write(" (IRQ ");
+                mkrn_console_write_dec(i - 0x20);
+                mkrn_console_write(
+                    "): Registered\n");
             } else {
-                KLOG_INFO("  Vector 0x");
-                console_write_hex(i);
-                console_write(": Registered\n");
+                M4K_LOG_INFO("  Vector 0x");
+                mkrn_console_write_hex(i);
+                mkrn_console_write(
+                    ": Registered\n");
             }
-            count++;
+            u32Count++;
         }
     }
 
-    KLOG_INFO("Total registered handlers: ");
-    console_write_dec(count);
-    console_write("\n");
-    KLOG_INFO("Interrupts are ");
-    console_write(idt_interrupts_enabled() ? "enabled" : "disabled");
-    console_write("\n");
+    M4K_LOG_INFO("Total registered handlers: ");
+    mkrn_console_write_dec(u32Count);
+    mkrn_console_write("\n");
+    M4K_LOG_INFO("Interrupts are ");
+    mkrn_console_write(
+        mkrn_idt_interrupts_enabled()
+            ? "enabled" : "disabled");
+    mkrn_console_write("\n");
 }

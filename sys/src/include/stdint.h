@@ -1,12 +1,23 @@
-/**
- * M4KK1 Standard Integer Types
- * 标准整数类型定义
+/*
+ * M4KK1 4P1 - stdint.h
+ * Description: Standard integer type definitions.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
-#ifndef __STDINT_H__
-#define __STDINT_H__
+#pragma once
 
-/* 基本类型定义 */
+typedef unsigned char u8;
+typedef unsigned short u16;
+typedef unsigned int u32;
+typedef unsigned long long u64;
+
+typedef signed char s8;
+typedef signed short s16;
+typedef signed int s32;
+typedef signed long long s64;
+
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
 typedef unsigned int uint32_t;
@@ -17,11 +28,9 @@ typedef signed short int16_t;
 typedef signed int int32_t;
 typedef signed long long int64_t;
 
-/* 指针类型 */
 typedef uint32_t uintptr_t;
 typedef int32_t intptr_t;
 
-/* 最小宽度整数类型 */
 typedef uint8_t uint_least8_t;
 typedef uint16_t uint_least16_t;
 typedef uint32_t uint_least32_t;
@@ -32,7 +41,6 @@ typedef int16_t int_least16_t;
 typedef int32_t int_least32_t;
 typedef int64_t int_least64_t;
 
-/* 最快最小宽度整数类型 */
 typedef uint8_t uint_fast8_t;
 typedef uint32_t uint_fast16_t;
 typedef uint32_t uint_fast32_t;
@@ -43,11 +51,9 @@ typedef int32_t int_fast16_t;
 typedef int32_t int_fast32_t;
 typedef int64_t int_fast64_t;
 
-/* 最大宽度整数类型 */
 typedef uint64_t uintmax_t;
 typedef int64_t intmax_t;
 
-/* 常量定义（避免与系统头文件冲突） */
 #ifndef UINT8_MAX
 #define UINT8_MAX  255U
 #define UINT16_MAX 65535U
@@ -65,8 +71,5 @@ typedef int64_t intmax_t;
 #define INT64_MIN  (-9223372036854775808LL)
 #endif
 
-/* 宏定义 */
-#define __CONCAT(x, y) x ## y
-#define __STRING(x) #x
-
-#endif /* __STDINT_H__ */
+#define M4K_CONCAT(x, y) x ## y
+#define M4K_STRING(x) #x

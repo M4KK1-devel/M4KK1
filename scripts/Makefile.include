@@ -1,21 +1,24 @@
-# M4KK1通用构建规则
-# 通用Makefile包含文件
+# M4KK1 4P1 - Makefile.include
+# Description: Common build rules and variables for M4KK1.
+#
+# Copyright (c) 2026 Yaku Makki
+# SPDX-License-Identifier: 4P1-Custom
 
-# 编译器和工具链设置
+# Compiler and toolchain settings
 CC := gcc
 AS := nasm
 LD := ld
 
-# 通用编译标志
+# Common compilation flags
 CFLAGS := -Wall -Wextra -nostdlib -nostdinc -ffreestanding -mno-red-zone -m64
 ASFLAGS := -f elf64
 LDFLAGS := -Ttext 0x100000
 
-# 调试标志
+# Debug flags
 DEBUG_CFLAGS := -g -DDEBUG
 RELEASE_CFLAGS := -O2 -DNDEBUG
 
-# 架构特定标志
+# Architecture specific flags
 X86_64_CFLAGS := -mcmodel=large -mno-red-zone
 X86_CFLAGS := -m32 -march=i386
 ARM64_CFLAGS := -march=armv8-a
@@ -23,36 +26,36 @@ ARM_CFLAGS := -march=armv7-a -marm
 POWERPC_CFLAGS := -mcpu=powerpc64
 RISCV_CFLAGS := -march=rv64gc
 
-# 包含路径
+# Include paths
 INC_DIRS := -I$(CURDIR)/include -I$(CURDIR)/../include
 
-# 库路径
+# Library paths
 LIB_DIRS := -L$(CURDIR)/lib
 
-# 通用规则
+# Common rules
 %.o: %.c
 	$(CC) $(CFLAGS) $(INC_DIRS) -c $< -o $@
 
 %.o: %.asm
 	$(AS) $(ASFLAGS) $< -o $@
 
-# 清理规则
+# Clean rule
 clean:
 	rm -f *.o *.a *.bin *.img
 
-# 安装规则
+# Install rule
 install: all
-	@echo "安装完成"
+	@echo "Install complete"
 
-# 帮助规则
+# Help rule
 help:
-	@echo "通用构建规则"
-	@echo "可用目标:"
-	@echo "  all      - 构建所有目标"
-	@echo "  clean    - 清理构建文件"
-	@echo "  install  - 安装构建产物"
-	@echo "  help     - 显示此帮助信息"
+	@echo "Common build rules"
+	@echo "Available targets:"
+	@echo "  all      - Build all targets"
+	@echo "  clean    - Clean build files"
+	@echo "  install  - Install build artifacts"
+	@echo "  help     - Show this help"
 
-# 默认目标
+# Default target
 .PHONY: all clean install help
 all: help

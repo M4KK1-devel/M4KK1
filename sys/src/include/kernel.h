@@ -1,245 +1,240 @@
-/**
- * M4KK1 Y4KU Kernel - 主内核头文件
- * 定义内核的核心数据结构和函数声明
+/*
+ * M4KK1 4P1 - kernel.h
+ * Description: Core kernel data structures and function declarations.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
-#ifndef _KERNEL_H
-#define _KERNEL_H
+#pragma once
 
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include "multiboot.h"
 
-/**
- * 内核魔数
- */
-#define M4KK1_KERNEL_MAGIC 0x4D344B4B
+#define M4K_MAGIC 0x4D344B4B
 
-/**
- * 内核版本信息
- */
-#define KERNEL_VERSION_MAJOR 0
-#define KERNEL_VERSION_MINOR 1
-#define KERNEL_VERSION_PATCH 0
-#define KERNEL_VERSION_TYPE "devel"
+#define M4K_VERSION_MAJOR 0
+#define M4K_VERSION_MINOR 1
+#define M4K_VERSION_PATCH 0
+#define M4K_VERSION_TYPE "devel"
 
-/**
- * 内核配置常量
- */
-#define KERNEL_MAX_PROCESSES 256
-#define KERNEL_STACK_SIZE 8192
-#define KERNEL_PAGE_SIZE 4096
-#define KERNEL_HEAP_SIZE (1024 * 1024)  // 1MB
+#define M4K_MAX_PROCESSES 256
+#define M4K_STACK_SIZE 32768
+#define M4K_PAGE_SIZE 4096
+#define M4K_HEAP_SIZE (1024 * 1024)
 
-/**
- * 内核信息结构
- */
 typedef struct {
-    uint32_t magic;
-    uint32_t version;
+    u32 magic;
+    u32 version;
     char build_date[32];
     char build_time[32];
-    uint32_t uptime_seconds;
-    uint32_t process_count;
-    uint32_t memory_total;
-    uint32_t memory_free;
-    uint32_t memory_used;
-} kernel_info_t;
+    u32 uptime_seconds;
+    u32 process_count;
+    u32 memory_total;
+    u32 memory_free;
+    u32 memory_used;
+} mkrn_info_t;
 
 /**
- * 内核主函数声明
+ * mkrn_main - Kernel entry point
+ * @mb_info: Multiboot information structure
+ * @magic: Bootloader magic number
+ *
+ * Return: void
  */
-void kmain(multiboot_info_t *mb_info, uint32_t magic);
+void mkrn_main(multiboot_info_t *mb_info, u32 magic);
 
 /**
-  * 内核恐慌函数（已废弃，请使用KERNEL_PANIC宏）
-  */
-void panic(const char *message);
-
-/**
- * 断言失败处理
+ * mkrn_panic - Trigger kernel panic
+ * @message: Panic message
+ *
+ * Return: void
  */
-void assertion_failed(const char *file, int line, const char *expression);
+void mkrn_panic(const char *message);
 
 /**
- * 内核调试转储
+ * mkrn_assert_failed - Handle assertion failure
+ * @file: Source file name
+ * @line: Line number
+ * @expression: Failing expression
+ *
+ * Return: void
  */
-void kernel_debug_dump(void);
+void mkrn_assert_failed(const char *file, int line, const char *expression);
 
 /**
- * 内核信息获取
+ * mkrn_debug_dump - Dump kernel debug information
+ *
+ * Return: void
  */
-kernel_info_t *get_kernel_info(void);
+void mkrn_debug_dump(void);
 
 /**
- * 内核睡眠函数（毫秒）
+ * mkrn_get_info - Get kernel information
+ *
+ * Return: Pointer to kernel info structure
  */
-void kernel_sleep(uint32_t milliseconds);
+mkrn_info_t *mkrn_get_info(void);
 
 /**
- * 内核忙等待
+ * mkrn_sleep - Sleep for specified milliseconds
+ * @milliseconds: Sleep duration in milliseconds
+ *
+ * Return: void
  */
-void kernel_busy_wait(uint32_t count);
+void mkrn_sleep(u32 milliseconds);
 
 /**
- * 内核内存分配（调试用）
+ * mkrn_busy_wait - Busy wait loop
+ * @count: Iteration count
+ *
+ * Return: void
  */
-void *kmalloc(size_t size);
+void mkrn_busy_wait(u32 count);
 
 /**
- * 内核内存释放（调试用）
+ * mkrn_alloc - Allocate kernel memory
+ * @size: Allocation size in bytes
+ *
+ * Return: Pointer to allocated memory, NULL on failure
  */
-void kfree(void *ptr);
+void *mkrn_alloc(size_t size);
 
 /**
- * 内核字符串复制
+ * mkrn_free - Free kernel memory
+ * @ptr: Pointer to memory to free
+ *
+ * Return: void
  */
-void kstrcpy(char *dest, const char *src);
+void mkrn_free(void *ptr);
 
 /**
- * 内核字符串长度
+ * mkrn_strcpy - Copy string
+ * @dest: Destination buffer
+ * @src: Source string
+ *
+ * Return: void
  */
-size_t kstrlen(const char *str);
+char *mkrn_strcpy(char *dest, const char *src);
 
 /**
- * 内核字符串比较
+ * mkrn_strlen - Get string length
+ * @str: Null-terminated string
+ *
+ * Return: Length of the string
  */
-int kstrcmp(const char *str1, const char *str2);
+size_t mkrn_strlen(const char *str);
 
 /**
- * 内核内存复制
+ * mkrn_strcmp - Compare two strings
+ * @str1: First string
+ * @str2: Second string
+ *
+ * Return: 0 if equal, negative if str1 < str2, positive if str1 > str2
  */
-void kmemcpy(void *dest, const void *src, size_t n);
+int mkrn_strcmp(const char *str1, const char *str2);
 
 /**
- * 内核内存设置
+ * mkrn_memcpy - Copy memory block
+ * @dest: Destination pointer
+ * @src: Source pointer
+ * @n: Number of bytes to copy
+ *
+ * Return: void
  */
-void kmemset(void *dest, int value, size_t n);
+void *mkrn_memcpy(void *dest, const void *src, size_t n);
 
 /**
- * 内核断言宏
+ * mkrn_memset - Set memory block to a value
+ * @dest: Destination pointer
+ * @value: Value to set
+ * @n: Number of bytes to set
+ *
+ * Return: void
  */
-#define KERNEL_ASSERT(expr) \
+void *mkrn_memset(void *dest, int value, size_t n);
+
+#define M4K_ASSERT(expr) \
     do { \
         if (!(expr)) { \
-            assertion_failed(__FILE__, __LINE__, #expr); \
+            mkrn_assert_failed(__FILE__, __LINE__, #expr); \
         } \
     } while (0)
 
-/**
- * 内核魔数验证宏
- */
-#define KERNEL_VERIFY_MAGIC(magic) \
-    KERNEL_ASSERT((magic) == M4KK1_KERNEL_MAGIC)
+#define M4K_VERIFY_MAGIC(magic) \
+    M4K_ASSERT((magic) == M4K_MAGIC)
 
-/**
- * 内核版本字符串宏
- */
-#define KERNEL_VERSION_STRING \
+#define M4K_VERSION_STRING \
     "Y4KU-" \
-    STRINGIFY(KERNEL_VERSION_MAJOR) "." \
-    STRINGIFY(KERNEL_VERSION_MINOR) "." \
-    STRINGIFY(KERNEL_VERSION_PATCH) "-" \
-    KERNEL_VERSION_TYPE
+    M4K_STRINGIFY(M4K_VERSION_MAJOR) "." \
+    M4K_STRINGIFY(M4K_VERSION_MINOR) "." \
+    M4K_STRINGIFY(M4K_VERSION_PATCH) "-" \
+    M4K_VERSION_TYPE
 
-/**
- * 字符串化宏
- */
-#define STRINGIFY(x) _STRINGIFY(x)
-#define _STRINGIFY(x) #x
+#define M4K_STRINGIFY(x) _M4K_STRINGIFY(x)
+#define _M4K_STRINGIFY(x) #x
 
-/**
- * 内核编译时间宏
- */
-#define KERNEL_BUILD_TIME __TIME__
-#define KERNEL_BUILD_DATE __DATE__
+#define M4K_BUILD_TIME __TIME__
+#define M4K_BUILD_DATE __DATE__
 
-/**
- * 内联汇编辅助宏
- */
-#define CLI() __asm__ volatile ("cli")
-#define STI() __asm__ volatile ("sti")
-#define HLT() __asm__ volatile ("hlt")
+#define M4K_CLI() __asm__ volatile ("cli")
+#define M4K_STI() __asm__ volatile ("sti")
+#define M4K_HLT() __asm__ volatile ("hlt")
+#define M4K_PAUSE() __asm__ volatile ("pause")
+#define M4K_MEMORY_BARRIER() __asm__ volatile ("" ::: "memory")
+#define M4K_READ_BARRIER() __asm__ volatile ("" ::: "memory")
+#define M4K_WRITE_BARRIER() __asm__ volatile ("" ::: "memory")
 
-/**
- * CPU暂停指令
- */
-#define PAUSE() __asm__ volatile ("pause")
-
-/**
- * 内存屏障
- */
-#define MEMORY_BARRIER() __asm__ volatile ("" ::: "memory")
-
-/**
- * 读写屏障
- */
-#define READ_BARRIER() __asm__ volatile ("" ::: "memory")
-#define WRITE_BARRIER() __asm__ volatile ("" ::: "memory")
-
-/**
- * 内核日志宏
- */
-#define KLOG_DEBUG(msg) \
+#define M4K_LOG_DEBUG(msg) \
     do { \
-        console_write("[DEBUG] "); \
-        console_write(msg); \
-        console_write("\n"); \
+        mkrn_console_write("[DEBUG] "); \
+        mkrn_console_write(msg); \
+        mkrn_console_write("\n"); \
     } while (0)
 
-#define KLOG_INFO(msg) \
+#define M4K_LOG_INFO(msg) \
     do { \
-        console_write("[INFO] "); \
-        console_write(msg); \
-        console_write("\n"); \
+        mkrn_console_write("[INFO] "); \
+        mkrn_console_write(msg); \
+        mkrn_console_write("\n"); \
     } while (0)
 
-#define KLOG_WARN(msg) \
+#define M4K_LOG_WARN(msg) \
     do { \
-        console_write("[WARN] "); \
-        console_write(msg); \
-        console_write("\n"); \
+        mkrn_console_write("[WARN] "); \
+        mkrn_console_write(msg); \
+        mkrn_console_write("\n"); \
     } while (0)
 
-#define KLOG_ERROR(msg) \
+#define M4K_LOG_ERROR(msg) \
     do { \
-        console_write("[ERROR] "); \
-        console_write(msg); \
-        console_write("\n"); \
+        mkrn_console_write("[ERROR] "); \
+        mkrn_console_write(msg); \
+        mkrn_console_write("\n"); \
     } while (0)
 
-/**
-  * 内核恐慌（蓝屏）
-  */
-#define KERNEL_PANIC(msg) \
+#define M4K_PANIC(msg) \
     do { \
-        console_panic(msg); \
+        mkrn_console_panic(msg); \
         while (1) { \
             __asm__ volatile ("cli; hlt"); \
         } \
     } while (0)
 
-/**
-  * 内存错误（红屏）
-  */
-#define MEMORY_PANIC(msg) \
+#define M4K_MEMORY_PANIC(msg) \
     do { \
-        console_memory_error(msg); \
+        mkrn_console_memory_error(msg); \
         while (1) { \
             __asm__ volatile ("cli; hlt"); \
         } \
     } while (0)
 
-/**
-  * 系统错误（黄屏）
-  */
-#define SYSTEM_PANIC(msg) \
+#define M4K_SYSTEM_PANIC(msg) \
     do { \
-        console_system_error(msg); \
+        mkrn_console_system_error(msg); \
         while (1) { \
             __asm__ volatile ("cli; hlt"); \
         } \
     } while (0)
-
-#endif /* _KERNEL_H */

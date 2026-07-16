@@ -163,24 +163,9 @@ detect_disks:
 init_filesystem:
     pusha
 
-    ; 加载YFS驱动
-    call load_yfs_driver
-
     ; 挂载根文件系统
     call mount_root_fs
 
-    popa
-    ret
-
-; 加载YFS驱动
-load_yfs_driver:
-    pusha
-    ; 从引导设备加载YFS驱动
-    mov si, msg_loading_yfs
-    call print_string
-
-    ; 这里应该加载嵌入的YFS驱动
-    ; 暂时跳过
     popa
     ret
 
@@ -363,7 +348,6 @@ dd M4KK1_MAGIC
 
 ; 消息字符串
 msg_stage2          db "M4KK1 Bootcamp Stage 2", 13, 10, 0
-msg_loading_yfs     db "Loading YFS driver...", 13, 10, 0
 msg_mounting_root   db "Mounting root filesystem...", 13, 10, 0
 msg_loading_kernel  db "Loading kernel...", 13, 10, 0
 msg_loading_kernel_fs db "Loading kernel from filesystem...", 13, 10, 0

@@ -24,9 +24,8 @@ endstruc
 %define IDT_DPL_1       (1 << 5)    ; 特权级1
 %define IDT_DPL_2       (2 << 5)    ; 特权级2
 %define IDT_DPL_3       (3 << 5)    ; 特权级3
-%define IDT_STORAGE     (0 << 4)    ; 中断门
-%define IDT_GATE_386    (1 << 4)    ; 386中断门
-%define IDT_TRAP_386    (1 << 4) | (1 << 3) | (1 << 2) | (1 << 1)  ; 386陷阱门
+%define IDT_GATE_386    0x0E        ; 32位中断门 (S=0, type=0xE)
+%define IDT_TRAP_386    0x0F        ; 32位陷阱门 (S=0, type=0xF)
 
 ; 段选择子常量
 %define KERNEL_CODE_SEG 0x08
@@ -221,9 +220,9 @@ idt_init:
     ; 设置前32个异常处理函数
     mov edx, 0                  ; 从向量0开始
 .loop_exceptions:
-    push eax
-    push ebx
     push ecx
+    push ebx
+    push eax
     push edx
     call idt_set_gate
     add esp, 16
@@ -250,9 +249,9 @@ idt_init:
     mov eax, irq_default
 
 .set_gate:
-    push eax
-    push ebx
     push ecx
+    push ebx
+    push eax
     push edx
     call idt_set_gate
     add esp, 16
@@ -325,14 +324,34 @@ GLOBAL irq_timer
 irq_timer:
     pusha
 
-    ; 调用C语言定时器处理函数
-    call timer_handler
+
+    call mkrn_timer_handler
 
     ; 发送EOI到主PIC
     mov al, 0x20
     out 0x20, al
 
     popa
+    iret
+
+; 系统调用中断处理函数 (int 0x80)
+GLOBAL isr_syscall
+isr_syscall:
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+    push ebp
+
+    call mkrn_syscall_handler
+
+    pop ebp
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
     iret
 
 ; 屏蔽IRQ
@@ -412,7 +431,8 @@ idt_limit_msg   db "  Limit: 0x", 0
 ; 外部函数声明
 extern print_string
 extern print_hex
-extern timer_handler
+extern mkrn_timer_handler
+extern mkrn_syscall_handler
 
 
 ; 获取IDT信息
@@ -494,4 +514,5 @@ atomic_sub:
 ; 外部函数声明
 extern print_string
 extern print_hex
-extern timer_handler
+extern mkrn_timer_handler
+extern mkrn_syscall_handler

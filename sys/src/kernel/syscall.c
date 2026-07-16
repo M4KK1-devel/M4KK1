@@ -1,6 +1,9 @@
-/**
- * M4KK1 System Call Implementation
- * 系统调用机制实现
+/*
+ * M4KK1 4P1 - syscall.c
+ * Description: Standard syscall handler table and dispatch.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
 #include <stdint.h>
@@ -12,97 +15,73 @@
 #include <syscall.h>
 #include <idt.h>
 #include <ldso.h>
+#include <vfs.h>
+#include <memory.h>
+#include <yafs.h>
 
-/**
- * 系统调用处理函数类型
- */
-typedef uint32_t (*syscall_handler_t)(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                    uint32_t arg4, uint32_t arg5);
+extern uint64_t root_yafs_tree;
 
-/**
- * 系统调用表项
- */
+typedef u32 (*mkrn_syscall_handler_t)(
+    u32 arg1, u32 arg2, u32 arg3,
+    u32 arg4, u32 arg5);
+
 typedef struct {
-    syscall_handler_t handler;      /* 系统调用处理函数 */
-    uint32_t permission_mask;       /* 权限掩码 */
-    const char *name;               /* 系统调用名称 */
-    bool registered;                /* 是否已注册 */
-} syscall_entry_t;
+    mkrn_syscall_handler_t handler;
+    u32 permission_mask;
+    const char *pName;
+    b registered;
+} mkrn_syscall_entry_t;
 
-/**
- * 获取系统调用名称（前向声明）
- */
-const char *syscall_get_name(uint32_t num);
+static const char *mkrn_syscall_get_name(u32 num);
 
-/**
- * 系统调用上下文
- */
 typedef struct {
-    uint32_t eax;                   /* 系统调用号 */
-    uint32_t ebx;                   /* 参数1 */
-    uint32_t ecx;                   /* 参数2 */
-    uint32_t edx;                   /* 参数3 */
-    uint32_t esi;                   /* 参数4 */
-    uint32_t edi;                   /* 参数5 */
-    uint32_t ebp;                   /* 栈基指针 */
-    uint32_t esp;                   /* 栈指针 */
-    uint32_t eflags;                /* 标志寄存器 */
-    uint32_t cr3;                   /* 页目录基地址 */
-} syscall_context_t;
+    u32 eax;
+    u32 ebx;
+    u32 ecx;
+    u32 edx;
+    u32 esi;
+    u32 edi;
+    u32 ebp;
+    u32 esp;
+    u32 eflags;
+    u32 cr3;
+} mkrn_syscall_context_t;
 
-/**
- * 系统调用表
- * 支持最多256个系统调用（0x00-0xFF）
- */
-static syscall_entry_t syscall_table[256];
+static mkrn_syscall_entry_t g_syscall_table[256];
 
-/**
- * 系统调用统计信息
- */
 static struct {
-    uint32_t total_calls;           /* 总调用次数 */
-    uint32_t failed_calls;          /* 失败调用次数 */
-    uint32_t permission_denied;     /* 权限拒绝次数 */
-} syscall_stats;
+    u32 total_calls;
+    u32 failed_calls;
+    u32 permission_denied;
+} g_syscall_stats;
 
-/**
- * 当前进程权限级别
- */
-#define PERMISSION_LEVEL_KERNEL  0xFFFFFFFF  /* 内核权限 */
-#define PERMISSION_LEVEL_USER    0x00000001  /* 用户权限 */
-#define PERMISSION_LEVEL_SYSTEM  0x000000FF  /* 系统权限 */
+#define PERM_LEVEL_KERNEL  0xFFFFFFFF
+#define PERM_LEVEL_USER    0x00000001
+#define PERM_LEVEL_SYSTEM  0x000000FF
 
-/**
- * 初始化系统调用表
- */
-static void syscall_table_init(void) {
-    memset(syscall_table, 0, sizeof(syscall_table));
-    memset(&syscall_stats, 0, sizeof(syscall_stats));
+static void mkrn_syscall_table_init(void)
+{
+    mkrn_memset(g_syscall_table, 0, sizeof(g_syscall_table));
+    mkrn_memset(&g_syscall_stats, 0, sizeof(g_syscall_stats));
 
-    KLOG_INFO("System call table initialized");
+    M4K_LOG_INFO("System call table initialized");
 }
 
-/**
- * 检查系统调用权限
- */
-static bool syscall_check_permission(uint32_t syscall_num, uint32_t current_permission) {
-    if (syscall_num >= 256 || !syscall_table[syscall_num].registered) {
+static b mkrn_syscall_check_permission(u32 uNum, u32 uCurPerm)
+{
+    if (uNum >= 256 || !g_syscall_table[uNum].registered) {
         return false;
     }
 
-    /* 内核权限可以调用任何系统调用 */
-    if (current_permission == PERMISSION_LEVEL_KERNEL) {
+    if (uCurPerm == PERM_LEVEL_KERNEL) {
         return true;
     }
 
-    /* 检查权限掩码 */
-    return (current_permission & syscall_table[syscall_num].permission_mask) != 0;
+    return (uCurPerm & g_syscall_table[uNum].permission_mask) != 0;
 }
 
-/**
- * 保存寄存器状态
- */
-static void syscall_save_registers(uint32_t *regs) {
+static void mkrn_syscall_save_registers(u32 *pRegs)
+{
     __asm__ volatile (
         "movl %%ebx, 0(%0)\n"
         "movl %%ecx, 4(%0)\n"
@@ -110,14 +89,12 @@ static void syscall_save_registers(uint32_t *regs) {
         "movl %%esi, 12(%0)\n"
         "movl %%edi, 16(%0)\n"
         "movl %%ebp, 20(%0)\n"
-        : : "r"(regs) : "memory"
+        : : "r"(pRegs) : "memory"
     );
 }
 
-/**
- * 恢复寄存器状态
- */
-static void syscall_restore_registers(uint32_t *regs) {
+static void mkrn_syscall_restore_registers(u32 *pRegs)
+{
     __asm__ volatile (
         "movl 0(%0), %%ebx\n"
         "movl 4(%0), %%ecx\n"
@@ -125,770 +102,878 @@ static void syscall_restore_registers(uint32_t *regs) {
         "movl 12(%0), %%esi\n"
         "movl 16(%0), %%edi\n"
         "movl 20(%0), %%ebp\n"
-        : : "r"(regs) : "memory"
+        : : "r"(pRegs) : "memory"
     );
 }
 
-/**
- * 系统调用处理函数
- * 这是中断0x80的中断处理函数
- */
-void syscall_handler(void) {
-    uint32_t syscall_num;
-    uint32_t result = SYSCALL_ERROR;
-    uint32_t saved_registers[6]; /* ebx, ecx, edx, esi, edi, ebp */
+void mkrn_syscall_handler(void)
+{
+    u32 uSyscallNum;
+    u32 uArg1, uArg2, uArg3, uArg4, uArg5;
+    u32 uResult = M4K_SC_ERROR;
+    u32 uSavedRegs[6];
 
-    /* 获取系统调用号（从EAX） */
-    __asm__ volatile ("movl %%eax, %0" : "=r"(syscall_num));
+    __asm__ volatile (
+        "movl %%eax, %0\n"
+        "movl %%ebx, %1\n"
+        "movl %%ecx, %2\n"
+        "movl %%edx, %3\n"
+        "movl %%esi, %4\n"
+        "movl %%edi, %5\n"
+        : "=m"(uSyscallNum), "=m"(uArg1), "=m"(uArg2),
+          "=m"(uArg3), "=m"(uArg4), "=m"(uArg5)
+    );
 
-    /* 统计总调用次数 */
-    syscall_stats.total_calls++;
+    g_syscall_stats.total_calls++;
 
-    KLOG_DEBUG("System call invoked: 0x");
-    console_write_hex(syscall_num);
-    console_write("\n");
-
-    /* 检查系统调用号有效性 */
-    if (syscall_num >= 256) {
-        KLOG_WARN("Invalid system call number: 0x");
-        console_write_hex(syscall_num);
-        console_write("\n");
-        syscall_stats.failed_calls++;
+    if (uSyscallNum >= 256) {
+        M4K_LOG_WARN("Invalid system call number: 0x");
+        mkrn_console_write_hex(uSyscallNum);
+        mkrn_console_write("\n");
+        g_syscall_stats.failed_calls++;
         goto syscall_return;
     }
 
-    /* 检查系统调用是否已注册 */
-    if (!syscall_table[syscall_num].registered) {
-        KLOG_WARN("Unregistered system call: 0x");
-        console_write_hex(syscall_num);
-        console_write("\n");
-        syscall_stats.failed_calls++;
+    if (!g_syscall_table[uSyscallNum].registered) {
+        M4K_LOG_WARN("Unregistered system call: 0x");
+        mkrn_console_write_hex(uSyscallNum);
+        mkrn_console_write("\n");
+        g_syscall_stats.failed_calls++;
         goto syscall_return;
     }
 
-    /* 获取当前进程权限级别 */
-    process_t *current_process = process_get_current();
-    uint32_t current_permission = (current_process != NULL) ?
-        PERMISSION_LEVEL_USER : PERMISSION_LEVEL_KERNEL;
+    mkrn_process_t *pProcess = mkrn_process_get_current();
+    u32 uCurPerm = (pProcess != NULL) ?
+        PERM_LEVEL_USER : PERM_LEVEL_KERNEL;
 
-    /* 检查权限 */
-    if (!syscall_check_permission(syscall_num, current_permission)) {
-        KLOG_WARN("Permission denied for system call 0x");
-        console_write_hex(syscall_num);
-        console_write(" (process: ");
-        if (current_process) {
-            console_write_hex(current_process->pid);
+    if (!mkrn_syscall_check_permission(uSyscallNum, uCurPerm)) {
+        M4K_LOG_WARN("Permission denied for system call 0x");
+        mkrn_console_write_hex(uSyscallNum);
+        mkrn_console_write(" (process: ");
+        if (pProcess) {
+            mkrn_console_write_hex(pProcess->pid);
         } else {
-            console_write("kernel");
+            mkrn_console_write("kernel");
         }
-        console_write(")\n");
+        mkrn_console_write(")\n");
 
-        syscall_stats.permission_denied++;
-        result = SYSCALL_ERROR;
+        g_syscall_stats.permission_denied++;
+        uResult = M4K_SC_ERROR;
         goto syscall_return;
     }
 
-    /* 保存寄存器状态 */
-    syscall_save_registers(saved_registers);
+    mkrn_syscall_save_registers(uSavedRegs);
 
-    /* 调用系统调用处理函数 */
-    syscall_handler_t handler = syscall_table[syscall_num].handler;
-    if (handler != NULL) {
-        /* 从寄存器获取参数 */
-        uint32_t arg1, arg2, arg3, arg4, arg5;
-        __asm__ volatile (
-            "movl %%ebx, %0\n"
-            "movl %%ecx, %1\n"
-            "movl %%edx, %2\n"
-            "movl %%esi, %3\n"
-            "movl %%edi, %4\n"
-            : "=r"(arg1), "=r"(arg2), "=r"(arg3), "=r"(arg4), "=r"(arg5)
-        );
-
-        result = handler(arg1, arg2, arg3, arg4, arg5);
-
-        KLOG_DEBUG("System call 0x");
-        console_write_hex(syscall_num);
-        console_write(" returned: 0x");
-        console_write_hex(result);
-        console_write("\n");
+    mkrn_syscall_handler_t pHandler =
+        g_syscall_table[uSyscallNum].handler;
+    if (pHandler != NULL) {
+        uResult = pHandler(uArg1, uArg2, uArg3, uArg4, uArg5);
     } else {
-        KLOG_ERROR("System call handler is NULL for 0x");
-        console_write_hex(syscall_num);
-        console_write("\n");
-        syscall_stats.failed_calls++;
-        result = SYSCALL_ERROR;
+        M4K_LOG_ERROR("System call handler is NULL for 0x");
+        mkrn_console_write_hex(uSyscallNum);
+        mkrn_console_write("\n");
+        g_syscall_stats.failed_calls++;
+        uResult = M4K_SC_ERROR;
     }
 
 syscall_return:
-    /* 设置返回值到EAX寄存器 */
-    __asm__ volatile ("movl %0, %%eax" : : "r"(result));
-
-    /* 恢复寄存器状态 */
-    syscall_restore_registers(saved_registers);
+    __asm__ volatile ("movl %0, %%eax" : : "r"(uResult));
+    mkrn_syscall_restore_registers(uSavedRegs);
 }
 
-/**
- * 初始化并注册所有系统调用
- */
-void syscall_init_handlers(void);
+static void mkrn_syscall_init_handlers(void);
 
-/**
- * 初始化系统调用系统
- */
-void syscall_init(void) {
-    /* 初始化系统调用表 */
-    syscall_table_init();
+extern void isr_syscall(void);
 
-    /* 注册系统调用中断处理函数 */
-    idt_register_handler(0x80, syscall_handler);
+void mkrn_syscall_init(void)
+{
+    mkrn_syscall_table_init();
 
-    /* 初始化并注册所有系统调用处理函数 */
-    syscall_init_handlers();
+    mkrn_idt_set_gate(0x80, (u32)isr_syscall, 0x08,
+        M4K_IDT_PRESENT | M4K_IDT_DPL_3 |
+        M4K_IDT_INTERRUPT_GATE_32);
 
-    KLOG_INFO("System call system initialized");
+    mkrn_idt_register_handler(0x80, mkrn_syscall_handler);
+
+    mkrn_syscall_init_handlers();
+
+    M4K_LOG_INFO("System call system initialized");
 }
 
-/**
- * 注册系统调用处理函数
- */
-void syscall_register(uint32_t num, void *handler) {
-    if (num >= 256) {
-        KLOG_ERROR("Invalid system call number for registration: 0x");
-        console_write_hex(num);
-        console_write("\n");
+void mkrn_syscall_register(u32 uNum, void *pHandler)
+{
+    if (uNum >= 256) {
+        M4K_LOG_ERROR(
+            "Invalid system call number for registration: 0x");
+        mkrn_console_write_hex(uNum);
+        mkrn_console_write("\n");
         return;
     }
 
-    if (handler == NULL) {
-        KLOG_ERROR("Cannot register NULL handler for system call 0x");
-        console_write_hex(num);
-        console_write("\n");
+    if (pHandler == NULL) {
+        M4K_LOG_ERROR(
+            "Cannot register NULL handler for system call 0x");
+        mkrn_console_write_hex(uNum);
+        mkrn_console_write("\n");
         return;
     }
 
-    /* 注册处理函数 */
-    syscall_table[num].handler = (syscall_handler_t)handler;
-    syscall_table[num].registered = true;
+    g_syscall_table[uNum].handler =
+        (mkrn_syscall_handler_t)pHandler;
+    g_syscall_table[uNum].registered = true;
+    g_syscall_table[uNum].permission_mask = PERM_LEVEL_USER;
+    g_syscall_table[uNum].pName = mkrn_syscall_get_name(uNum);
 
-    /* 设置默认权限（用户权限） */
-    syscall_table[num].permission_mask = PERMISSION_LEVEL_USER;
-
-    /* 设置系统调用名称（如果已知） */
-    syscall_table[num].name = syscall_get_name(num);
-
-    KLOG_INFO("System call 0x");
-    console_write_hex(num);
-    console_write(" registered: ");
-    console_write(syscall_table[num].name ? syscall_table[num].name : "Unknown");
-    console_write("\n");
+    M4K_LOG_INFO("System call 0x");
+    mkrn_console_write_hex(uNum);
+    mkrn_console_write(" registered: ");
+    mkrn_console_write(
+        g_syscall_table[uNum].pName
+            ? g_syscall_table[uNum].pName : "Unknown");
+    mkrn_console_write("\n");
 }
 
-/**
- * 注销系统调用处理函数
- */
-void syscall_unregister(uint32_t num) {
-    if (num >= 256) {
-        KLOG_ERROR("Invalid system call number for unregistration: 0x");
-        console_write_hex(num);
-        console_write("\n");
+void mkrn_syscall_unregister(u32 uNum)
+{
+    if (uNum >= 256) {
+        M4K_LOG_ERROR(
+            "Invalid system call number for "
+            "unregistration: 0x");
+        mkrn_console_write_hex(uNum);
+        mkrn_console_write("\n");
         return;
     }
 
-    if (!syscall_table[num].registered) {
-        KLOG_WARN("System call 0x");
-        console_write_hex(num);
-        console_write(" is not registered\n");
+    if (!g_syscall_table[uNum].registered) {
+        M4K_LOG_WARN("System call 0x");
+        mkrn_console_write_hex(uNum);
+        mkrn_console_write(" is not registered\n");
         return;
     }
 
-    /* 注销处理函数 */
-    syscall_table[num].handler = NULL;
-    syscall_table[num].registered = false;
-    syscall_table[num].name = NULL;
-    syscall_table[num].permission_mask = 0;
+    g_syscall_table[uNum].handler = NULL;
+    g_syscall_table[uNum].registered = false;
+    g_syscall_table[uNum].pName = NULL;
+    g_syscall_table[uNum].permission_mask = 0;
 
-    KLOG_INFO("System call 0x");
-    console_write_hex(num);
-    console_write(" unregistered\n");
+    M4K_LOG_INFO("System call 0x");
+    mkrn_console_write_hex(uNum);
+    mkrn_console_write(" unregistered\n");
 }
 
-/**
- * 执行系统调用
- */
-uint32_t syscall_execute(uint32_t num, uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                        uint32_t arg4, uint32_t arg5) {
-    uint32_t result;
+u32 mkrn_syscall_execute(u32 uNum, u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    u32 uResult;
 
-    /* 检查系统调用是否已注册 */
-    if (num >= 256 || !syscall_table[num].registered) {
-        KLOG_ERROR("Cannot execute unregistered system call: 0x");
-        console_write_hex(num);
-        console_write("\n");
-        return SYSCALL_ERROR;
+    if (uNum >= 256 || !g_syscall_table[uNum].registered) {
+        M4K_LOG_ERROR(
+            "Cannot execute unregistered system call: 0x");
+        mkrn_console_write_hex(uNum);
+        mkrn_console_write("\n");
+        return M4K_SC_ERROR;
     }
 
-    /* 通过中断调用系统调用 */
     __asm__ volatile (
         "int $0x80\n"
-        : "=a"(result)
-        : "a"(num), "b"(arg1), "c"(arg2), "d"(arg3), "S"(arg4), "D"(arg5)
+        : "=a"(uResult)
+        : "a"(uNum), "b"(uArg1), "c"(uArg2), "d"(uArg3),
+          "S"(uArg4), "D"(uArg5)
     );
 
-    return result;
+    return uResult;
 }
 
-/**
- * 获取系统调用名称
- */
-const char *syscall_get_name(uint32_t num) {
-    switch (num) {
-        case SYSCALL_EXIT: return "exit";
-        case SYSCALL_FORK: return "fork";
-        case SYSCALL_READ: return "read";
-        case SYSCALL_WRITE: return "write";
-        case SYSCALL_OPEN: return "open";
-        case SYSCALL_CLOSE: return "close";
-        case SYSCALL_WAITPID: return "waitpid";
-        case SYSCALL_EXECVE: return "execve";
-        case SYSCALL_GETPID: return "getpid";
-        case SYSCALL_GETPPID: return "getppid";
-        case SYSCALL_BRK: return "brk";
-        case SYSCALL_MMAP: return "mmap";
-        case SYSCALL_MUNMAP: return "munmap";
-        case SYSCALL_MPROTECT: return "mprotect";
-        case SYSCALL_MSYNC: return "msync";
-        case SYSCALL_GETCWD: return "getcwd";
-        case SYSCALL_CHDIR: return "chdir";
-        case SYSCALL_MKDIR: return "mkdir";
-        case SYSCALL_RMDIR: return "rmdir";
-        case SYSCALL_LINK: return "link";
-        case SYSCALL_UNLINK: return "unlink";
-        case SYSCALL_RENAME: return "rename";
-        case SYSCALL_STAT: return "stat";
-        case SYSCALL_FSTAT: return "fstat";
-        case SYSCALL_LSTAT: return "lstat";
-        case SYSCALL_ACCESS: return "access";
-        case SYSCALL_CHMOD: return "chmod";
-        case SYSCALL_CHOWN: return "chown";
-        case SYSCALL_UTIME: return "utime";
-        case SYSCALL_TIME: return "time";
-        case SYSCALL_TIMES: return "times";
-        case SYSCALL_GETUID: return "getuid";
-        case SYSCALL_GETGID: return "getgid";
-        case SYSCALL_SETUID: return "setuid";
-        case SYSCALL_SETGID: return "setgid";
-        case SYSCALL_GETEUID: return "geteuid";
-        case SYSCALL_GETEGID: return "getegid";
-        case SYSCALL_SETEUID: return "seteuid";
-        case SYSCALL_SETEGID: return "setegid";
-        case SYSCALL_PIPE: return "pipe";
-        case SYSCALL_DUP: return "dup";
-        case SYSCALL_DUP2: return "dup2";
-        case SYSCALL_SELECT: return "select";
-        case SYSCALL_POLL: return "poll";
-        case SYSCALL_EPOLL_CREATE: return "epoll_create";
-        case SYSCALL_EPOLL_CTL: return "epoll_ctl";
-        case SYSCALL_EPOLL_WAIT: return "epoll_wait";
-        case SYSCALL_SOCKET: return "socket";
-        case SYSCALL_BIND: return "bind";
-        case SYSCALL_LISTEN: return "listen";
-        case SYSCALL_ACCEPT: return "accept";
-        case SYSCALL_CONNECT: return "connect";
-        case SYSCALL_SEND: return "send";
-        case SYSCALL_RECV: return "recv";
-        case SYSCALL_SENDTO: return "sendto";
-        case SYSCALL_RECVFROM: return "recvfrom";
-        case SYSCALL_SHUTDOWN: return "shutdown";
-        case SYSCALL_SETSOCKOPT: return "setsockopt";
-        case SYSCALL_GETSOCKOPT: return "getsockopt";
-        case SYSCALL_IOCTL: return "ioctl";
-        case SYSCALL_FCNTL: return "fcntl";
-        case SYSCALL_READDIR: return "readdir";
-        case SYSCALL_TELLDIR: return "telldir";
-        case SYSCALL_SEEKDIR: return "seekdir";
-        case SYSCALL_CLOSEDIR: return "closedir";
-        case SYSCALL_OPENDIR: return "opendir";
-        case SYSCALL_MKNOD: return "mknod";
-        case SYSCALL_MKFIFO: return "mkfifo";
-        case SYSCALL_TRUNCATE: return "truncate";
-        case SYSCALL_FTRUNCATE: return "ftruncate";
-        case SYSCALL_GETDENTS: return "getdents";
-        case SYSCALL_SYNC: return "sync";
-        case SYSCALL_FSYNC: return "fsync";
-        case SYSCALL_FDATASYNC: return "fdatasync";
-        case SYSCALL_MLOCK: return "mlock";
-        case SYSCALL_MUNLOCK: return "munlock";
-        case SYSCALL_MLOCKALL: return "mlockall";
-        case SYSCALL_MUNLOCKALL: return "munlockall";
-        case SYSCALL_NANOSLEEP: return "nanosleep";
-        case SYSCALL_CLOCK_GETTIME: return "clock_gettime";
-        case SYSCALL_CLOCK_SETTIME: return "clock_settime";
-        case SYSCALL_CLOCK_GETRES: return "clock_getres";
-        case SYSCALL_SCHED_YIELD: return "sched_yield";
-        case SYSCALL_SCHED_SETSCHEDULER: return "sched_setscheduler";
-        case SYSCALL_SCHED_GETSCHEDULER: return "sched_getscheduler";
-        case SYSCALL_SCHED_SETPARAM: return "sched_setparam";
-        case SYSCALL_SCHED_GETPARAM: return "sched_getparam";
-        case SYSCALL_SCHED_SETAFFINITY: return "sched_setaffinity";
-        case SYSCALL_SCHED_GETAFFINITY: return "sched_getaffinity";
-        case SYSCALL_PRLIMIT64: return "prlimit64";
-        case SYSCALL_GETRUSAGE: return "getrusage";
-        case SYSCALL_GETTIMEOFDAY: return "gettimeofday";
-        case SYSCALL_SETTIMEOFDAY: return "settimeofday";
-        case SYSCALL_ADJTIMEX: return "adjtimex";
-        case SYSCALL_TIMER_CREATE: return "timer_create";
-        case SYSCALL_TIMER_DELETE: return "timer_delete";
-        case SYSCALL_TIMER_SETTIME: return "timer_settime";
-        case SYSCALL_TIMER_GETTIME: return "timer_gettime";
-        case SYSCALL_TIMER_GETOVERRUN: return "timer_getoverrun";
-        case SYSCALL_KILL: return "kill";
-        case SYSCALL_TKILL: return "tkill";
-        case SYSCALL_TGKILL: return "tgkill";
-        case SYSCALL_SIGACTION: return "sigaction";
-        case SYSCALL_SIGPROCMASK: return "sigprocmask";
-        case SYSCALL_SIGPENDING: return "sigpending";
-        case SYSCALL_SIGSUSPEND: return "sigsuspend";
-        case SYSCALL_SIGTIMEDWAIT: return "sigtimedwait";
-        case SYSCALL_SIGRETURN: return "sigreturn";
-        case SYSCALL_REBOOT: return "reboot";
-        case SYSCALL_KEXEC_LOAD: return "kexec_load";
-        case SYSCALL_EXIT_GROUP: return "exit_group";
-        case SYSCALL_WAIT4: return "wait4";
-        case SYSCALL_CLONE: return "clone";
-        case SYSCALL_VFORK: return "vfork";
-        case SYSCALL_UNAME: return "uname";
-        case SYSCALL_SEMGET: return "semget";
-        case SYSCALL_SEMOP: return "semop";
-        case SYSCALL_SEMCTL: return "semctl";
-        case SYSCALL_SEMTIMEDOP: return "semtimedop";
-        case SYSCALL_MSGGET: return "msgget";
-        case SYSCALL_MSGSND: return "msgsnd";
-        case SYSCALL_MSGRCV: return "msgrcv";
-        case SYSCALL_MSGCTL: return "msgctl";
-        case SYSCALL_SHMGET: return "shmget";
-        case SYSCALL_SHMAT: return "shmat";
-        case SYSCALL_SHMDT: return "shmdt";
-        case SYSCALL_SHMCTL: return "shmctl";
-        case SYSCALL_DL_LOAD_LIBRARY: return "dl_load_library";
-        case SYSCALL_DL_UNLOAD_LIBRARY: return "dl_unload_library";
-        case SYSCALL_DL_FIND_SYMBOL: return "dl_find_symbol";
-        case SYSCALL_DL_GET_ERROR: return "dl_get_error";
+static const char *mkrn_syscall_get_name(u32 uNum)
+{
+    switch (uNum) {
+        case M4K_SC_EXIT: return "exit";
+        case M4K_SC_FORK: return "fork";
+        case M4K_SC_READ: return "read";
+        case M4K_SC_WRITE: return "write";
+        case M4K_SC_OPEN: return "open";
+        case M4K_SC_CLOSE: return "close";
+        case M4K_SC_WAITPID: return "waitpid";
+        case M4K_SC_EXECVE: return "execve";
+        case M4K_SC_GETPID: return "getpid";
+        case M4K_SC_GETPPID: return "getppid";
+        case M4K_SC_BRK: return "brk";
+        case M4K_SC_MMAP: return "mmap";
+        case M4K_SC_MUNMAP: return "munmap";
+        case M4K_SC_MPROTECT: return "mprotect";
+        case M4K_SC_MSYNC: return "msync";
+        case M4K_SC_GETCWD: return "getcwd";
+        case M4K_SC_CHDIR: return "chdir";
+        case M4K_SC_MKDIR: return "mkdir";
+        case M4K_SC_RMDIR: return "rmdir";
+        case M4K_SC_LINK: return "link";
+        case M4K_SC_UNLINK: return "unlink";
+        case M4K_SC_RENAME: return "rename";
+        case M4K_SC_STAT: return "stat";
+        case M4K_SC_FSTAT: return "fstat";
+        case M4K_SC_LSTAT: return "lstat";
+        case M4K_SC_ACCESS: return "access";
+        case M4K_SC_CHMOD: return "chmod";
+        case M4K_SC_CHOWN: return "chown";
+        case M4K_SC_UTIME: return "utime";
+        case M4K_SC_TIME: return "time";
+        case M4K_SC_TIMES: return "times";
+        case M4K_SC_GETUID: return "getuid";
+        case M4K_SC_GETGID: return "getgid";
+        case M4K_SC_SETUID: return "setuid";
+        case M4K_SC_SETGID: return "setgid";
+        case M4K_SC_GETEUID: return "geteuid";
+        case M4K_SC_GETEGID: return "getegid";
+        case M4K_SC_SETEUID: return "seteuid";
+        case M4K_SC_SETEGID: return "setegid";
+        case M4K_SC_PIPE: return "pipe";
+        case M4K_SC_DUP: return "dup";
+        case M4K_SC_DUP2: return "dup2";
+        case M4K_SC_SELECT: return "select";
+        case M4K_SC_POLL: return "poll";
+        case M4K_SC_EPOLL_CREATE: return "epoll_create";
+        case M4K_SC_EPOLL_CTL: return "epoll_ctl";
+        case M4K_SC_EPOLL_WAIT: return "epoll_wait";
+        case M4K_SC_SOCKET: return "socket";
+        case M4K_SC_BIND: return "bind";
+        case M4K_SC_LISTEN: return "listen";
+        case M4K_SC_ACCEPT: return "accept";
+        case M4K_SC_CONNECT: return "connect";
+        case M4K_SC_SEND: return "send";
+        case M4K_SC_RECV: return "recv";
+        case M4K_SC_SENDTO: return "sendto";
+        case M4K_SC_RECVFROM: return "recvfrom";
+        case M4K_SC_SHUTDOWN: return "shutdown";
+        case M4K_SC_SETSOCKOPT: return "setsockopt";
+        case M4K_SC_GETSOCKOPT: return "getsockopt";
+        case M4K_SC_IOCTL: return "ioctl";
+        case M4K_SC_FCNTL: return "fcntl";
+        case M4K_SC_READDIR: return "readdir";
+        case M4K_SC_TELLDIR: return "telldir";
+        case M4K_SC_SEEKDIR: return "seekdir";
+        case M4K_SC_CLOSEDIR: return "closedir";
+        case M4K_SC_OPENDIR: return "opendir";
+        case M4K_SC_MKNOD: return "mknod";
+        case M4K_SC_MKFIFO: return "mkfifo";
+        case M4K_SC_TRUNCATE: return "truncate";
+        case M4K_SC_FTRUNCATE: return "ftruncate";
+        case M4K_SC_GETDENTS: return "getdents";
+        case M4K_SC_SYNC: return "sync";
+        case M4K_SC_FSYNC: return "fsync";
+        case M4K_SC_FDATASYNC: return "fdatasync";
+        case M4K_SC_MLOCK: return "mlock";
+        case M4K_SC_MUNLOCK: return "munlock";
+        case M4K_SC_MLOCKALL: return "mlockall";
+        case M4K_SC_MUNLOCKALL: return "munlockall";
+        case M4K_SC_NANOSLEEP: return "nanosleep";
+        case M4K_SC_CLOCK_GETTIME: return "clock_gettime";
+        case M4K_SC_CLOCK_SETTIME: return "clock_settime";
+        case M4K_SC_CLOCK_GETRES: return "clock_getres";
+        case M4K_SC_SCHED_YIELD: return "sched_yield";
+        case M4K_SC_SCHED_SETSCHEDULER:
+            return "sched_setscheduler";
+        case M4K_SC_SCHED_GETSCHEDULER:
+            return "sched_getscheduler";
+        case M4K_SC_SCHED_SETPARAM:
+            return "sched_setparam";
+        case M4K_SC_SCHED_GETPARAM:
+            return "sched_getparam";
+        case M4K_SC_SCHED_SETAFFINITY:
+            return "sched_setaffinity";
+        case M4K_SC_SCHED_GETAFFINITY:
+            return "sched_getaffinity";
+        case M4K_SC_PRLIMIT64: return "prlimit64";
+        case M4K_SC_GETRUSAGE: return "getrusage";
+        case M4K_SC_GETTIMEOFDAY: return "gettimeofday";
+        case M4K_SC_SETTIMEOFDAY: return "settimeofday";
+        case M4K_SC_ADJTIMEX: return "adjtimex";
+        case M4K_SC_TIMER_CREATE: return "timer_create";
+        case M4K_SC_TIMER_DELETE: return "timer_delete";
+        case M4K_SC_TIMER_SETTIME: return "timer_settime";
+        case M4K_SC_TIMER_GETTIME: return "timer_gettime";
+        case M4K_SC_TIMER_GETOVERRUN:
+            return "timer_getoverrun";
+        case M4K_SC_KILL: return "kill";
+        case M4K_SC_TKILL: return "tkill";
+        case M4K_SC_TGKILL: return "tgkill";
+        case M4K_SC_SIGACTION: return "sigaction";
+        case M4K_SC_SIGPROCMASK: return "sigprocmask";
+        case M4K_SC_SIGPENDING: return "sigpending";
+        case M4K_SC_SIGSUSPEND: return "sigsuspend";
+        case M4K_SC_SIGTIMEDWAIT: return "sigtimedwait";
+        case M4K_SC_SIGRETURN: return "sigreturn";
+        case M4K_SC_REBOOT: return "reboot";
+        case M4K_SC_KEXEC_LOAD: return "kexec_load";
+        case M4K_SC_EXIT_GROUP: return "exit_group";
+        case M4K_SC_WAIT4: return "wait4";
+        case M4K_SC_CLONE: return "clone";
+        case M4K_SC_VFORK: return "vfork";
+        case M4K_SC_UNAME: return "uname";
+        case M4K_SC_SEMGET: return "semget";
+        case M4K_SC_SEMOP: return "semop";
+        case M4K_SC_SEMCTL: return "semctl";
+        case M4K_SC_SEMTIMEDOP: return "semtimedop";
+        case M4K_SC_MSGGET: return "msgget";
+        case M4K_SC_MSGSND: return "msgsnd";
+        case M4K_SC_MSGRCV: return "msgrcv";
+        case M4K_SC_MSGCTL: return "msgctl";
+        case M4K_SC_SHMGET: return "shmget";
+        case M4K_SC_SHMAT: return "shmat";
+        case M4K_SC_SHMDT: return "shmdt";
+        case M4K_SC_SHMCTL: return "shmctl";
+        case M4K_SC_DL_LOAD_LIBRARY:
+            return "dl_load_library";
+        case M4K_SC_DL_UNLOAD_LIBRARY:
+            return "dl_unload_library";
+        case M4K_SC_DL_FIND_SYMBOL:
+            return "dl_find_symbol";
+        case M4K_SC_DL_GET_ERROR: return "dl_get_error";
+        case M4K_SC_SYSINFO: return "sysinfo";
+        case M4K_SC_GETPROCS: return "getprocs";
+        case M4K_SC_STATFS: return "statfs";
+        case M4K_SC_MOUNT: return "mount";
+        case M4K_SC_UMOUNT: return "umount";
+        case M4K_SC_MOUNTINFO: return "mountinfo";
         default: return "unknown";
     }
 }
 
-/**
- * 获取系统调用统计信息
- */
-void syscall_get_stats(uint32_t *total_calls, uint32_t *failed_calls, uint32_t *permission_denied) {
-    if (total_calls) *total_calls = syscall_stats.total_calls;
-    if (failed_calls) *failed_calls = syscall_stats.failed_calls;
-    if (permission_denied) *permission_denied = syscall_stats.permission_denied;
+void mkrn_syscall_get_stats(u32 *pTotal, u32 *pFailed,
+    u32 *pDenied)
+{
+    if (pTotal)  *pTotal = g_syscall_stats.total_calls;
+    if (pFailed) *pFailed = g_syscall_stats.failed_calls;
+    if (pDenied) *pDenied =
+        g_syscall_stats.permission_denied;
 }
 
-/**
- * 设置系统调用权限掩码
- */
-void syscall_set_permission(uint32_t num, uint32_t permission_mask) {
-    if (num >= 256) {
-        KLOG_ERROR("Invalid system call number for permission setting: 0x");
-        console_write_hex(num);
-        console_write("\n");
+void mkrn_syscall_set_permission(u32 uNum,
+    u32 uPermMask)
+{
+    if (uNum >= 256) {
+        M4K_LOG_ERROR(
+            "Invalid system call number for "
+            "permission setting: 0x");
+        mkrn_console_write_hex(uNum);
+        mkrn_console_write("\n");
         return;
     }
 
-    if (!syscall_table[num].registered) {
-        KLOG_WARN("Setting permission for unregistered system call 0x");
-        console_write_hex(num);
-        console_write("\n");
+    if (!g_syscall_table[uNum].registered) {
+        M4K_LOG_WARN(
+            "Setting permission for unregistered "
+            "system call 0x");
+        mkrn_console_write_hex(uNum);
+        mkrn_console_write("\n");
     }
 
-    syscall_table[num].permission_mask = permission_mask;
+    g_syscall_table[uNum].permission_mask = uPermMask;
 
-    KLOG_INFO("Permission mask set for system call 0x");
-    console_write_hex(num);
-    console_write(" to 0x");
-    console_write_hex(permission_mask);
-    console_write("\n");
+    M4K_LOG_INFO("Permission mask set for system call 0x");
+    mkrn_console_write_hex(uNum);
+    mkrn_console_write(" to 0x");
+    mkrn_console_write_hex(uPermMask);
+    mkrn_console_write("\n");
 }
 
-/**
- * 检查系统调用是否已注册
- */
-bool syscall_is_registered(uint32_t num) {
-    return (num < 256) && syscall_table[num].registered;
+b mkrn_syscall_is_registered(u32 uNum)
+{
+    return (uNum < 256) && g_syscall_table[uNum].registered;
 }
 
-/**
- * 获取系统调用处理函数
- */
-syscall_handler_t syscall_get_handler(uint32_t num) {
-    if (num >= 256 || !syscall_table[num].registered) {
+mkrn_syscall_handler_t mkrn_syscall_get_handler(u32 uNum)
+{
+    if (uNum >= 256 ||
+        !g_syscall_table[uNum].registered) {
         return NULL;
     }
-    return syscall_table[num].handler;
+    return g_syscall_table[uNum].handler;
 }
 
-/**
- * 打印系统调用状态信息
- */
-void syscall_print_status(void) {
-    uint32_t i, registered_count = 0;
+void mkrn_syscall_print_status(void)
+{
+    u32 uI;
+    u32 uRegCount = 0;
 
-    KLOG_INFO("=== System Call Status ===");
+    M4K_LOG_INFO("=== System Call Status ===");
 
-    /* 统计信息 */
-    KLOG_INFO("Statistics:");
-    KLOG_INFO("  Total calls: ");
-    console_write_dec(syscall_stats.total_calls);
-    console_write("\n");
+    M4K_LOG_INFO("Statistics:");
+    M4K_LOG_INFO("  Total calls: ");
+    mkrn_console_write_dec(g_syscall_stats.total_calls);
+    mkrn_console_write("\n");
 
-    KLOG_INFO("  Failed calls: ");
-    console_write_dec(syscall_stats.failed_calls);
-    console_write("\n");
+    M4K_LOG_INFO("  Failed calls: ");
+    mkrn_console_write_dec(g_syscall_stats.failed_calls);
+    mkrn_console_write("\n");
 
-    KLOG_INFO("  Permission denied: ");
-    console_write_dec(syscall_stats.permission_denied);
-    console_write("\n");
+    M4K_LOG_INFO("  Permission denied: ");
+    mkrn_console_write_dec(
+        g_syscall_stats.permission_denied);
+    mkrn_console_write("\n");
 
-    /* 注册的系统调用 */
-    KLOG_INFO("Registered system calls:");
-    for (i = 0; i < 256; i++) {
-        if (syscall_table[i].registered) {
-            KLOG_INFO("  0x");
-            console_write_hex(i);
-            console_write(" - ");
-            console_write(syscall_get_name(i));
-            console_write(" (handler: 0x");
-            console_write_hex((uint32_t)syscall_table[i].handler);
-            console_write(")\n");
-            registered_count++;
+    M4K_LOG_INFO("Registered system calls:");
+    for (uI = 0; uI < 256; uI++) {
+        if (g_syscall_table[uI].registered) {
+            M4K_LOG_INFO("  0x");
+            mkrn_console_write_hex(uI);
+            mkrn_console_write(" - ");
+            mkrn_console_write(
+                mkrn_syscall_get_name(uI));
+            mkrn_console_write(" (handler: 0x");
+            mkrn_console_write_hex(
+                (u32)g_syscall_table[uI].handler);
+            mkrn_console_write(")\n");
+            uRegCount++;
         }
     }
 
-    KLOG_INFO("Total registered system calls: ");
-    console_write_dec(registered_count);
-    console_write("\n");
-    KLOG_INFO("=========================");
+    M4K_LOG_INFO(
+        "Total registered system calls: ");
+    mkrn_console_write_dec(uRegCount);
+    mkrn_console_write("\n");
+    M4K_LOG_INFO("=========================");
 }
 
-/* ====================================================================
-   系统调用实现函数
-   ==================================================================== */
+static u32 mkrn_syscall_exit_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    u32 uStatus = uArg1;
 
-/**
- * 系统调用：exit - 退出当前进程
- */
-static uint32_t syscall_exit_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                 uint32_t arg4, uint32_t arg5) {
-    uint32_t status = arg1;
+    M4K_LOG_INFO("Process exit called with status: ");
+    mkrn_console_write_dec(uStatus);
+    mkrn_console_write("\n");
 
-    KLOG_INFO("Process exit called with status: ");
-    console_write_dec(status);
-    console_write("\n");
+    mkrn_process_exit();
 
-    /* 调用进程退出函数 */
-    process_exit();
-
-    /* 不会到达这里 */
     return 0;
 }
 
-/**
- * 系统调用：fork - 创建子进程
- */
-static uint32_t syscall_fork_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                 uint32_t arg4, uint32_t arg5) {
-    process_t *child_process;
-
-    KLOG_INFO("Fork system call invoked\n");
-
-    /* 创建子进程 */
-    child_process = process_create("child", PROCESS_PRIORITY_NORMAL);
-    if (!child_process) {
-        KLOG_ERROR("Failed to create child process in fork\n");
-        return SYSCALL_ERROR;
-    }
-
-    /* 在子进程中返回0，在父进程中返回子进程PID */
-    if (child_process->pid != process_get_current()->pid) {
-        /* 这是子进程 */
-        return 0;
-    } else {
-        /* 这是父进程 */
-        return child_process->pid;
-    }
+static u32 mkrn_syscall_fork_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg1; (void)uArg2; (void)uArg3;
+    (void)uArg4; (void)uArg5;
+    M4K_LOG_INFO(
+        "Fork system call invoked - not implemented\n");
+    return M4K_SC_ERROR;
 }
 
-/**
- * 系统调用：getpid - 获取当前进程ID
- */
-static uint32_t syscall_getpid_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                   uint32_t arg4, uint32_t arg5) {
-    uint32_t pid = process_get_pid();
+static u32 mkrn_syscall_getpid_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    u32 uPid = mkrn_process_get_pid();
 
-    KLOG_DEBUG("GetPID system call: returning ");
-    console_write_dec(pid);
-    console_write("\n");
+    M4K_LOG_DEBUG("GetPID system call: returning ");
+    mkrn_console_write_dec(uPid);
+    mkrn_console_write("\n");
 
-    return pid;
+    return uPid;
 }
 
-/**
- * 系统调用：getppid - 获取父进程ID
- */
-static uint32_t syscall_getppid_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                    uint32_t arg4, uint32_t arg5) {
-    uint32_t ppid = process_get_ppid();
+static u32 mkrn_syscall_getppid_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg1; (void)uArg2; (void)uArg3;
+    (void)uArg4; (void)uArg5;
+    u32 uPPid = 0;
+    mkrn_process_t *pCur = mkrn_process_get_current();
+    if (pCur) uPPid = pCur->ppid;
 
-    KLOG_DEBUG("GetPPID system call: returning ");
-    console_write_dec(ppid);
-    console_write("\n");
+    M4K_LOG_DEBUG("GetPPID system call: returning ");
+    mkrn_console_write_dec(uPPid);
+    mkrn_console_write("\n");
 
-    return ppid;
+    return uPPid;
 }
 
-/**
- * 系统调用：read - 从文件描述符读取数据
- */
-static uint32_t syscall_read_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                 uint32_t arg4, uint32_t arg5) {
-    uint32_t fd = arg1;
-    void *buf = (void *)arg2;
-    uint32_t count = arg3;
+#define COM1_DATA 0x3F8
+#define COM1_LSR  0x3FD
+#define LSR_DR    0x01
 
-    KLOG_DEBUG("Read system call: fd=");
-    console_write_dec(fd);
-    console_write(", count=");
-    console_write_dec(count);
-    console_write("\n");
-
-    /* 暂时返回错误，表示不支持的文件描述符 */
-    return SYSCALL_ERROR;
+static inline u8 inb(u16 pPort)
+{
+    u8 r;
+    __asm__ volatile("inb %1, %0" : "=a"(r) : "Nd"(pPort));
+    return r;
 }
 
-/**
- * 系统调用：write - 向文件描述符写入数据
- */
-static uint32_t syscall_write_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                  uint32_t arg4, uint32_t arg5) {
-    uint32_t fd = arg1;
-    const void *buf = (const void *)arg2;
-    uint32_t count = arg3;
+static u32 mkrn_syscall_read_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    u32 uFd = uArg1;
+    void *pBuf = (void *)uArg2;
+    u32 uCount = uArg3;
 
-    KLOG_DEBUG("Write system call: fd=");
-    console_write_dec(fd);
-    console_write(", count=");
-    console_write_dec(count);
-    console_write("\n");
-
-    /* 如果是标准输出（fd=1），输出到控制台 */
-    if (fd == 1 && buf) {
-        char *str = (char *)buf;
-        uint32_t i;
-
-        /* 输出字符串 */
-        for (i = 0; i < count && str[i]; i++) {
-            console_put_char(str[i]);
+    if (uFd == 0 && pBuf && uCount > 0 &&
+        !mkrn_vfs_fd_in_use(0)) {
+        u8 *pByte = (u8 *)pBuf;
+        u32 uI;
+        for (uI = 0; uI < uCount; uI++) {
+            while (!(inb(COM1_LSR) & LSR_DR));
+            pByte[uI] = inb(COM1_DATA);
         }
-
-        return i; /* 返回实际写入的字节数 */
+        return uI;
     }
 
-    /* 其他文件描述符暂时不支持 */
-    return SYSCALL_ERROR;
+    if (pBuf && uCount > 0) {
+        return (u32)mkrn_vfs_read(
+            (int)uFd, pBuf, (size_t)uCount);
+    }
+
+    return M4K_SC_ERROR;
 }
 
-/**
- * 系统调用：open - 打开文件
- */
-static uint32_t syscall_open_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                 uint32_t arg4, uint32_t arg5) {
-    const char *pathname = (const char *)arg1;
-    uint32_t flags = arg2;
+static u32 mkrn_syscall_write_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    u32 uFd = uArg1;
+    const void *pBuf = (const void *)uArg2;
+    u32 uCount = uArg3;
 
-    KLOG_DEBUG("Open system call: pathname=");
-    if (pathname) {
-        console_write(pathname);
+    if (uFd == 1 && pBuf &&
+        !mkrn_vfs_fd_in_use(1)) {
+        char *pStr = (char *)pBuf;
+        u32 uI;
+        for (uI = 0; uI < uCount && pStr[uI]; uI++) {
+            mkrn_console_put_char(pStr[uI]);
+        }
+        return uI;
+    }
+
+    if (pBuf && uCount > 0) {
+        return (u32)mkrn_vfs_write(
+            (int)uFd, pBuf, (size_t)uCount);
+    }
+
+    return M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_open_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg3; (void)uArg4; (void)uArg5;
+    const char *pPath = (const char *)uArg1;
+    int iFlags = (int)uArg2;
+
+    int iFd = mkrn_vfs_open(pPath, iFlags);
+    return (iFd >= 0) ? (u32)iFd : M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_close_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    int iFd = (int)uArg1;
+
+    return (mkrn_vfs_close(iFd) == 0)
+        ? M4K_SC_SUCCESS : M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_getdents_impl(u32 uArg1,
+    u32 uArg2, u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg4; (void)uArg5;
+    int iFd = (int)uArg1;
+    struct mkrn_vfs_dirent *pBuf =
+        (struct mkrn_vfs_dirent *)uArg2;
+    u32 uCount = uArg3;
+
+    int iN = mkrn_vfs_getdents(iFd, pBuf, uCount);
+    return (iN >= 0) ? (u32)iN : M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_execve_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    const char *pFilename = (const char *)uArg1;
+    char *const *pArgv = (char *const *)uArg2;
+    char *const *pEnvp = (char *const *)uArg3;
+
+    M4K_LOG_DEBUG(
+        "Execve system call: filename=");
+    if (pFilename) {
+        mkrn_console_write(pFilename);
     } else {
-        console_write("(null)");
+        mkrn_console_write("(null)");
     }
-    console_write(", flags=");
-    console_write_hex(flags);
-    console_write("\n");
+    mkrn_console_write("\n");
 
-    /* 暂时不支持，返回错误 */
-    return SYSCALL_ERROR;
+    return M4K_SC_ERROR;
 }
 
-/**
- * 系统调用：close - 关闭文件描述符
- */
-static uint32_t syscall_close_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                  uint32_t arg4, uint32_t arg5) {
-    uint32_t fd = arg1;
+static u32 mkrn_syscall_waitpid_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    u32 uPid = uArg1;
+    void *pStatus = (void *)uArg2;
+    u32 uOptions = uArg3;
 
-    KLOG_DEBUG("Close system call: fd=");
-    console_write_dec(fd);
-    console_write("\n");
+    M4K_LOG_DEBUG("Waitpid system call: pid=");
+    mkrn_console_write_dec(uPid);
+    mkrn_console_write(", options=");
+    mkrn_console_write_hex(uOptions);
+    mkrn_console_write("\n");
 
-    /* 暂时不支持，返回错误 */
-    return SYSCALL_ERROR;
+    return M4K_SC_ERROR;
 }
 
-/**
- * 系统调用：execve - 执行程序
- */
-static uint32_t syscall_execve_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                   uint32_t arg4, uint32_t arg5) {
-    const char *filename = (const char *)arg1;
-    char *const *argv = (char *const *)arg2;
-    char *const *envp = (char *const *)arg3;
+static u32 mkrn_syscall_brk_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    u32 uAddr = uArg1;
 
-    KLOG_DEBUG("Execve system call: filename=");
-    if (filename) {
-        console_write(filename);
+    M4K_LOG_DEBUG("Brk system call: addr=0x");
+    mkrn_console_write_hex(uAddr);
+    mkrn_console_write("\n");
+
+    return M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_getcwd_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    char *pBuf = (char *)uArg1;
+    u32 uSize = uArg2;
+    mkrn_process_t *pCur = mkrn_process_get_current();
+    if (!pBuf || !pCur || uSize == 0) return M4K_SC_ERROR;
+    int iI;
+    for (iI = 0;
+         iI < (int)uSize - 1 && pCur->cwd[iI]; iI++)
+        pBuf[iI] = pCur->cwd[iI];
+    pBuf[iI] = '\0';
+    return iI;
+}
+
+static void mkrn_resolve_path(const char *pCwd,
+    const char *pIn, char *pOut, int iOSize)
+{
+    if (!pIn || !*pIn) {
+        int iI;
+        for (iI = 0;
+             pCwd[iI] && iI < iOSize - 1; iI++)
+            pOut[iI] = pCwd[iI];
+        pOut[iI] = '\0';
+        return;
+    }
+
+    char tmp[512];
+    int ti = 0;
+    if (pIn[0] == '/') {
+        for (int iI = 0;
+             pIn[iI] && ti < 510; iI++)
+            tmp[ti++] = pIn[iI];
     } else {
-        console_write("(null)");
+        for (int iI = 0;
+             pCwd[iI] && ti < 510; iI++)
+            tmp[ti++] = pCwd[iI];
+        if (ti > 0 && tmp[ti - 1] != '/'
+            && ti < 510)
+            tmp[ti++] = '/';
+        for (int iI = 0;
+             pIn[iI] && ti < 510; iI++)
+            tmp[ti++] = pIn[iI];
     }
-    console_write("\n");
+    tmp[ti] = '\0';
 
-    /* 暂时不支持，返回错误 */
-    return SYSCALL_ERROR;
-}
-
-/**
- * 系统调用：waitpid - 等待子进程
- */
-static uint32_t syscall_waitpid_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                    uint32_t arg4, uint32_t arg5) {
-    uint32_t pid = arg1;
-    void *status = (void *)arg2;
-    uint32_t options = arg3;
-
-    KLOG_DEBUG("Waitpid system call: pid=");
-    console_write_dec(pid);
-    console_write(", options=");
-    console_write_hex(options);
-    console_write("\n");
-
-    /* 暂时不支持，返回错误 */
-    return SYSCALL_ERROR;
-}
-
-/**
- * 系统调用：brk - 设置程序中断点
- */
-static uint32_t syscall_brk_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                uint32_t arg4, uint32_t arg5) {
-    uint32_t addr = arg1;
-
-    KLOG_DEBUG("Brk system call: addr=0x");
-    console_write_hex(addr);
-    console_write("\n");
-
-    /* 暂时不支持，返回错误 */
-    return SYSCALL_ERROR;
-}
-
-/**
- * 系统调用：getcwd - 获取当前工作目录
- */
-static uint32_t syscall_getcwd_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                   uint32_t arg4, uint32_t arg5) {
-    char *buf = (char *)arg1;
-    uint32_t size = arg2;
-
-    KLOG_DEBUG("Getcwd system call: buf=0x");
-    console_write_hex((uint32_t)buf);
-    console_write(", size=");
-    console_write_dec(size);
-    console_write("\n");
-
-    /* 暂时不支持，返回错误 */
-    return SYSCALL_ERROR;
-}
-
-/**
- * 系统调用：chdir - 改变当前工作目录
- */
-static uint32_t syscall_chdir_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                  uint32_t arg4, uint32_t arg5) {
-    const char *path = (const char *)arg1;
-
-    KLOG_DEBUG("Chdir system call: path=");
-    if (path) {
-        console_write(path);
-    } else {
-        console_write("(null)");
-    }
-    console_write("\n");
-
-    /* 暂时不支持，返回错误 */
-    return SYSCALL_ERROR;
-}
-
-/**
- * 系统调用：time - 获取时间
- */
-static uint32_t syscall_time_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                 uint32_t arg4, uint32_t arg5) {
-    void *tloc = (void *)arg1;
-
-    KLOG_DEBUG("Time system call\n");
-
-    /* 返回模拟的时间戳 */
-    uint32_t current_time = 1234567890; /* 模拟时间戳 */
-
-    if (tloc) {
-        *(uint32_t *)tloc = current_time;
+    char *parts[64];
+    int np = 0;
+    char *pP = tmp;
+    while (*pP) {
+        while (*pP == '/') pP++;
+        if (!*pP) break;
+        char *pStart = pP;
+        while (*pP && *pP != '/') pP++;
+        int saved = *pP;
+        *pP = '\0';
+        if (pStart[0] == '.' && pStart[1] == '\0') {
+            if (saved) pP++;
+            continue;
+        }
+        if (pStart[0] == '.' && pStart[1] == '.'
+            && pStart[2] == '\0') {
+            if (np > 0) np--;
+            if (saved) pP++;
+            continue;
+        }
+        if (np < 64) parts[np++] = pStart;
+        if (saved) pP++;
     }
 
-    return current_time;
+    int oi = 0;
+    pOut[oi++] = '/';
+    for (int iI = 0;
+         iI < np && oi < iOSize - 1; iI++) {
+        char *pS = parts[iI];
+        while (*pS && oi < iOSize - 1)
+            pOut[oi++] = *pS++;
+        if (iI < np - 1 && oi < iOSize - 1)
+            pOut[oi++] = '/';
+    }
+    pOut[oi] = '\0';
 }
 
-/**
- * 系统调用：uname - 获取系统信息
- */
-static uint32_t syscall_uname_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                  uint32_t arg4, uint32_t arg5) {
-    void *buf = (void *)arg1;
-
-    KLOG_DEBUG("Uname system call\n");
-
-    /* 暂时不支持，返回错误 */
-    return SYSCALL_ERROR;
+static u32 mkrn_syscall_chdir_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    const char *pPath = (const char *)uArg1;
+    mkrn_process_t *pCur = mkrn_process_get_current();
+    if (!pPath || !pCur) return M4K_SC_ERROR;
+    if (root_yafs_tree != 0) {
+        char resolved[256];
+        mkrn_resolve_path(
+            pCur->cwd, pPath, resolved, 256);
+        uint64_t uInode =
+            mkrn_yafs_lookup_path(
+                root_yafs_tree, resolved);
+        if (uInode == 0) return M4K_SC_ERROR;
+        int iI;
+        for (iI = 0;
+             iI < 254 && resolved[iI]; iI++)
+            pCur->cwd[iI] = resolved[iI];
+        pCur->cwd[iI] = '\0';
+        return M4K_SC_SUCCESS;
+    }
+    return M4K_SC_ERROR;
 }
 
-/**
- * 系统调用：reboot - 重启系统
- */
-static uint32_t syscall_reboot_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                   uint32_t arg4, uint32_t arg5) {
-    uint32_t magic1 = arg1;
-    uint32_t magic2 = arg2;
-    uint32_t cmd = arg3;
+static u32 mkrn_syscall_mkdir_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    const char *pPath = (const char *)uArg1;
+    (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    return (mkrn_vfs_mkdir(pPath) == 0)
+        ? M4K_SC_SUCCESS : M4K_SC_ERROR;
+}
 
-    KLOG_INFO("Reboot system call: magic1=0x");
-    console_write_hex(magic1);
-    console_write(", magic2=0x");
-    console_write_hex(magic2);
-    console_write(", cmd=");
-    console_write_dec(cmd);
-    console_write("\n");
+static u32 mkrn_syscall_unlink_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    const char *pPath = (const char *)uArg1;
+    (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    return (mkrn_vfs_unlink(pPath) == 0)
+        ? M4K_SC_SUCCESS : M4K_SC_ERROR;
+}
 
-    /* 检查魔数 */
-    if (magic1 == 0x01234567 && magic2 == 0x89ABCDEF) {
-        KLOG_INFO("Rebooting system...\n");
+static u32 mkrn_syscall_rmdir_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    const char *pPath = (const char *)uArg1;
+    (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    return (mkrn_vfs_rmdir(pPath) == 0)
+        ? M4K_SC_SUCCESS : M4K_SC_ERROR;
+}
 
-        /* 执行重启 */
+static u32 mkrn_syscall_rename_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    const char *pOld = (const char *)uArg1;
+    const char *pNew = (const char *)uArg2;
+    (void)uArg3; (void)uArg4; (void)uArg5;
+    return (mkrn_vfs_rename(pOld, pNew) == 0)
+        ? M4K_SC_SUCCESS : M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_pipe_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    int *piFds = (int *)uArg1;
+    (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    if (!piFds) return M4K_SC_ERROR;
+    int iFd[2];
+    if (mkrn_vfs_pipe(iFd) != 0) return M4K_SC_ERROR;
+    piFds[0] = iFd[0];
+    piFds[1] = iFd[1];
+    return M4K_SC_SUCCESS;
+}
+
+static u32 mkrn_syscall_dup2_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    int iOldfd = (int)uArg1;
+    int iNewfd = (int)uArg2;
+    (void)uArg3; (void)uArg4; (void)uArg5;
+    int iR = mkrn_vfs_dup2(iOldfd, iNewfd);
+    return (iR >= 0) ? (u32)iR : M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_time_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    void *pTloc = (void *)uArg1;
+
+    M4K_LOG_DEBUG("Time system call\n");
+
+    u32 uCurTime = 1234567890;
+
+    if (pTloc) {
+        *(u32 *)pTloc = uCurTime;
+    }
+
+    return uCurTime;
+}
+
+struct mkrn_utsname {
+    char sysname[65];
+    char nodename[65];
+    char release[65];
+    char version[65];
+    char machine[65];
+};
+
+static u32 mkrn_syscall_uname_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    struct mkrn_utsname *pU =
+        (struct mkrn_utsname *)uArg1;
+    if (!pU) return M4K_SC_ERROR;
+    const char *pSysname = "M4KK1";
+    const char *pNodename = "m4kk1";
+    const char *pRelease = "1.0.0";
+    const char *pVersion = "M4KK1-Y4KU";
+    const char *pMachine = "i386";
+    int iI;
+    for (iI = 0; pSysname[iI] && iI < 64; iI++)
+        pU->sysname[iI] = pSysname[iI];
+    pU->sysname[iI] = '\0';
+    for (iI = 0; pNodename[iI] && iI < 64; iI++)
+        pU->nodename[iI] = pNodename[iI];
+    pU->nodename[iI] = '\0';
+    for (iI = 0; pRelease[iI] && iI < 64; iI++)
+        pU->release[iI] = pRelease[iI];
+    pU->release[iI] = '\0';
+    for (iI = 0; pVersion[iI] && iI < 64; iI++)
+        pU->version[iI] = pVersion[iI];
+    pU->version[iI] = '\0';
+    for (iI = 0; pMachine[iI] && iI < 64; iI++)
+        pU->machine[iI] = pMachine[iI];
+    pU->machine[iI] = '\0';
+    return M4K_SC_SUCCESS;
+}
+
+static u32 mkrn_syscall_reboot_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    u32 uMagic1 = uArg1;
+    u32 uMagic2 = uArg2;
+    u32 uCmd = uArg3;
+
+    M4K_LOG_INFO("Reboot system call: magic1=0x");
+    mkrn_console_write_hex(uMagic1);
+    mkrn_console_write(", magic2=0x");
+    mkrn_console_write_hex(uMagic2);
+    mkrn_console_write(", cmd=");
+    mkrn_console_write_dec(uCmd);
+    mkrn_console_write("\n");
+
+    if (uMagic1 == 0x01234567 &&
+        uMagic2 == 0x89ABCDEF) {
+        M4K_LOG_INFO("Rebooting system...\n");
+
         __asm__ volatile (
-            "movl $0x64, %eax\n"  /* 魔数 */
-            "outb %al, $0xFE\n"   /* QEMU重启端口 */
+            "movl $0x64, %eax\n"
+            "outb %al, $0xFE\n"
         );
 
-        /* 如果上面的方法不起作用，尝试键盘控制器重启 */
         __asm__ volatile (
             "movb $0x02, %al\n"
             "outb %al, $0x64\n"
@@ -899,154 +984,251 @@ static uint32_t syscall_reboot_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
         return 0;
     }
 
-    return SYSCALL_ERROR;
+    return M4K_SC_ERROR;
 }
 
-/**
- * 初始化并注册所有系统调用
- */
-void syscall_init_handlers(void) {
-    /* 注册基本系统调用 */
-    syscall_register(SYSCALL_EXIT, syscall_exit_impl);
-    syscall_register(SYSCALL_FORK, syscall_fork_impl);
-    syscall_register(SYSCALL_READ, syscall_read_impl);
-    syscall_register(SYSCALL_WRITE, syscall_write_impl);
-    syscall_register(SYSCALL_OPEN, syscall_open_impl);
-    syscall_register(SYSCALL_CLOSE, syscall_close_impl);
-    syscall_register(SYSCALL_WAITPID, syscall_waitpid_impl);
-    syscall_register(SYSCALL_EXECVE, syscall_execve_impl);
-    syscall_register(SYSCALL_GETPID, syscall_getpid_impl);
-    syscall_register(SYSCALL_GETPPID, syscall_getppid_impl);
-    syscall_register(SYSCALL_BRK, syscall_brk_impl);
-    syscall_register(SYSCALL_GETCWD, syscall_getcwd_impl);
-    syscall_register(SYSCALL_CHDIR, syscall_chdir_impl);
-    syscall_register(SYSCALL_TIME, syscall_time_impl);
-    syscall_register(SYSCALL_UNAME, syscall_uname_impl);
-    syscall_register(SYSCALL_REBOOT, syscall_reboot_impl);
-
-    /* 注册动态链接器相关系统调用 */
-    /* TODO: 实现动态链接器系统调用 */
-    /* syscall_register(SYSCALL_DL_LOAD_LIBRARY, syscall_dl_load_library_impl); */
-    /* syscall_register(SYSCALL_DL_UNLOAD_LIBRARY, syscall_dl_unload_library_impl); */
-    /* syscall_register(SYSCALL_DL_FIND_SYMBOL, syscall_dl_find_symbol_impl); */
-    /* syscall_register(SYSCALL_DL_GET_ERROR, syscall_dl_get_error_impl); */
-
-    KLOG_INFO("System call handlers registered");
+static u32 mkrn_syscall_sysinfo_impl(u32 uArg1,
+    u32 uArg2, u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    struct mkrn_sysinfo *pInfo =
+        (struct mkrn_sysinfo *)uArg1;
+    if (!pInfo) return M4K_SC_ERROR;
+    pInfo->total_ram = mkrn_memory_get_total();
+    pInfo->free_ram = mkrn_memory_get_free();
+    pInfo->used_ram = mkrn_memory_get_used();
+    pInfo->process_count = mkrn_process_get_count();
+    return M4K_SC_SUCCESS;
 }
 
-/* ====================================================================
-    动态链接器系统调用实现函数
-    ==================================================================== */
+static u32 mkrn_syscall_getprocs_impl(u32 uArg1,
+    u32 uArg2, u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg3; (void)uArg4; (void)uArg5;
+    struct procinfo *pBuf =
+        (struct procinfo *)uArg1;
+    u32 uMax = uArg2;
+    if (!pBuf || uMax == 0) return M4K_SC_ERROR;
+    return (u32)mkrn_process_fill_info(pBuf, (int)uMax);
+}
 
-/**
- * 系统调用：dl_load_library - 加载动态库
- */
-static uint32_t syscall_dl_load_library_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                           uint32_t arg4, uint32_t arg5) {
-    const char *filename = (const char *)arg1;
+static u32 mkrn_syscall_statfs_impl(u32 uArg1,
+    u32 uArg2, u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    struct mkrn_statfs *pBuf =
+        (struct mkrn_statfs *)uArg1;
+    if (!pBuf) return M4K_SC_ERROR;
+    u32 uBs, uTb, uFb, uUb;
+    if (mkrn_yafs_fs_stats(
+            &uBs, &uTb, &uFb, &uUb) != 0)
+        return M4K_SC_ERROR;
+    pBuf->block_size = uBs;
+    pBuf->total_blocks = uTb;
+    pBuf->free_blocks = uFb;
+    pBuf->used_blocks = uUb;
+    return M4K_SC_SUCCESS;
+}
 
-    KLOG_DEBUG("DL Load Library system call");
-    if (filename) {
-        console_write(filename);
+static u32 mkrn_syscall_mount_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg4; (void)uArg5;
+    const char *pSource = (const char *)uArg1;
+    const char *pTarget = (const char *)uArg2;
+    const char *pFstype = (const char *)uArg3;
+    if (!pSource || !pTarget || !pFstype)
+        return M4K_SC_ERROR;
+    return (mkrn_vfs_mount(
+                pSource, pTarget, pFstype) == 0)
+        ? M4K_SC_SUCCESS : M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_umount_impl(u32 uArg1,
+    u32 uArg2, u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    const char *pTarget = (const char *)uArg1;
+    if (!pTarget) return M4K_SC_ERROR;
+    return (mkrn_vfs_umount(pTarget) == 0)
+        ? M4K_SC_SUCCESS : M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_mountinfo_impl(u32 uArg1,
+    u32 uArg2, u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg3; (void)uArg4; (void)uArg5;
+    mkrn_mount_ent_t *pBuf =
+        (mkrn_mount_ent_t *)uArg1;
+    u32 uMax = uArg2;
+    if (!pBuf || uMax == 0) return M4K_SC_ERROR;
+    return (u32)mkrn_vfs_get_mount_info(pBuf, (int)uMax);
+}
+
+static void mkrn_syscall_init_handlers(void)
+{
+    mkrn_syscall_register(
+        M4K_SC_EXIT, mkrn_syscall_exit_impl);
+    mkrn_syscall_register(
+        M4K_SC_FORK, mkrn_syscall_fork_impl);
+    mkrn_syscall_register(
+        M4K_SC_READ, mkrn_syscall_read_impl);
+    mkrn_syscall_register(
+        M4K_SC_WRITE, mkrn_syscall_write_impl);
+    mkrn_syscall_register(
+        M4K_SC_OPEN, mkrn_syscall_open_impl);
+    mkrn_syscall_register(
+        M4K_SC_CLOSE, mkrn_syscall_close_impl);
+    mkrn_syscall_register(
+        M4K_SC_WAITPID, mkrn_syscall_waitpid_impl);
+    mkrn_syscall_register(
+        M4K_SC_EXECVE, mkrn_syscall_execve_impl);
+    mkrn_syscall_register(
+        M4K_SC_GETPID, mkrn_syscall_getpid_impl);
+    mkrn_syscall_register(
+        M4K_SC_GETPPID, mkrn_syscall_getppid_impl);
+    mkrn_syscall_register(
+        M4K_SC_BRK, mkrn_syscall_brk_impl);
+    mkrn_syscall_register(
+        M4K_SC_GETCWD, mkrn_syscall_getcwd_impl);
+    mkrn_syscall_register(
+        M4K_SC_CHDIR, mkrn_syscall_chdir_impl);
+    mkrn_syscall_register(
+        M4K_SC_MKDIR, mkrn_syscall_mkdir_impl);
+    mkrn_syscall_register(
+        M4K_SC_UNLINK, mkrn_syscall_unlink_impl);
+    mkrn_syscall_register(
+        M4K_SC_RMDIR, mkrn_syscall_rmdir_impl);
+    mkrn_syscall_register(
+        M4K_SC_RENAME, mkrn_syscall_rename_impl);
+    mkrn_syscall_register(
+        M4K_SC_TIME, mkrn_syscall_time_impl);
+    mkrn_syscall_register(
+        M4K_SC_UNAME, mkrn_syscall_uname_impl);
+    mkrn_syscall_register(
+        M4K_SC_REBOOT, mkrn_syscall_reboot_impl);
+    mkrn_syscall_register(
+        M4K_SC_GETDENTS, mkrn_syscall_getdents_impl);
+    mkrn_syscall_register(
+        M4K_SC_SYSINFO, mkrn_syscall_sysinfo_impl);
+    mkrn_syscall_register(
+        M4K_SC_GETPROCS, mkrn_syscall_getprocs_impl);
+    mkrn_syscall_register(
+        M4K_SC_STATFS, mkrn_syscall_statfs_impl);
+    mkrn_syscall_register(
+        M4K_SC_PIPE, mkrn_syscall_pipe_impl);
+    mkrn_syscall_register(
+        M4K_SC_DUP2, mkrn_syscall_dup2_impl);
+    mkrn_syscall_register(
+        M4K_SC_MOUNT, mkrn_syscall_mount_impl);
+    mkrn_syscall_register(
+        M4K_SC_UMOUNT, mkrn_syscall_umount_impl);
+    mkrn_syscall_register(
+        M4K_SC_MOUNTINFO, mkrn_syscall_mountinfo_impl);
+
+    M4K_LOG_INFO("System call handlers registered");
+}
+
+static u32 mkrn_syscall_dl_load_library_impl(
+    u32 uArg1, u32 uArg2, u32 uArg3,
+    u32 uArg4, u32 uArg5)
+{
+    const char *pFilename = (const char *)uArg1;
+
+    M4K_LOG_DEBUG("DL Load Library system call");
+    if (pFilename) {
+        mkrn_console_write(pFilename);
     } else {
-        console_write("(null)");
+        mkrn_console_write("(null)");
     }
-    console_write("\n");
+    mkrn_console_write("\n");
 
-    if (!filename) {
-        return SYSCALL_ERROR;
-    }
-
-    /* 调用动态链接器加载库 */
-    m4ll_library_t *lib;
-    if (m4ll_load_library(filename, &lib) < 0) {
-        KLOG_ERROR("Failed to load library");
-        return SYSCALL_ERROR;
+    if (!pFilename) {
+        return M4K_SC_ERROR;
     }
 
-    /* 返回库句柄（这里暂时用库地址作为句柄） */
-    return (uint32_t)lib;
+    mkrn_ll_library_t *pLib;
+    if (mkrn_ll_load_library(pFilename, &pLib) < 0) {
+        M4K_LOG_ERROR("Failed to load library");
+        return M4K_SC_ERROR;
+    }
+
+    return (u32)pLib;
 }
 
-/**
- * 系统调用：dl_unload_library - 卸载动态库
- */
-static uint32_t syscall_dl_unload_library_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                             uint32_t arg4, uint32_t arg5) {
-    m4ll_library_t *lib = (m4ll_library_t *)arg1;
+static u32 mkrn_syscall_dl_unload_library_impl(
+    u32 uArg1, u32 uArg2, u32 uArg3,
+    u32 uArg4, u32 uArg5)
+{
+    mkrn_ll_library_t *pLib =
+        (mkrn_ll_library_t *)uArg1;
 
-    KLOG_DEBUG("DL Unload Library system call");
-    console_write_hex((uint32_t)lib);
-    console_write("\n");
+    M4K_LOG_DEBUG("DL Unload Library system call");
+    mkrn_console_write_hex((u32)pLib);
+    mkrn_console_write("\n");
 
-    if (!lib) {
-        return SYSCALL_ERROR;
+    if (!pLib) {
+        return M4K_SC_ERROR;
     }
 
-    /* 调用动态链接器卸载库 */
-    if (m4ll_unload_library(lib) < 0) {
-        KLOG_ERROR("Failed to unload library");
-        return SYSCALL_ERROR;
+    if (mkrn_ll_unload_library(pLib) < 0) {
+        M4K_LOG_ERROR("Failed to unload library");
+        return M4K_SC_ERROR;
     }
 
-    return SYSCALL_SUCCESS;
+    return M4K_SC_SUCCESS;
 }
 
-/**
- * 系统调用：dl_find_symbol - 查找符号
- */
-static uint32_t syscall_dl_find_symbol_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                          uint32_t arg4, uint32_t arg5) {
-    const char *symbol = (const char *)arg1;
+static u32 mkrn_syscall_dl_find_symbol_impl(
+    u32 uArg1, u32 uArg2, u32 uArg3,
+    u32 uArg4, u32 uArg5)
+{
+    const char *pSymbol = (const char *)uArg1;
 
-    KLOG_DEBUG("DL Find Symbol system call");
-    if (symbol) {
-        console_write(symbol);
+    M4K_LOG_DEBUG("DL Find Symbol system call");
+    if (pSymbol) {
+        mkrn_console_write(pSymbol);
     } else {
-        console_write("(null)");
+        mkrn_console_write("(null)");
     }
-    console_write("\n");
+    mkrn_console_write("\n");
 
-    if (!symbol) {
-        return SYSCALL_ERROR;
-    }
-
-    /* 调用动态链接器查找符号 */
-    void *address = m4ll_find_symbol(symbol);
-    if (!address) {
-        KLOG_DEBUG("Symbol not found");
-        return SYSCALL_ERROR;
+    if (!pSymbol) {
+        return M4K_SC_ERROR;
     }
 
-    return (uint32_t)address;
+    void *pAddr = mkrn_ll_find_symbol(pSymbol);
+    if (!pAddr) {
+        M4K_LOG_DEBUG("Symbol not found");
+        return M4K_SC_ERROR;
+    }
+
+    return (u32)pAddr;
 }
 
-/**
- * 系统调用：dl_get_error - 获取错误信息
- */
-static uint32_t syscall_dl_get_error_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                        uint32_t arg4, uint32_t arg5) {
-    char *buf = (char *)arg1;
-    uint32_t size = arg2;
+static u32 mkrn_syscall_dl_get_error_impl(
+    u32 uArg1, u32 uArg2, u32 uArg3,
+    u32 uArg4, u32 uArg5)
+{
+    char *pBuf = (char *)uArg1;
+    u32 uSize = uArg2;
 
-    KLOG_DEBUG("DL Get Error system call");
-    console_write_hex((uint32_t)buf);
-    console_write(", size=");
-    console_write_dec(size);
-    console_write("\n");
+    M4K_LOG_DEBUG("DL Get Error system call");
+    mkrn_console_write_hex((u32)pBuf);
+    mkrn_console_write(", size=");
+    mkrn_console_write_dec(uSize);
+    mkrn_console_write("\n");
 
-    if (!buf || size == 0) {
-        return SYSCALL_ERROR;
+    if (!pBuf || uSize == 0) {
+        return M4K_SC_ERROR;
     }
 
-    /* 复制错误信息到用户缓冲区 */
-    size_t error_len = strlen(m4ll_error_msg);
-    if (error_len >= size) {
-        error_len = size - 1;
+    size_t uErrLen = mkrn_strlen(mkrn_ll_error_msg);
+    if (uErrLen >= uSize) {
+        uErrLen = uSize - 1;
     }
 
-    memcpy(buf, m4ll_error_msg, error_len);
-    buf[error_len] = '\0';
+    mkrn_memcpy(pBuf, mkrn_ll_error_msg, uErrLen);
+    pBuf[uErrLen] = '\0';
 
-    return error_len;
+    return uErrLen;
 }

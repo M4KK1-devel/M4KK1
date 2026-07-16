@@ -1,86 +1,163 @@
-/**
- * M4KK1 String Operations
- * 字符串操作函数声明
+/*
+ * M4KK1 4P1 - string.h
+ * Description: String and memory operation declarations.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
-#ifndef __STRING_H__
-#define __STRING_H__
+#pragma once
 
 #include <stddef.h>
 
-/**
- * 复制内存块
- */
-void *memcpy(void *dest, const void *src, size_t n);
+#define memcpy  mkrn_memcpy
+#define memset  mkrn_memset
+#define memcmp  mkrn_memcmp
+#define memmove mkrn_memmove
+#define memchr  mkrn_memchr
+#define strlen  mkrn_strlen
+#define strcpy  mkrn_strcpy
+#define strncpy mkrn_strncpy
+#define strcmp  mkrn_strcmp
+#define strdup  mkrn_strdup
 
 /**
- * 设置内存块
+ * mkrn_memcpy - Copy memory block
+ * @dest: Destination pointer
+ * @src: Source pointer
+ * @n: Number of bytes
+ *
+ * Return: Pointer to destination
  */
-void *memset(void *s, int c, size_t n);
+void *mkrn_memcpy(void *dest, const void *src, size_t n);
 
 /**
- * 比较内存块
+ * mkrn_memset - Set memory block
+ * @s: Memory pointer
+ * @c: Value to set
+ * @n: Number of bytes
+ *
+ * Return: Pointer to memory
  */
-int memcmp(const void *s1, const void *s2, size_t n);
+void *mkrn_memset(void *s, int c, size_t n);
 
 /**
- * 移动内存块
+ * mkrn_memcmp - Compare memory blocks
+ * @s1: First block
+ * @s2: Second block
+ * @n: Number of bytes
+ *
+ * Return: 0 if equal, difference otherwise
  */
-void *memmove(void *dest, const void *src, size_t n);
+int mkrn_memcmp(const void *s1, const void *s2, size_t n);
 
 /**
- * 查找字符
+ * mkrn_memmove - Move memory block
+ * @dest: Destination
+ * @src: Source
+ * @n: Number of bytes
+ *
+ * Return: Pointer to destination
  */
-void *memchr(const void *s, int c, size_t n);
+void *mkrn_memmove(void *dest, const void *src, size_t n);
 
 /**
- * 获取字符串长度
+ * mkrn_memchr - Find character in memory
+ * @s: Memory pointer
+ * @c: Character to find
+ * @n: Number of bytes
+ *
+ * Return: Pointer to character, NULL if not found
  */
-size_t strlen(const char *s);
+void *mkrn_memchr(const void *s, int c, size_t n);
 
 /**
- * 复制字符串
+ * mkrn_strlen - Get string length
+ * @s: Null-terminated string
+ *
+ * Return: Length of string
  */
-char *strcpy(char *dest, const char *src);
+size_t mkrn_strlen(const char *s);
 
 /**
- * 连接字符串
+ * mkrn_strcpy - Copy string
+ * @dest: Destination buffer
+ * @src: Source string
+ *
+ * Return: Pointer to destination
  */
-char *strcat(char *dest, const char *src);
+char *mkrn_strcpy(char *dest, const char *src);
 
 /**
- * 比较字符串
+ * mkrn_strcat - Concatenate strings
+ * @dest: Destination buffer
+ * @src: Source string
+ *
+ * Return: Pointer to destination
  */
-int strcmp(const char *s1, const char *s2);
+char *mkrn_strcat(char *dest, const char *src);
 
 /**
- * 复制内存块
+ * mkrn_strcmp - Compare strings
+ * @s1: First string
+ * @s2: Second string
+ *
+ * Return: 0 if equal, difference otherwise
  */
-char *strncpy(char *dest, const char *src, size_t n);
+int mkrn_strcmp(const char *s1, const char *s2);
 
 /**
- * 连接字符串（限制长度）
+ * mkrn_strncpy - Copy string with length limit
+ * @dest: Destination buffer
+ * @src: Source string
+ * @n: Maximum length
+ *
+ * Return: Pointer to destination
  */
-char *strncat(char *dest, const char *src, size_t n);
+char *mkrn_strncpy(char *dest, const char *src, size_t n);
 
 /**
- * 比较字符串（限制长度）
+ * mkrn_strncat - Concatenate strings with length limit
+ * @dest: Destination buffer
+ * @src: Source string
+ * @n: Maximum length
+ *
+ * Return: Pointer to destination
  */
-int strncmp(const char *s1, const char *s2, size_t n);
+char *mkrn_strncat(char *dest, const char *src, size_t n);
 
 /**
- * 查找字符在字符串中的位置
+ * mkrn_strncmp - Compare strings with length limit
+ * @s1: First string
+ * @s2: Second string
+ * @n: Maximum length
+ *
+ * Return: 0 if equal, difference otherwise
  */
-char *strchr(const char *s, int c);
+int mkrn_strncmp(const char *s1, const char *s2, size_t n);
 
 /**
- * 查找字符串在另一个字符串中的位置
+ * mkrn_strchr - Find character in string
+ * @s: String to search
+ * @c: Character to find
+ *
+ * Return: Pointer to character, NULL if not found
  */
-char *strstr(const char *haystack, const char *needle);
+char *mkrn_strchr(const char *s, int c);
 
 /**
- * 复制字符串（带长度限制）
+ * mkrn_strstr - Find substring in string
+ * @haystack: String to search
+ * @needle: Substring to find
+ *
+ * Return: Pointer to substring, NULL if not found
  */
-char *strdup(const char *s);
+char *mkrn_strstr(const char *haystack, const char *needle);
 
-#endif /* __STRING_H__ */
+/**
+ * mkrn_strdup - Duplicate a string
+ * @s: String to duplicate
+ *
+ * Return: Pointer to new string, NULL on failure
+ */
+char *mkrn_strdup(const char *s);

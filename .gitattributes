@@ -1,0 +1,19 @@
+# Source code
+*.c   diff=cpp
+*.h   diff=cpp
+*.asm diff=asmlang
+*.S   diff=asmlang
+
+# Shell scripts
+*.sh  diff=shell
+
+# Documentation
+*.md  diff=markdown
+
+# Binary files (should not be tracked)
+*.o   -diff
+*.elf -diff
+*.iso -diff
+*.krn -diff
+*.bin -diff
+*.img -diff

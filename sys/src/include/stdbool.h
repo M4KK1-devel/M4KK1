@@ -1,21 +1,20 @@
-/**
- * M4KK1 Boolean Type
- * 布尔类型定义
+/*
+ * M4KK1 4P1 - stdbool.h
+ * Description: Boolean type definitions.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
-#ifndef __STDBOOL_H__
-#define __STDBOOL_H__
+#pragma once
 
-/* 布尔类型 */
 #ifndef __cplusplus
 typedef unsigned char bool;
 #endif
 
-/* 布尔常量 */
+typedef bool b;
+
 #define true 1
 #define false 0
 
-/* 兼容性宏 */
 #define __bool_true_false_are_defined 1
-
-#endif /* __STDBOOL_H__ */

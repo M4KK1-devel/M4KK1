@@ -1,14 +1,16 @@
-/**
- * M4KK1系统调用接口定义
- * 独特的系统调用ABI，确保与现有系统不兼容
+/*
+ * M4KK1 4P1 - m4k_syscall.h
+ * Description: M4KK1 system call ABI interface definitions.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
  */
 
-#ifndef __M4K_SYSCALL_H__
-#define __M4K_SYSCALL_H__
+#pragma once
 
 #include <stdint.h>
 
-/* M4KK1独特的系统调用号 - 使用0x4D0xxxx范围 (4D = M4) */
+/* System call numbers use 0x4D0xxxx range (4D = M4) */
 #define M4K_SYS_EXIT        0x4D000001
 #define M4K_SYS_FORK        0x4D000002
 #define M4K_SYS_READ        0x4D000003
@@ -24,14 +26,14 @@
 #define M4K_SYS_POLL        0x4D00000D
 #define M4K_SYS_EPOLL       0x4D00000E
 
-/* M4KK1独特的进程标志 */
-#define M4K_CLONE_VM        0x00000100  /* 共享虚拟内存 */
-#define M4K_CLONE_FS        0x00000200  /* 共享文件系统信息 */
-#define M4K_CLONE_FILES     0x00000400  /* 共享文件描述符表 */
-#define M4K_CLONE_SIGHAND   0x00000800  /* 共享信号处理 */
-#define M4K_CLONE_THREAD    0x00010000  /* 创建线程 */
+/* Process cloning flags */
+#define M4K_CLONE_VM        0x00000100  /* Share virtual memory */
+#define M4K_CLONE_FS        0x00000200  /* Share filesystem info */
+#define M4K_CLONE_FILES     0x00000400  /* Share file descriptor table */
+#define M4K_CLONE_SIGHAND   0x00000800  /* Share signal handlers */
+#define M4K_CLONE_THREAD    0x00010000  /* Create thread */
 
-/* M4KK1独特的文件标志 */
+/* File flags */
 #define M4K_O_RDONLY        0x00000001
 #define M4K_O_WRONLY        0x00000002
 #define M4K_O_RDWR          0x00000004
@@ -41,7 +43,7 @@
 #define M4K_O_APPEND        0x00002000
 #define M4K_O_NONBLOCK      0x00004000
 
-/* M4KK1独特的内存保护标志 */
+/* Memory protection flags */
 #define M4K_PROT_NONE       0x00
 #define M4K_PROT_READ       0x01
 #define M4K_PROT_WRITE      0x02
@@ -49,7 +51,7 @@
 #define M4K_PROT_GROWSDOWN  0x01000000
 #define M4K_PROT_GROWSUP    0x02000000
 
-/* M4KK1独特的内存映射标志 */
+/* Memory mapping flags */
 #define M4K_MAP_SHARED      0x01
 #define M4K_MAP_PRIVATE     0x02
 #define M4K_MAP_FIXED       0x10
@@ -58,7 +60,6 @@
 #define M4K_MAP_GROWSUP     0x0200
 #define M4K_MAP_LOCKED      0x2000
 
-/* M4KK1独特的系统调用函数声明 */
 long m4k_syscall0(long syscall_num);
 long m4k_syscall1(long syscall_num, long arg1);
 long m4k_syscall2(long syscall_num, long arg1, long arg2);
@@ -67,7 +68,6 @@ long m4k_syscall4(long syscall_num, long arg1, long arg2, long arg3, long arg4);
 long m4k_syscall5(long syscall_num, long arg1, long arg2, long arg3, long arg4, long arg5);
 long m4k_syscall6(long syscall_num, long arg1, long arg2, long arg3, long arg4, long arg5, long arg6);
 
-/* 内联汇编系统调用实现 - 使用独特的M4KK1调用约定 */
 static inline long m4k_exit(int status) {
     return m4k_syscall1(M4K_SYS_EXIT, status);
 }
@@ -96,16 +96,7 @@ static inline long m4k_munmap(void *addr, unsigned long length) {
     return m4k_syscall2(M4K_SYS_MUNMAP, (long)addr, length);
 }
 
-/* M4KK1独特的进程创建函数 */
 long m4k_clone(unsigned long flags, void *child_stack, void *ptid, void *ctid);
-
-/* M4KK1独特的文件控制函数 */
 long m4k_fcntl(int fd, int cmd, long arg);
-
-/* M4KK1独特的I/O控制函数 */
 long m4k_ioctl(int fd, unsigned long request, void *arg);
-
-/* M4KK1独特的执行函数 */
 long m4k_execve(const char *filename, char *const argv[], char *const envp[]);
-
-#endif /* __M4K_SYSCALL_H__ */
