@@ -49,6 +49,8 @@ musr_cmd_t musr_cmd_table[] = {
     {"cal",    musr_cmd_cal,    "Calendar"},
     {"diff",   musr_cmd_diff,   "Compare files"},
     {"sead",   musr_cmd_sead,   "Stream editor (sed/awk replacement)"},
+    {"id",     musr_cmd_id,     "Show user identity"},
+    {"login",  musr_cmd_login,  "Authenticate as root"},
     {NULL, NULL, NULL}
 };
 

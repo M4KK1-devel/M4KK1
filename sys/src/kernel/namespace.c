@@ -1,3 +1,11 @@
+/*
+ * M4KK1 4P1 - namespace.c
+ * Description: Per-process namespace implementation
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
+ */
+
 #include <namespace.h>
 #include <kernel.h>
 #include <console.h>

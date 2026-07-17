@@ -9,11 +9,29 @@ set -e
 
 cd "$(dirname "$0")/../.."
 
+# Read version from VERSION file
+if [ -f VERSION ]; then
+    MAJOR=$(grep ^MAJOR= VERSION | cut -d= -f2)
+    MINOR=$(grep ^MINOR= VERSION | cut -d= -f2)
+    PATCH=$(grep ^PATCH= VERSION | cut -d= -f2)
+    BUILD=$(grep ^BUILD= VERSION | cut -d= -f2)
+    CLASSIFIER=$(grep ^CLASSIFIER= VERSION | cut -d= -f2)
+else
+    MAJOR=0; MINOR=0; PATCH=0; BUILD=0; CLASSIFIER=dev
+fi
+
+# Build ISO name per versions_standard.md
+if [ -n "$CLASSIFIER" ]; then
+    ISO_NAME="m4kk1_${MAJOR}.${MINOR}.${PATCH}_build${BUILD}-${CLASSIFIER}.iso"
+else
+    ISO_NAME="m4kk1_${MAJOR}.${MINOR}.${PATCH}_build${BUILD}.iso"
+fi
+
 CC=gcc
 AS=nasm
 LD=ld
 CFLAGS="-Wall -Wextra -O2 -g -ffreestanding -nostdlib -nostdinc -m32 -mno-sse -mno-sse2 -mno-mmx -std=gnu99 -fno-stack-protector -fno-pic -fno-pie"
-CFLAGS="$CFLAGS -I$PWD/sys/src/include -I$PWD/sys/src/arch/m4kk1/include -I$PWD/sys/src/fs/yafs/include"
+CFLAGS="$CFLAGS -I$PWD/sys/src/include -I$PWD/include -I$PWD/sys/src/arch/m4kk1/include -I$PWD/sys/src/fs/yafs/include"
 ASFLAGS="-f elf32"
 LDFLAGS="-T $PWD/sys/src/init/linker.ld -nostdlib -z max-page-size=0x1000 -m elf_i386 -g -no-pie"
 
@@ -28,9 +46,13 @@ $CC $CFLAGS -c sys/src/kernel/ldso.c -o $OBJDIR/ldso.o
 $CC $CFLAGS -c sys/src/kernel/syscall.c -o $OBJDIR/syscall.o
 $CC $CFLAGS -c sys/src/kernel/syscall_m4k.c -o $OBJDIR/syscall_m4k.o
 $CC $CFLAGS -c sys/src/kernel/m4k_syscall.c -o $OBJDIR/m4k_syscall.o 2>/dev/null || true
+# Note: m4k_syscall.c may not exist; that's OK
 $CC $CFLAGS -c sys/src/kernel/signal.c -o $OBJDIR/signal.o
 $CC $CFLAGS -c sys/src/kernel/namespace.c -o $OBJDIR/namespace.o
-$CC $CFLAGS -c sys/src/fs/procfs.c -o $OBJDIR/procfs.o
+$CC $CFLAGS -c sys/src/kernel/syscall/mkrn_syscall.c -o $OBJDIR/mkrn_syscall.o
+$CC $CFLAGS -c sys/src/kernel/vfs/mkrn_vfs_perms.c -o $OBJDIR/mkrn_vfs_perms.o
+$CC $CFLAGS -c sys/src/kernel/proc/mkrn_sched.c -o $OBJDIR/mkrn_sched.o
+$CC $CFLAGS -c sys/src/fs/procfs/mkrn_procfs.c -o $OBJDIR/mkrn_procfs.o
 
 echo "=== Compiling kernel shell ==="
 $CC $CFLAGS -c sys/src/kernel/shell.c -o $OBJDIR/shell.o
@@ -55,7 +77,7 @@ $AS $ASFLAGS sys/src/init/entry.asm -o $OBJDIR/entry.o
 
 echo "=== Building M4SH userspace shell ==="
 M4SH_CFLAGS="-ffreestanding -nostdlib -nostdinc -m32 -mno-sse -std=gnu99 -fno-stack-protector -fno-pic -fno-pie"
-M4SH_CFLAGS="$M4SH_CFLAGS -I$PWD/sys/src/include -I$PWD/sys/src/arch/m4kk1/include"
+M4SH_CFLAGS="$M4SH_CFLAGS -I$PWD/sys/src/include -I$PWD/include -I$PWD/sys/src/arch/m4kk1/include"
 OBJS=""
 for f in $(find m4sh -name '*.c' -type f | sort); do
     o="${f%.c}.o"
@@ -111,7 +133,10 @@ $LD $LDFLAGS -o m4kk1.krn \
     $OBJDIR/vfs.o \
     $OBJDIR/signal.o \
     $OBJDIR/namespace.o \
-    $OBJDIR/procfs.o \
+    $OBJDIR/mkrn_syscall.o \
+    $OBJDIR/mkrn_vfs_perms.o \
+    $OBJDIR/mkrn_sched.o \
+    $OBJDIR/mkrn_procfs.o \
     $OBJDIR/string.o \
     $OBJDIR/debug.o
 
@@ -119,5 +144,6 @@ echo "=== Kernel built: m4kk1.krn ($(stat -c%s m4kk1.krn) bytes) ==="
 
 echo "=== Building ISO image ==="
 cp m4kk1.krn iso/boot/kernel/m4kk1.krn
-grub-mkrescue -o m4kk1-test.iso iso 2>/dev/null
-echo "=== ISO built: m4kk1-test.iso ($(stat -c%s m4kk1-test.iso) bytes) ==="
+rm -f "$ISO_NAME"
+grub-mkrescue -o "$ISO_NAME" iso 2>/dev/null
+echo "=== ISO built: $ISO_NAME ($(stat -c%s "$ISO_NAME") bytes) ==="

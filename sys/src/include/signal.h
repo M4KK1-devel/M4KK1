@@ -1,3 +1,11 @@
+/*
+ * M4KK1 4P1 - signal.h
+ * Description: Signal definitions and delivery API
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
+ */
+
 #pragma once
 
 #include <stdint.h>

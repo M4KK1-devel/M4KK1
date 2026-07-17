@@ -1,3 +1,11 @@
+/*
+ * M4KK1 4P1 - procfs.c
+ * Description: ProcFS pseudo-filesystem for /sys/proc
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
+ */
+
 #include <vfs.h>
 #include <process.h>
 #include <signal.h>

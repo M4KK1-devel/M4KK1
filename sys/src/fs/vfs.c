@@ -8,7 +8,9 @@
 
 #include "vfs.h"
 #include "console.h"
+#include "kernel.h"
 #include "memory.h"
+#include "process.h"
 #include <string.h>
 #include <yafs.h>
 #include <yafs_btree.h>
@@ -433,6 +435,9 @@ mkrn_vfs_create_file_yafs(const char *pPathname)
         (struct yafs_inode_value *)iv_buf;
     pIv->file_type = YAFS_FT_REG_FILE;
     pIv->link_count = 1;
+    pIv->uid = M4K_UID_ROOT;
+    pIv->gid = M4K_GID_ROOT;
+    pIv->mode = M4K_IRUSR | M4K_IWUSR | M4K_IRGRP | M4K_IROTH;
     mkrn_strncpy(pIv->name, pName, sizeof(pIv->name) - 1);
     pIv->name[sizeof(pIv->name) - 1] = '\0';
     if (mkrn_yafs_dev_write(u64Lba, iv_buf) != 0)
@@ -468,6 +473,15 @@ mkrn_vfs_open(const char *pPathname, int flags)
 {
     if (!pPathname || !bVfsInitialized)
         return -1;
+
+    /* Basic permission check: non-root cannot access /sys or /boot */
+    mkrn_process_t *pCur = mkrn_process_get_current();
+    if (pCur && pCur->euid != M4K_UID_ROOT) {
+        if ((pPathname[0] == '/' && strncmp(pPathname, "/sys", 4) == 0) ||
+            (pPathname[0] == '/' && strncmp(pPathname, "/boot", 5) == 0)) {
+            return -1;
+        }
+    }
 
     /* Route /sys/proc/ to ProcFS */
     if (pPathname[0] == '/' && strncmp(pPathname, "/sys/proc", 9) == 0) {
@@ -856,3 +870,6 @@ mkrn_vfs_getdents(int fd, struct mkrn_vfs_dirent *pBuf,
 
     return -1;
 }
+
+
+

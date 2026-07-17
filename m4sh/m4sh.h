@@ -96,6 +96,11 @@ static int musr_strchr(const char *s, int c)
 #define S_WAITPID   0x07
 #define S_GETPPID   0x0A
 #define S_KILL      0x64
+#define S_GETUID    0x20
+#define S_GETEUID   0x24
+#define S_SETUID    0x22
+#define S_CHMOD     0x1B
+#define S_CHOWN     0x1C
 #define O_RDONLY    0x00000001
 #define O_CREAT     0x00000100
 #define O_WRONLY    0x00000002
@@ -245,6 +250,18 @@ static int musr_sc_waitpid(int pid, int *status, int opts)
 static int musr_sc_kill(int pid, int sig)
 {
     return (int)musr_sc2(S_KILL, (uint32_t)pid, (uint32_t)sig);
+}
+static uint32_t musr_sc_getuid(void)
+{
+    return musr_sc0(S_GETUID);
+}
+static uint32_t musr_sc_geteuid(void)
+{
+    return musr_sc0(S_GETEUID);
+}
+static int musr_sc_setuid(uint32_t uid)
+{
+    return (int)musr_sc1(S_SETUID, uid);
 }
 static int musr_sc_time(void)
 {
@@ -500,4 +517,6 @@ void musr_cmd_blkid(int, char **);
 void musr_cmd_cal(int, char **);
 void musr_cmd_diff(int, char **);
 void musr_cmd_sead(int, char **);
+void musr_cmd_id(int, char **);
+void musr_cmd_login(int, char **);
 void musr_at_check_jobs(void);

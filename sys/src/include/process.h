@@ -1,3 +1,11 @@
+/*
+ * M4KK1 4P1 - process.h
+ * Description: Process management types and API declarations
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
+ */
+
 #pragma once
 
 #include <stdint.h>
@@ -6,6 +14,13 @@
 #include <signal.h>
 
 typedef int32_t pid_t;
+typedef uint32_t uid_t;
+typedef uint32_t gid_t;
+
+#define M4K_UID_ROOT    0
+#define M4K_UID_NOBODY  65534
+#define M4K_GID_ROOT    0
+#define M4K_GID_PRIME   1001
 
 /* ── State Tag Bitmask (replaces old M4K_PROC_RUNNING/READY/BLOCKED/TERMINATED) ── */
 
@@ -20,6 +35,8 @@ typedef int32_t pid_t;
 #define M4K_WAIT_TIMER      0x00000400ULL
 #define M4K_WAIT_IPC        0x00000800ULL
 #define M4K_WAIT_CHILD      0x00001000ULL
+#define M4K_WAIT_LOCK       0x00002000ULL
+#define M4K_WAIT_TERMINAL   0x00004000ULL
 
 /* Debug / control */
 #define M4K_TRACED          0x00010000ULL
@@ -31,10 +48,10 @@ typedef int32_t pid_t;
 
 /* Convenience masks */
 #define M4K_STATE_SCHED_MASK   0x00000007ULL
-#define M4K_STATE_WAIT_MASK    0x00001F00ULL
+#define M4K_STATE_WAIT_MASK    0x00007F00ULL
 #define M4K_STATE_CTRL_MASK    0x00030000ULL
 #define M4K_STATE_LIFE_MASK    0x03000000ULL
-#define M4K_STATE_RESERVED     0xFC0000F8ULL
+#define M4K_STATE_RESERVED     (~0x03037F07ULL)
 
 /* ── Fork/Clone Flags ── */
 
@@ -64,6 +81,11 @@ typedef struct mkrn_process {
     uint32_t pid;
     uint32_t ppid;
     uint32_t uid;
+    uint32_t euid;
+    uint32_t gid;
+    uint32_t egid;
+    uint32_t group_count;
+    uint32_t group_list[16];
     uint32_t priority;
     uint32_t thread_esp;
     uint32_t sleep_ticks;
@@ -119,6 +141,14 @@ void mkrn_process_wakeup(mkrn_process_t *process);
 mkrn_process_t *mkrn_process_get_current(void);
 uint32_t mkrn_process_get_pid(void);
 uint32_t mkrn_process_get_ppid(void);
+uint32_t mkrn_process_get_uid(void);
+uint32_t mkrn_process_get_euid(void);
+uint32_t mkrn_process_get_gid(void);
+uint32_t mkrn_process_get_egid(void);
+int mkrn_process_set_uid(uint32_t uid);
+int mkrn_process_set_gid(uint32_t gid);
+int mkrn_process_get_groups(uint32_t *list, int size);
+int mkrn_process_set_groups(int size, const uint32_t *list);
 uint32_t mkrn_process_get_count(void);
 
 int mkrn_process_fill_info(struct mkrn_procinfo *buf, uint32_t max);

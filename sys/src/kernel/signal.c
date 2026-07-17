@@ -1,3 +1,11 @@
+/*
+ * M4KK1 4P1 - signal.c
+ * Description: Signal delivery implementation
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
+ */
+
 #include <signal.h>
 #include <process.h>
 #include <kernel.h>

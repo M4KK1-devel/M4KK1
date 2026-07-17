@@ -224,6 +224,7 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
             "   Entering rescue shell...\n");
         mkrn_console_write(
             "=====================================\n");
+        mkrn_console_write(" =( Sadly... \n");
         mkrn_shell_main();
         __builtin_unreachable();
     }

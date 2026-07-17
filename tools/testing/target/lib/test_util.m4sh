@@ -1,0 +1,48 @@
+# test_util.m4sh — 通用测试函数
+# 在 M4KK1 的 M4SH 中 source 此文件使用
+
+TEST_PASS=0
+TEST_FAIL=0
+TEST_SKIP=0
+
+RED='\033[31m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+NC='\033[0m'
+
+assert_eq() {
+    if [ "$1" = "$2" ]; then
+        TEST_PASS=$((TEST_PASS + 1))
+        printf "${GREEN}[PASS]${NC} %s\n" "$3"
+    else
+        TEST_FAIL=$((TEST_FAIL + 1))
+        printf "${RED}[FAIL]${NC} %s (expected: %s, got: %s)\n" "$3" "$2" "$1"
+    fi
+}
+
+assert_ne() {
+    if [ "$1" != "$2" ]; then
+        TEST_PASS=$((TEST_PASS + 1))
+        printf "${GREEN}[PASS]${NC} %s\n" "$3"
+    else
+        TEST_FAIL=$((TEST_FAIL + 1))
+        printf "${RED}[FAIL]${NC} %s (should not be: %s)\n" "$3" "$2"
+    fi
+}
+
+skip() {
+    TEST_SKIP=$((TEST_SKIP + 1))
+    printf "${YELLOW}[SKIP]${NC} %s\n" "$1"
+}
+
+print_summary() {
+    printf "\n=== 测试总结 ===\n"
+    printf "  通过: %d\n" $TEST_PASS
+    printf "  失败: %d\n" $TEST_FAIL
+    printf "  跳过: %d\n" $TEST_SKIP
+    if [ $TEST_FAIL -eq 0 ]; then
+        printf "${GREEN}所有测试通过!${NC}\n"
+    else
+        printf "${RED}存在失败的测试${NC}\n"
+    fi
+}

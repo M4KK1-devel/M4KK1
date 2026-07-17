@@ -1,13 +1,21 @@
-#include <stdint.h>
-#include <stdbool.h>
-#include <string.h>
+/*
+ * M4KK1 4P1 - syscall_m4k.c
+ * Description: M4KK1 system call dispatch (int 0x4D handlers)
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
+ */
+
+#include <m4k_syscall.h>
 #include <console.h>
+#include <idt.h>
 #include <kernel.h>
+#include <ldso.h>
 #include <process.h>
 #include <signal.h>
-#include <m4k_syscall.h>
-#include <idt.h>
-#include <ldso.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
 
 typedef uint32_t (*m4k_syscall_handler_t)(uint32_t arg1, uint32_t arg2, uint32_t arg3,
                                           uint32_t arg4, uint32_t arg5);
@@ -171,6 +179,19 @@ const char *m4k_syscall_get_name(uint32_t num)
         case M4K_SYS_SETNS: return "m4k_setns";
         case M4K_SYS_GETPID: return "m4k_getpid";
         case M4K_SYS_GETPROCS: return "m4k_getprocs";
+        case M4K_SYS_GETUID: return "m4k_getuid";
+        case M4K_SYS_GETEUID: return "m4k_geteuid";
+        case M4K_SYS_GETGID: return "m4k_getgid";
+        case M4K_SYS_GETEGID: return "m4k_getegid";
+        case M4K_SYS_SETUID: return "m4k_setuid";
+        case M4K_SYS_SETGID: return "m4k_setgid";
+        case M4K_SYS_GETGROUPS: return "m4k_getgroups";
+        case M4K_SYS_SETGROUPS: return "m4k_setgroups";
+        case M4K_SYS_CHMOD: return "m4k_chmod";
+        case M4K_SYS_CHOWN: return "m4k_chown";
+        case M4K_SYS_ACCESS: return "m4k_access";
+        case M4K_SYS_SETRLIMIT: return "m4k_setrlimit";
+        case M4K_SYS_GETRLIMIT: return "m4k_getrlimit";
         default: return "unknown";
     }
 }
@@ -281,6 +302,107 @@ static uint32_t m4k_syscall_getprocs_impl(uint32_t arg1, uint32_t arg2, uint32_t
     return (uint32_t)mkrn_process_fill_info(buf, max);
 }
 
+static uint32_t m4k_syscall_getuid_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                         uint32_t arg4, uint32_t arg5)
+{
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return mkrn_process_get_uid();
+}
+
+static uint32_t m4k_syscall_geteuid_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                          uint32_t arg4, uint32_t arg5)
+{
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return mkrn_process_get_euid();
+}
+
+static uint32_t m4k_syscall_setuid_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                         uint32_t arg4, uint32_t arg5)
+{
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    uint32_t uid = arg1;
+    return (uint32_t)mkrn_process_set_uid(uid);
+}
+
+static uint32_t m4k_syscall_chmod_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                        uint32_t arg4, uint32_t arg5)
+{
+    (void)arg3; (void)arg4; (void)arg5;
+    (void)arg1; (void)arg2;
+    return (uint32_t)-1;
+}
+
+static uint32_t m4k_syscall_chown_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                        uint32_t arg4, uint32_t arg5)
+{
+    (void)arg4; (void)arg5;
+    (void)arg1; (void)arg2; (void)arg3;
+    return (uint32_t)-1;
+}
+
+static uint32_t m4k_syscall_getgid_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                         uint32_t arg4, uint32_t arg5)
+{
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return mkrn_process_get_gid();
+}
+
+static uint32_t m4k_syscall_getegid_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                          uint32_t arg4, uint32_t arg5)
+{
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return mkrn_process_get_egid();
+}
+
+static uint32_t m4k_syscall_setgid_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                         uint32_t arg4, uint32_t arg5)
+{
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return (uint32_t)mkrn_process_set_gid(arg1);
+}
+
+static uint32_t m4k_syscall_getgroups_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                            uint32_t arg4, uint32_t arg5)
+{
+    (void)arg3; (void)arg4; (void)arg5;
+    int size = (int)arg1;
+    uint32_t *list = (uint32_t *)arg2;
+    return (uint32_t)mkrn_process_get_groups(list, size);
+}
+
+static uint32_t m4k_syscall_setgroups_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                            uint32_t arg4, uint32_t arg5)
+{
+    (void)arg3; (void)arg4; (void)arg5;
+    int size = (int)arg1;
+    const uint32_t *list = (const uint32_t *)arg2;
+    return (uint32_t)(int32_t)mkrn_process_set_groups(size, list);
+}
+
+static uint32_t m4k_syscall_access_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                         uint32_t arg4, uint32_t arg5)
+{
+    (void)arg3; (void)arg4; (void)arg5;
+    (void)arg1; (void)arg2;
+    return (uint32_t)-M4K_EINVAL;
+}
+
+static uint32_t m4k_syscall_setrlimit_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                            uint32_t arg4, uint32_t arg5)
+{
+    (void)arg3; (void)arg4; (void)arg5;
+    (void)arg1; (void)arg2;
+    return (uint32_t)-M4K_EINVAL;
+}
+
+static uint32_t m4k_syscall_getrlimit_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                            uint32_t arg4, uint32_t arg5)
+{
+    (void)arg3; (void)arg4; (void)arg5;
+    (void)arg1; (void)arg2;
+    return (uint32_t)-M4K_EINVAL;
+}
+
 void m4k_syscall_init_handlers(void)
 {
     m4k_syscall_register(M4K_SYS_EXIT, m4k_syscall_exit_impl);
@@ -293,6 +415,19 @@ void m4k_syscall_init_handlers(void)
     m4k_syscall_register(M4K_SYS_GETPID, m4k_syscall_getpid_impl);
     m4k_syscall_register(M4K_SYS_SETNS, m4k_syscall_setns_impl);
     m4k_syscall_register(M4K_SYS_GETPROCS, m4k_syscall_getprocs_impl);
+    m4k_syscall_register(M4K_SYS_GETUID, m4k_syscall_getuid_impl);
+    m4k_syscall_register(M4K_SYS_GETEUID, m4k_syscall_geteuid_impl);
+    m4k_syscall_register(M4K_SYS_GETGID, m4k_syscall_getgid_impl);
+    m4k_syscall_register(M4K_SYS_GETEGID, m4k_syscall_getegid_impl);
+    m4k_syscall_register(M4K_SYS_SETUID, m4k_syscall_setuid_impl);
+    m4k_syscall_register(M4K_SYS_SETGID, m4k_syscall_setgid_impl);
+    m4k_syscall_register(M4K_SYS_GETGROUPS, m4k_syscall_getgroups_impl);
+    m4k_syscall_register(M4K_SYS_SETGROUPS, m4k_syscall_setgroups_impl);
+    m4k_syscall_register(M4K_SYS_CHMOD, m4k_syscall_chmod_impl);
+    m4k_syscall_register(M4K_SYS_CHOWN, m4k_syscall_chown_impl);
+    m4k_syscall_register(M4K_SYS_ACCESS, m4k_syscall_access_impl);
+    m4k_syscall_register(M4K_SYS_SETRLIMIT, m4k_syscall_setrlimit_impl);
+    m4k_syscall_register(M4K_SYS_GETRLIMIT, m4k_syscall_getrlimit_impl);
 
     M4K_LOG_INFO("M4KK1 system call handlers registered");
 }

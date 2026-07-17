@@ -1,0 +1,2 @@
+This is a sample test fixture for M4KK1.
+Used by filesystem tests to verify read operations.

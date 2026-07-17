@@ -1,6 +1,14 @@
-#include "process.h"
-#include "timer.h"
-#include "memory.h"
+/*
+ * M4KK1 4P1 - process.c
+ * Description: Process management core implementation
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
+ */
+
+#include <process.h>
+#include <timer.h>
+#include <memory.h>
 #include "kernel.h"
 #include "console.h"
 #include "syscall.h"
@@ -87,6 +95,65 @@ uint32_t mkrn_process_get_pid(void)
 uint32_t mkrn_process_get_ppid(void)
 {
     return current ? current->ppid : 0;
+}
+
+uint32_t mkrn_process_get_uid(void)
+{
+    return current ? current->uid : 0;
+}
+uint32_t mkrn_process_get_euid(void)
+{
+    return current ? current->euid : 0;
+}
+uint32_t mkrn_process_get_gid(void)
+{
+    return current ? current->gid : 0;
+}
+uint32_t mkrn_process_get_egid(void)
+{
+    return current ? current->egid : 0;
+}
+int mkrn_process_set_uid(uint32_t uid)
+{
+    if (!current) return M4K_EPERM;
+    if (current->euid != M4K_UID_ROOT && uid != current->uid && uid != current->euid)
+        return M4K_EPERM;
+    current->uid = uid;
+    current->euid = uid;
+    return 0;
+}
+int mkrn_process_set_gid(uint32_t gid)
+{
+    if (!current) return M4K_EPERM;
+    if (current->egid != M4K_GID_ROOT && gid != current->gid && gid != current->egid)
+        return M4K_EPERM;
+    current->gid = gid;
+    current->egid = gid;
+    return 0;
+}
+
+int mkrn_process_get_groups(uint32_t *list, int size)
+{
+    if (!current) return -M4K_EPERM;
+    if (!list || size <= 0) return (int)current->group_count;
+    int count = (int)current->group_count;
+    if (size < count) count = size;
+    for (int i = 0; i < count; i++)
+        list[i] = current->group_list[i];
+    return count;
+}
+
+int mkrn_process_set_groups(int size, const uint32_t *list)
+{
+    if (!current) return -M4K_EPERM;
+    if (current->euid != M4K_UID_ROOT)
+        return -M4K_EPERM;
+    if (size < 0) size = 0;
+    if (size > 16) size = 16;
+    current->group_count = (uint32_t)size;
+    for (int i = 0; i < size; i++)
+        current->group_list[i] = list[i];
+    return 0;
 }
 
 uint32_t mkrn_process_get_count(void)
@@ -380,6 +447,12 @@ pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
     child->ppid = parent->pid;
     child->priority = parent->priority;
     child->uid = parent->uid;
+    child->euid = parent->euid;
+    child->gid = parent->gid;
+    child->egid = parent->egid;
+    child->group_count = parent->group_count;
+    for (uint32_t gi = 0; gi < child->group_count; gi++)
+        child->group_list[gi] = parent->group_list[gi];
     mkrn_strcpy(child->name, parent->name);
     mkrn_strcpy(child->cwd, parent->cwd);
 

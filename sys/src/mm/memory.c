@@ -7,11 +7,11 @@
  * SPDX-License-Identifier: 4P1-Custom
  */
 
-#include "../include/memory.h"
-#include "../include/console.h"
-#include <stdint.h>
-#include <stddef.h>
+#include <memory.h>
+#include <console.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #define MAX_MEMORY_REGIONS 64
 static mkrn_mem_region_t

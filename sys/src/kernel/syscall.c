@@ -298,136 +298,19 @@ static const char *mkrn_syscall_get_name(u32 uNum)
         case M4K_SC_GETPID: return "getpid";
         case M4K_SC_GETPPID: return "getppid";
         case M4K_SC_BRK: return "brk";
-        case M4K_SC_MMAP: return "mmap";
-        case M4K_SC_MUNMAP: return "munmap";
-        case M4K_SC_MPROTECT: return "mprotect";
-        case M4K_SC_MSYNC: return "msync";
         case M4K_SC_GETCWD: return "getcwd";
         case M4K_SC_CHDIR: return "chdir";
         case M4K_SC_MKDIR: return "mkdir";
         case M4K_SC_RMDIR: return "rmdir";
-        case M4K_SC_LINK: return "link";
         case M4K_SC_UNLINK: return "unlink";
         case M4K_SC_RENAME: return "rename";
-        case M4K_SC_STAT: return "stat";
-        case M4K_SC_FSTAT: return "fstat";
-        case M4K_SC_LSTAT: return "lstat";
-        case M4K_SC_ACCESS: return "access";
-        case M4K_SC_CHMOD: return "chmod";
-        case M4K_SC_CHOWN: return "chown";
-        case M4K_SC_UTIME: return "utime";
         case M4K_SC_TIME: return "time";
-        case M4K_SC_TIMES: return "times";
-        case M4K_SC_GETUID: return "getuid";
-        case M4K_SC_GETGID: return "getgid";
-        case M4K_SC_SETUID: return "setuid";
-        case M4K_SC_SETGID: return "setgid";
-        case M4K_SC_GETEUID: return "geteuid";
-        case M4K_SC_GETEGID: return "getegid";
-        case M4K_SC_SETEUID: return "seteuid";
-        case M4K_SC_SETEGID: return "setegid";
         case M4K_SC_PIPE: return "pipe";
-        case M4K_SC_DUP: return "dup";
         case M4K_SC_DUP2: return "dup2";
-        case M4K_SC_SELECT: return "select";
-        case M4K_SC_POLL: return "poll";
-        case M4K_SC_EPOLL_CREATE: return "epoll_create";
-        case M4K_SC_EPOLL_CTL: return "epoll_ctl";
-        case M4K_SC_EPOLL_WAIT: return "epoll_wait";
-        case M4K_SC_SOCKET: return "socket";
-        case M4K_SC_BIND: return "bind";
-        case M4K_SC_LISTEN: return "listen";
-        case M4K_SC_ACCEPT: return "accept";
-        case M4K_SC_CONNECT: return "connect";
-        case M4K_SC_SEND: return "send";
-        case M4K_SC_RECV: return "recv";
-        case M4K_SC_SENDTO: return "sendto";
-        case M4K_SC_RECVFROM: return "recvfrom";
-        case M4K_SC_SHUTDOWN: return "shutdown";
-        case M4K_SC_SETSOCKOPT: return "setsockopt";
-        case M4K_SC_GETSOCKOPT: return "getsockopt";
-        case M4K_SC_IOCTL: return "ioctl";
-        case M4K_SC_FCNTL: return "fcntl";
-        case M4K_SC_READDIR: return "readdir";
-        case M4K_SC_TELLDIR: return "telldir";
-        case M4K_SC_SEEKDIR: return "seekdir";
-        case M4K_SC_CLOSEDIR: return "closedir";
-        case M4K_SC_OPENDIR: return "opendir";
-        case M4K_SC_MKNOD: return "mknod";
-        case M4K_SC_MKFIFO: return "mkfifo";
-        case M4K_SC_TRUNCATE: return "truncate";
-        case M4K_SC_FTRUNCATE: return "ftruncate";
         case M4K_SC_GETDENTS: return "getdents";
-        case M4K_SC_SYNC: return "sync";
-        case M4K_SC_FSYNC: return "fsync";
-        case M4K_SC_FDATASYNC: return "fdatasync";
-        case M4K_SC_MLOCK: return "mlock";
-        case M4K_SC_MUNLOCK: return "munlock";
-        case M4K_SC_MLOCKALL: return "mlockall";
-        case M4K_SC_MUNLOCKALL: return "munlockall";
-        case M4K_SC_NANOSLEEP: return "nanosleep";
-        case M4K_SC_CLOCK_GETTIME: return "clock_gettime";
-        case M4K_SC_CLOCK_SETTIME: return "clock_settime";
-        case M4K_SC_CLOCK_GETRES: return "clock_getres";
-        case M4K_SC_SCHED_YIELD: return "sched_yield";
-        case M4K_SC_SCHED_SETSCHEDULER:
-            return "sched_setscheduler";
-        case M4K_SC_SCHED_GETSCHEDULER:
-            return "sched_getscheduler";
-        case M4K_SC_SCHED_SETPARAM:
-            return "sched_setparam";
-        case M4K_SC_SCHED_GETPARAM:
-            return "sched_getparam";
-        case M4K_SC_SCHED_SETAFFINITY:
-            return "sched_setaffinity";
-        case M4K_SC_SCHED_GETAFFINITY:
-            return "sched_getaffinity";
-        case M4K_SC_PRLIMIT64: return "prlimit64";
-        case M4K_SC_GETRUSAGE: return "getrusage";
-        case M4K_SC_GETTIMEOFDAY: return "gettimeofday";
-        case M4K_SC_SETTIMEOFDAY: return "settimeofday";
-        case M4K_SC_ADJTIMEX: return "adjtimex";
-        case M4K_SC_TIMER_CREATE: return "timer_create";
-        case M4K_SC_TIMER_DELETE: return "timer_delete";
-        case M4K_SC_TIMER_SETTIME: return "timer_settime";
-        case M4K_SC_TIMER_GETTIME: return "timer_gettime";
-        case M4K_SC_TIMER_GETOVERRUN:
-            return "timer_getoverrun";
         case M4K_SC_KILL: return "kill";
-        case M4K_SC_TKILL: return "tkill";
-        case M4K_SC_TGKILL: return "tgkill";
-        case M4K_SC_SIGACTION: return "sigaction";
-        case M4K_SC_SIGPROCMASK: return "sigprocmask";
-        case M4K_SC_SIGPENDING: return "sigpending";
-        case M4K_SC_SIGSUSPEND: return "sigsuspend";
-        case M4K_SC_SIGTIMEDWAIT: return "sigtimedwait";
-        case M4K_SC_SIGRETURN: return "sigreturn";
         case M4K_SC_REBOOT: return "reboot";
-        case M4K_SC_KEXEC_LOAD: return "kexec_load";
-        case M4K_SC_EXIT_GROUP: return "exit_group";
-        case M4K_SC_WAIT4: return "wait4";
-        case M4K_SC_CLONE: return "clone";
-        case M4K_SC_VFORK: return "vfork";
         case M4K_SC_UNAME: return "uname";
-        case M4K_SC_SEMGET: return "semget";
-        case M4K_SC_SEMOP: return "semop";
-        case M4K_SC_SEMCTL: return "semctl";
-        case M4K_SC_SEMTIMEDOP: return "semtimedop";
-        case M4K_SC_MSGGET: return "msgget";
-        case M4K_SC_MSGSND: return "msgsnd";
-        case M4K_SC_MSGRCV: return "msgrcv";
-        case M4K_SC_MSGCTL: return "msgctl";
-        case M4K_SC_SHMGET: return "shmget";
-        case M4K_SC_SHMAT: return "shmat";
-        case M4K_SC_SHMDT: return "shmdt";
-        case M4K_SC_SHMCTL: return "shmctl";
-        case M4K_SC_DL_LOAD_LIBRARY:
-            return "dl_load_library";
-        case M4K_SC_DL_UNLOAD_LIBRARY:
-            return "dl_unload_library";
-        case M4K_SC_DL_FIND_SYMBOL:
-            return "dl_find_symbol";
-        case M4K_SC_DL_GET_ERROR: return "dl_get_error";
         case M4K_SC_SYSINFO: return "sysinfo";
         case M4K_SC_GETPROCS: return "getprocs";
         case M4K_SC_STATFS: return "statfs";
@@ -573,6 +456,68 @@ static u32 mkrn_syscall_getpid_impl(u32 uArg1, u32 uArg2,
     mkrn_console_write("\n");
 
     return uPid;
+}
+
+static u32 mkrn_syscall_getuid_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg1; (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    return mkrn_process_get_uid();
+}
+
+static u32 mkrn_syscall_geteuid_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg1; (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    return mkrn_process_get_euid();
+}
+
+static u32 mkrn_syscall_setuid_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    uint32_t uid = uArg1;
+    int ret = mkrn_process_set_uid(uid);
+    return (ret == 0) ? M4K_SC_SUCCESS : M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_chmod_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg3; (void)uArg4; (void)uArg5;
+    /* FIXME: implement actual chmod on YAFS inode */
+    (void)uArg1; (void)uArg2;
+    return M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_chown_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg4; (void)uArg5;
+    (void)uArg1; (void)uArg2; (void)uArg3;
+    return M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_getgid_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg1; (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    return mkrn_process_get_gid();
+}
+
+static u32 mkrn_syscall_getegid_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg1; (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    return mkrn_process_get_egid();
+}
+
+static u32 mkrn_syscall_setgid_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    int ret = mkrn_process_set_gid(uArg1);
+    return (ret == 0) ? M4K_SC_SUCCESS : M4K_SC_ERROR;
 }
 
 static u32 mkrn_syscall_getppid_impl(u32 uArg1, u32 uArg2,
@@ -1137,6 +1082,22 @@ static void mkrn_syscall_init_handlers(void)
         M4K_SC_UMOUNT, mkrn_syscall_umount_impl);
     mkrn_syscall_register(
         M4K_SC_MOUNTINFO, mkrn_syscall_mountinfo_impl);
+    mkrn_syscall_register(
+        M4K_SC_GETUID, mkrn_syscall_getuid_impl);
+    mkrn_syscall_register(
+        M4K_SC_GETEUID, mkrn_syscall_geteuid_impl);
+    mkrn_syscall_register(
+        M4K_SC_GETGID, mkrn_syscall_getgid_impl);
+    mkrn_syscall_register(
+        M4K_SC_GETEGID, mkrn_syscall_getegid_impl);
+    mkrn_syscall_register(
+        M4K_SC_SETUID, mkrn_syscall_setuid_impl);
+    mkrn_syscall_register(
+        M4K_SC_SETGID, mkrn_syscall_setgid_impl);
+    mkrn_syscall_register(
+        M4K_SC_CHMOD, mkrn_syscall_chmod_impl);
+    mkrn_syscall_register(
+        M4K_SC_CHOWN, mkrn_syscall_chown_impl);
 
     M4K_LOG_INFO("System call handlers registered");
 }

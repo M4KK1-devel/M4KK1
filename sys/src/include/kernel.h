@@ -179,6 +179,31 @@ void *mkrn_memset(void *dest, int value, size_t n);
 #define M4K_BUILD_TIME __TIME__
 #define M4K_BUILD_DATE __DATE__
 
+/* Error codes — negative values; absolute value identifies error (§2, §7) */
+#define M4K_EPERM       0x4D000001
+#define M4K_ENOENT      0x4D000002
+#define M4K_EINTR       0x4D000003
+#define M4K_EIO         0x4D000004
+#define M4K_ENOMEM      0x4D000005
+#define M4K_EACCES      0x4D000006
+#define M4K_EFAULT      0x4D000007
+#define M4K_EBUSY       0x4D000008
+#define M4K_EEXIST      0x4D000009
+#define M4K_ENODEV      0x4D00000A
+#define M4K_ENOTDIR     0x4D00000B
+#define M4K_EISDIR      0x4D00000C
+#define M4K_EINVAL      0x4D00000D
+#define M4K_ENFILE      0x4D00000E
+#define M4K_EMFILE      0x4D00000F
+#define M4K_ENOSPC      0x4D000010
+#define M4K_ESPIPE      0x4D000011
+#define M4K_EROFS       0x4D000012
+#define M4K_ETIMEOUT    0x4D000013
+#define M4K_ECHILD      0x4D000014
+#define M4K_ESRCH       0x4D000015
+#define M4K_EEXEC       0x4D000016
+#define M4K_EMFILEPROC  0x4D000017
+
 #define M4K_CLI() __asm__ volatile ("cli")
 #define M4K_STI() __asm__ volatile ("sti")
 #define M4K_HLT() __asm__ volatile ("hlt")
