@@ -16,7 +16,7 @@ struct yafs_inode_value;
 
 #define M4K_VFS_MAX_FILES   128
 #define M4K_VFS_MAX_FILENAME 128
-#define M4K_VFS_MAX_FDS     256
+#define M4K_VFS_MAX_FDS     4096
 #define M4K_VFS_MAX_MOUNTS  16
 
 #define M4K_O_RDONLY        0x00000001
@@ -300,6 +300,9 @@ u64 mkrn_yafs_lookup_path(u64 root_tree, const char *path);
 #define M4K_ACCESS_EXEC   4
 
 int mkrn_check_access(struct yafs_inode_value *inode, uint32_t mode);
+int mkrn_vfs_chmod(const char *path, uint32_t mode);
+int mkrn_vfs_chown(const char *path, uint32_t uid, uint32_t gid);
+int mkrn_vfs_access(const char *path, int mode);
 
 /* ── ProcFS hooks ── */
 

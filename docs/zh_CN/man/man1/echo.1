@@ -1,0 +1,42 @@
+.\" M4KK1 4P1 - echo.1
+.TH ECHO 1 "2026-07-22" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+echo \- 输出文本
+.SH 概要
+.B echo
+[\fB\-e\fR] [\fB\-E\fR] [\fB\-n\fR] \fI参数\fR...
+.SH 描述
+将参数输出到标准输出。默认在末尾添加换行。
+.SH 选项
+.TP
+.B \-e
+启用转义序列解释
+.TP
+.B \-E
+禁用转义序列解释（默认）
+.TP
+.B \-n
+不输出末尾换行
+.SH 转义序列
+.TP
+.B \en
+换行
+.TP
+.B \et
+制表符
+.TP
+.B \e\e
+反斜杠
+.TP
+.B \e0NNN
+八进制字符
+.SH 示例
+.TP
+.B echo hello world
+输出 "hello world"
+.TP
+.B echo -e "line1\enline2"
+输出两行
+.SH 参见
+.BR grep (1),
+.BR cat (1)

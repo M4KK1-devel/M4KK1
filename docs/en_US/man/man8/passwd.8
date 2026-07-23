@@ -1,0 +1,13 @@
+.\" M4KK1 4P1 - passwd.8
+.TH PASSWD 8 "2026-07-22" "M4KK1 1.0" "M4KK1 System Administration"
+.SH NAME
+passwd \- change user password
+.SH SYNOPSIS
+.B passwd
+[\fIusername\fR]
+.SH DESCRIPTION
+Change a user's password. Without arguments, change the current user's password. Specifying a username requires prime group membership. Passwords are hashed with SHA-256 + salt.
+.SH SEE ALSO
+.BR usermod (8),
+.BR quell (8),
+.BR login.conf (5)

@@ -1,0 +1,16 @@
+.\" M4KK1 4P1 - m4k_get_session_list.2
+.TH M4K_GET_SESSION_LIST 2 "2026-07-22" "M4KK1 1.0" "M4KK1 System Calls"
+.SH NAME
+m4k_get_session_list \- get session list
+.SH SYNOPSIS
+.nf
+#include <m4k/syscall.h>
+int m4k_get_session_list(void *buf, int max);
+.fi
+.SH DESCRIPTION
+Get the list of all active login sessions. Each session includes TTY, UID, login time, and username.
+.SH RETURN VALUE
+Returns the number of sessions on success, or a negative M4K_E* error code on failure.
+.SH SEE ALSO
+.BR m4k_register_session (2),
+.BR who (1)

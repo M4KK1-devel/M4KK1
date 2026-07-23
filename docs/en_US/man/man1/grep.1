@@ -1,0 +1,44 @@
+.\" M4KK1 4P1 - grep.1
+.TH GREP 1 "2026-07-22" "M4KK1 1.0" "M4KK1 User Commands"
+.SH NAME
+grep \- search text with regular expressions
+.SH SYNOPSIS
+.B grep
+\fIpattern\fR [\fIfile\fR]
+.SH DESCRIPTION
+Search file or stdin for lines matching a regular expression. Prints matching lines.
+.SH REGEX SYNTAX
+.TP
+.B .
+Any single character (except newline)
+.TP
+.B *
+Zero or more of preceding
+.TP
+.B +
+One or more of preceding
+.TP
+.B ?
+Zero or one of preceding
+.TP
+.B [...]
+Character class
+.TP
+.B [^...]
+Negated character class
+.TP
+.B ^
+Start-of-line anchor
+.TP
+.B $
+End-of-line anchor
+.TP
+.B \e|
+Alternation
+.TP
+.B (...)
+Grouping
+.SH SEE ALSO
+.BR echo (1),
+.BR cat (1),
+.BR wc (1)

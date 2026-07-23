@@ -1,0 +1,5 @@
+# /export/cfg/groups.db
+# 格式: groupname:gid:member1,member2,...
+prime:1001:root,testuser
+staff:1002:
+wheel:0:root

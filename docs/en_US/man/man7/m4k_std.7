@@ -1,0 +1,23 @@
+.\" M4KK1 4P1 - m4k_std.7
+.TH M4K_STD 7 "2026-07-22" "M4KK1 1.0" "M4KK1 Standards"
+.SH NAME
+m4k_std \- M4KK1 4P1 independent standard overview
+.SH DESCRIPTION
+M4KK1 follows the 4P1 independent standard. Core conventions:
+.TP
+.B Syscall ABI
+int 0x4D, register arguments, return in %eax (negative = error)
+.TP
+.B Naming
+mkrn_ (kernel), musr_ (userspace), m4k_ (syscall ABI)
+.TP
+.B Error handling
+No errno, direct negative return values
+.TP
+.B Memory model
+Flat 32-bit physical, no MMU/paging
+.TP
+.B File descriptors
+Global table, up to 256
+.SH SEE ALSO
+.BR hier (7)

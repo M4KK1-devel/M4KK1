@@ -1,0 +1,23 @@
+.\" M4KK1 4P1 - groupmod.8
+.TH GROUPMOD 8 "2026-07-22" "M4KK1 1.0" "M4KK1 System Administration"
+.SH NAME
+groupmod \- modify group
+.SH SYNOPSIS
+.B groupmod
+[\fIoptions\fR] \fIgroupname\fR
+.SH DESCRIPTION
+Modify group information in /export/cfg/groups.db. Requires prime group membership.
+.SH OPTIONS
+.TP
+.B \-a, \-\-add \fIuser\fR
+Add user to group
+.TP
+.B \-d, \-\-del \fIuser\fR
+Remove user from group
+.TP
+.B \-n, \-\-new \fIname\fR
+Rename group
+.SH SEE ALSO
+.BR usermod (8),
+.BR passwd (8),
+.BR quell (8)

@@ -1,0 +1,16 @@
+.\" M4KK1 4P1 - musr_getgrnam.3
+.TH MUSR_GETGRNAM 3 "2026-07-22" "M4KK1 1.0" "M4KK1 Library Functions"
+.SH NAME
+musr_getgrnam \- look up group database entry by name
+.SH SYNOPSIS
+.nf
+#include <m4k/grp.h>
+int musr_getgrnam(const char *name, group_entry_t *out);
+.fi
+.SH DESCRIPTION
+Search /export/cfg/groups.db for an entry matching the given group name.
+.SH RETURN VALUE
+Returns 0 on success, or negative M4K_ENOENT if not found.
+.SH SEE ALSO
+.BR musr_getpwnam (3),
+.BR musr_getpwuid (3)

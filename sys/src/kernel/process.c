@@ -113,22 +113,49 @@ uint32_t mkrn_process_get_egid(void)
 {
     return current ? current->egid : 0;
 }
+/* Check if current process is in the prime group (GID 1001) */
+static int is_prime_member(void)
+{
+    if (!current) return 0;
+    if (current->egid == M4K_GID_PRIME) return 1;
+    for (uint32_t i = 0; i < current->group_count; i++) {
+        if (current->group_list[i] == M4K_GID_PRIME)
+            return 1;
+    }
+    return 0;
+}
+
 int mkrn_process_set_uid(uint32_t uid)
 {
-    if (!current) return M4K_EPERM;
-    if (current->euid != M4K_UID_ROOT && uid != current->uid && uid != current->euid)
-        return M4K_EPERM;
-    current->uid = uid;
-    current->euid = uid;
+    if (!current) return -M4K_EPERM;
+    if (current->euid == M4K_UID_ROOT) {
+        /* Root can set both RUID and EUID (§6.12.4) */
+        current->uid = uid;
+        current->euid = uid;
+    } else if (uid == 0 && is_prime_member()) {
+        /* Prime group members can escalate to root (§6.9) */
+        current->euid = uid;
+    } else if (uid == current->uid || uid == current->euid) {
+        /* Non-root can only set EUID (§6.12.4) */
+        current->euid = uid;
+    } else {
+        return -M4K_EPERM;
+    }
     return 0;
 }
 int mkrn_process_set_gid(uint32_t gid)
 {
-    if (!current) return M4K_EPERM;
-    if (current->egid != M4K_GID_ROOT && gid != current->gid && gid != current->egid)
-        return M4K_EPERM;
-    current->gid = gid;
-    current->egid = gid;
+    if (!current) return -M4K_EPERM;
+    if (current->egid == M4K_GID_ROOT) {
+        /* Root can set both RGID and EGID (§6.12.4) */
+        current->gid = gid;
+        current->egid = gid;
+    } else if (gid == current->gid || gid == current->egid) {
+        /* Non-root can only set EGID (§6.12.4) */
+        current->egid = gid;
+    } else {
+        return -M4K_EPERM;
+    }
     return 0;
 }
 
@@ -153,6 +180,30 @@ int mkrn_process_set_groups(int size, const uint32_t *list)
     current->group_count = (uint32_t)size;
     for (int i = 0; i < size; i++)
         current->group_list[i] = list[i];
+    return 0;
+}
+
+int mkrn_process_set_rlimit(int resource, const struct m4k_rlimit *rlp)
+{
+    if (!current || !rlp) return -M4K_EINVAL;
+    if (resource < 0 || resource >= M4K_RLIMIT_NLIMITS)
+        return -M4K_EINVAL;
+    if (current->euid != M4K_UID_ROOT) {
+        if (rlp->rlim_max > current->rlimits[resource].rlim_max)
+            return -M4K_EPERM;
+    }
+    current->rlimits[resource].rlim_cur = rlp->rlim_cur;
+    current->rlimits[resource].rlim_max = rlp->rlim_max;
+    return 0;
+}
+
+int mkrn_process_get_rlimit(int resource, struct m4k_rlimit *rlp)
+{
+    if (!current || !rlp) return -M4K_EINVAL;
+    if (resource < 0 || resource >= M4K_RLIMIT_NLIMITS)
+        return -M4K_EINVAL;
+    rlp->rlim_cur = current->rlimits[resource].rlim_cur;
+    rlp->rlim_max = current->rlimits[resource].rlim_max;
     return 0;
 }
 
@@ -453,6 +504,10 @@ pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
     child->group_count = parent->group_count;
     for (uint32_t gi = 0; gi < child->group_count; gi++)
         child->group_list[gi] = parent->group_list[gi];
+    for (int ri = 0; ri < M4K_RLIMIT_NLIMITS; ri++) {
+        child->rlimits[ri].rlim_cur = parent->rlimits[ri].rlim_cur;
+        child->rlimits[ri].rlim_max = parent->rlimits[ri].rlim_max;
+    }
     mkrn_strcpy(child->name, parent->name);
     mkrn_strcpy(child->cwd, parent->cwd);
 

@@ -1,0 +1,23 @@
+.\" M4KK1 4P1 - groupmod.8
+.TH GROUPMOD 8 "2026-07-22" "M4KK1 1.0" "M4KK1 系统管理"
+.SH 名称
+groupmod \- 修改组
+.SH 概要
+.B groupmod
+[\fI选项\fR] \fI组名\fR
+.SH 描述
+修改 /export/cfg/groups.db 中的组信息。需要 prime 组成员权限。
+.SH 选项
+.TP
+.B \-a, \-\-add \fI用户\fR
+添加用户到组
+.TP
+.B \-d, \-\-del \fI用户\fR
+从组中移除用户
+.TP
+.B \-n, \-\-new \fI新名\fR
+重命名组
+.SH 参见
+.BR usermod (8),
+.BR passwd (8),
+.BR quell (8)

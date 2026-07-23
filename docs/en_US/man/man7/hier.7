@@ -1,0 +1,32 @@
+.\" M4KK1 4P1 - hier.7
+.TH HIER 7 "2026-07-22" "M4KK1 1.0" "M4KK1 File System Hierarchy"
+.SH NAME
+hier \- M4KK1 file system hierarchy
+.SH DESCRIPTION
+Standard M4KK1 file system layout:
+.TP
+.B /
+Root filesystem
+.TP
+.B /bin/
+Executables (login, m4sh)
+.TP
+.B /dev/
+Device files (console, null, zero)
+.TP
+.B /export/cfg/
+Configuration files (passwd.db, groups.db)
+.TP
+.B /export/home/
+User home directories
+.TP
+.B /sys/proc/
+Process information pseudo-filesystem
+.TP
+.B /sys/sessions/
+Login sessions
+.TP
+.B /tmp/
+Temporary files
+.SH SEE ALSO
+.BR m4k_std (7)

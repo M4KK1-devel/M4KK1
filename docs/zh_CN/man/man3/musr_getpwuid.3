@@ -1,0 +1,16 @@
+.\" M4KK1 4P1 - musr_getpwuid.3
+.TH MUSR_GETPWUID 3 "2026-07-22" "M4KK1 1.0" "M4KK1 库函数"
+.SH 名称
+musr_getpwuid \- 按 UID 查找用户数据库条目
+.SH 概要
+.nf
+#include <m4k/pwd.h>
+int musr_getpwuid(uid_t uid, passwd_entry_t *out);
+.fi
+.SH 描述
+在 /export/cfg/passwd.db 中查找匹配 UID 的条目，结果写入 out。
+.SH 返回值
+成功返回 0，未找到返回负的 M4K_ENOENT。
+.SH 参见
+.BR musr_getpwnam (3),
+.BR musr_getgrnam (3)

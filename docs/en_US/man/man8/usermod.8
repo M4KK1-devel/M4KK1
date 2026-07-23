@@ -1,0 +1,32 @@
+.\" M4KK1 4P1 - usermod.8
+.TH USERMOD 8 "2026-07-22" "M4KK1 1.0" "M4KK1 System Administration"
+.SH NAME
+usermod \- modify user account
+.SH SYNOPSIS
+.B usermod
+[\fIoptions\fR] \fIusername\fR
+.SH DESCRIPTION
+Modify user account information in /export/cfg/passwd.db. Requires prime group membership.
+.SH OPTIONS
+.TP
+.B \-a, \-\-add \fIgroup\fR
+Add user to supplementary group
+.TP
+.B \-d, \-\-del \fIgroup\fR
+Remove user from group
+.TP
+.B \-s, \-\-shell \fIpath\fR
+Change login shell
+.TP
+.B \-g, \-\-group \fIgroup\fR
+Set primary group
+.TP
+.B \-L, \-\-lock
+Lock account
+.TP
+.B \-U, \-\-unlock
+Unlock account
+.SH SEE ALSO
+.BR groupmod (8),
+.BR passwd (8),
+.BR quell (8)

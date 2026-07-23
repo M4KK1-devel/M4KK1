@@ -1,0 +1,20 @@
+.\" M4KK1 4P1 - quell.8
+.TH QUELL 8 "2026-07-22" "M4KK1 1.0" "M4KK1 系统管理"
+.SH 名称
+quell \- 以 prime 组权限执行命令
+.SH 概要
+.B quell
+\fI命令\fR [\fI参数\fR...]
+.SH 描述
+以 root 权限（euid=0）执行指定命令。调用者必须在 prime 组（GID 1001）中。这是 M4KK1 中 sudo 的替代方案。
+.SH 示例
+.TP
+.B quell mount /dev/yafs0 /mnt
+挂载文件系统
+.TP
+.B quell usermod -a --group prime alice
+添加 alice 到 prime 组
+.SH 参见
+.BR usermod (8),
+.BR groupmod (8),
+.BR passwd (8)

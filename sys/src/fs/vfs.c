@@ -11,6 +11,8 @@
 #include "kernel.h"
 #include "memory.h"
 #include "process.h"
+#include "sessions.h"
+#include "device_tree.h"
 #include <string.h>
 #include <yafs.h>
 #include <yafs_btree.h>
@@ -491,6 +493,22 @@ mkrn_vfs_open(const char *pPathname, int flags)
         return -1;
     }
 
+    /* Route /sys/sessions/ to session tracking */
+    if (pPathname[0] == '/' && strncmp(pPathname, "/sys/sessions", 13) == 0) {
+        int fd;
+        if (mkrn_sessions_open(pPathname, flags, &fd) == 0)
+            return fd;
+        return -1;
+    }
+
+    /* Route /device/ to Device Tree */
+    if (pPathname[0] == '/' && strncmp(pPathname, "/device", 7) == 0) {
+        int fd;
+        if (mkrn_device_tree_open(pPathname, flags, &fd) == 0)
+            return fd;
+        return -1;
+    }
+
     if (root_yafs_tree != 0) {
         bool bIsRoot =
             (pPathname[0] == '/' && pPathname[1] == '\0');
@@ -573,6 +591,14 @@ mkrn_vfs_read(int fd, void *pBuf, size_t count)
     if (mkrn_procfs_is_procfs_fd(fd))
         return mkrn_procfs_read(fd, pBuf, (uint32_t)count);
 
+    /* Route sessions reads */
+    if (mkrn_sessions_is_sessions_fd(fd))
+        return mkrn_sessions_read(fd, pBuf, (uint32_t)count);
+
+    /* Route device tree reads */
+    if (mkrn_device_tree_is_dt_fd(fd))
+        return mkrn_device_tree_read(fd, pBuf, (uint32_t)count);
+
     if (fd_table[fd].file == &file_table[0]
         && fd_table[fd].yafs_inode == 0)
     {
@@ -639,6 +665,14 @@ mkrn_vfs_write(int fd, const void *pBuf, size_t count)
     /* Route ProcFS writes */
     if (mkrn_procfs_is_procfs_fd(fd))
         return mkrn_procfs_write(fd, pBuf, (uint32_t)count);
+
+    /* Route sessions writes */
+    if (mkrn_sessions_is_sessions_fd(fd))
+        return mkrn_sessions_write(fd, pBuf, (uint32_t)count);
+
+    /* Route device tree writes */
+    if (mkrn_device_tree_is_dt_fd(fd))
+        return mkrn_device_tree_write(fd, pBuf, (uint32_t)count);
 
     if (fd_table[fd].file == &file_table[0]
         && fd_table[fd].yafs_inode == 0)
@@ -721,6 +755,10 @@ mkrn_vfs_close(int fd)
         return -1;
     if (mkrn_procfs_is_procfs_fd(fd))
         mkrn_procfs_close(fd);
+    if (mkrn_sessions_is_sessions_fd(fd))
+        mkrn_sessions_close(fd);
+    if (mkrn_device_tree_is_dt_fd(fd))
+        mkrn_device_tree_close(fd);
     mkrn_memset(&fd_table[fd], 0, sizeof(mkrn_file_desc_t));
     return 0;
 }
@@ -860,6 +898,10 @@ mkrn_vfs_getdents(int fd, struct mkrn_vfs_dirent *pBuf,
     if (mkrn_procfs_is_procfs_fd(fd))
         return mkrn_procfs_getdents(fd, pBuf, count);
 
+    /* Route device tree getdents */
+    if (mkrn_device_tree_is_dt_fd(fd))
+        return mkrn_device_tree_getdents(fd, pBuf, count);
+
     if (root_yafs_tree != 0) {
         uint64_t u64DirInode = fd_table[fd].yafs_inode;
         if (u64DirInode == 0)
@@ -869,6 +911,86 @@ mkrn_vfs_getdents(int fd, struct mkrn_vfs_dirent *pBuf,
     }
 
     return -1;
+}
+
+/* ── chmod/chown/access (§6.12.2) ── */
+
+static int read_inode_raw(uint64_t inode_nr, struct yafs_inode_value *iv_out)
+{
+    uint64_t key = mkrn_yafs_make_key(YAFS_KS_INODE, inode_nr);
+    yafs_entry_t lba_val;
+    if (mkrn_yafs_btree_lookup(root_yafs_tree, key, &lba_val) != 0)
+        return -1;
+    uint8_t buf[4096];
+    if (mkrn_yafs_dev_read(lba_val, buf) != 0)
+        return -1;
+    mkrn_memcpy(iv_out, buf, sizeof(struct yafs_inode_value));
+    return 0;
+}
+
+static int write_inode_raw(uint64_t inode_nr, const struct yafs_inode_value *iv)
+{
+    uint64_t key = mkrn_yafs_make_key(YAFS_KS_INODE, inode_nr);
+    yafs_entry_t lba_val;
+    if (mkrn_yafs_btree_lookup(root_yafs_tree, key, &lba_val) != 0)
+        return -1;
+    uint8_t buf[4096];
+    mkrn_memset(buf, 0, sizeof(buf));
+    mkrn_memcpy(buf, iv, sizeof(struct yafs_inode_value));
+    return mkrn_yafs_dev_write(lba_val, buf);
+}
+
+int
+mkrn_vfs_chmod(const char *path, uint32_t mode)
+{
+    if (!path || root_yafs_tree == 0)
+        return -1;
+    uint64_t inode_nr = mkrn_yafs_lookup_path(root_yafs_tree, path);
+    if (inode_nr == 0)
+        return -1;
+    struct yafs_inode_value iv;
+    if (read_inode_raw(inode_nr, &iv) != 0)
+        return -1;
+    /* Permission check: must be owner or root */
+    mkrn_process_t *pCur = mkrn_process_get_current();
+    if (pCur && pCur->euid != M4K_UID_ROOT && pCur->euid != iv.uid)
+        return -1;
+    iv.mode = (iv.mode & ~0xFFFF) | (mode & 0xFFFF);
+    return write_inode_raw(inode_nr, &iv);
+}
+
+int
+mkrn_vfs_chown(const char *path, uint32_t uid, uint32_t gid)
+{
+    if (!path || root_yafs_tree == 0)
+        return -1;
+    uint64_t inode_nr = mkrn_yafs_lookup_path(root_yafs_tree, path);
+    if (inode_nr == 0)
+        return -1;
+    /* Only root can chown */
+    mkrn_process_t *pCur = mkrn_process_get_current();
+    if (pCur && pCur->euid != M4K_UID_ROOT)
+        return -1;
+    struct yafs_inode_value iv;
+    if (read_inode_raw(inode_nr, &iv) != 0)
+        return -1;
+    iv.uid = uid;
+    iv.gid = gid;
+    return write_inode_raw(inode_nr, &iv);
+}
+
+int
+mkrn_vfs_access(const char *path, int mode)
+{
+    if (!path || root_yafs_tree == 0)
+        return -1;
+    uint64_t inode_nr = mkrn_yafs_lookup_path(root_yafs_tree, path);
+    if (inode_nr == 0)
+        return -1;
+    struct yafs_inode_value iv;
+    if (read_inode_raw(inode_nr, &iv) != 0)
+        return -1;
+    return mkrn_check_access(&iv, (uint32_t)mode);
 }
 
 

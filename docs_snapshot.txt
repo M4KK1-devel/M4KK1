@@ -1,0 +1,4948 @@
+=== docs/4P1/standard.md ===
+# M4KK1 4P1 Standard Specification
+**Version**: v1.2
+**Status**: Draft
+**Scope**: Complete system interface standard for M4KK1 operating system
+
+---
+
+## Table of Contents
+
+1. [Introduction](#1-introduction)
+2. [System Architecture](#2-system-architecture)
+3. [Memory Management](#3-memory-management)
+4. [Process Management (4P1 Process Model)](#4-process-management-4p1-process-model)
+   - 4.1 Process Identifiers (PID, PPID)
+   - 4.2 Process State Model (The Tag Set Approach)
+   - 4.3 Process Creation: `m4k_spawn` and `m4k_fork_status`
+   - 4.4 Process Namespaces (Isolation & Views)
+   - 4.5 The `/sys/proc` Filesystem Interface
+   - 4.6 Process Control & Signals (Minimalist)
+   - 4.7 System Call Reference
+5. [Libraries](#5-libraries)
+6. [User & Identity Model (4P1 Identity Model)](#6-user--identity-model-4p1-identity-model)
+   - 6.1 Design Philosophy
+   - 6.2 User Identifiers (UID, GID)
+   - 6.3 Directory Structure & Auto-Mounting
+   - 6.4 System Accounts & Service Users
+   - 6.5 User Database (`/export/cfg/passwd.db`)
+   - 6.6 Group Database (`/export/cfg/groups.db`)
+   - 6.7 Password Storage & Hashing
+   - 6.8 User Management Tools
+   - 6.9 Privileged Execution: `quell` & `prime` Group
+   - 6.10 Resource Limits: `login.conf` (BSD-style)
+   - 6.11 Login Session Management
+   - 6.12 User-Related System Calls
+7. [Error Codes Reference](#7-error-codes-reference)
+8. [Appendices & Examples](#8-appendices--examples)
+
+---
+
+## 1. Introduction
+
+M4KK1 is an independent operating system that follows the **4P1 Standard**
+("Leet of API"). The standard defines a lean, deterministic, and
+minimalist interface between user-space programs and the kernel.
+
+### Core Design Principles
+
+- **Clarity over compatibility**: No POSIX baggage. Interfaces are
+  designed for readability and predictability, not historical accident.
+- **Simplicity over bloat**: Few interfaces, deterministic behavior,
+  easy to understand and implement.
+- **Native over emulation**: All tools and libraries built on the native
+  M4KK1 ABI. No shim layers, no legacy compatibility.
+
+### ABI Core Identifiers
+
+| Element       | Value              |
+|:--------------|:-------------------|
+| Syscall trap  | `int 0x4D` (ASCII 'M') |
+| Syscall prefix| `M4K_SYS_*`        |
+| Error prefix  | `M4K_E*`           |
+| Error range   | `0xM4Kxxxxx`       |
+
+---
+
+## 2. System Architecture
+
+The M4KK1 kernel runs as a single address-space, freestanding i386 ELF
+loaded by GRUB. Key architectural properties:
+
+- **Kernel type**: Monolithic with modular subsystems (VFS, YAFS, IPC,
+  Process Manager).
+- **Scheduling**: Cooperative pre-emptive round-robin with state-tag
+  dispatch.
+- **I/O model**: Serial (COM1, 38400 8N1) as primary console; VFS
+  abstraction for file-backed and pipe-backed I/O.
+- **Executable format**: M4KK1 native ELF (freestanding, no libc,
+  no dynamic linker).
+- **Syscall convention**: `int 0x4D`, arguments in registers per
+  x86_64 System V ABI (`%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9`),
+  return in `%rax` (negative values indicate errors; absolute value
+  identifies the error code).
+
+### Syscall Dispatch
+
+All system calls are dispatched through a central handler in
+`syscall.c`. The kernel decodes the syscall number from `%rax`,
+validates arguments from userspace, and delegates to the appropriate
+subsystem handler.
+
+---
+
+## 3. Memory Management
+
+The kernel manages physical memory through a page allocator and
+provides per-process virtual address space control via BRK and MMAP.
+
+### 3.1 Physical Memory Allocator
+
+- **Algorithm**: Buddy system with page bitmap tracking.
+- **Minimum allocation unit**: 4 KiB (one page).
+- **Maximum order**: 4 (16 contiguous pages; 64 KiB).
+- **Reserved memory**: Kernel text, data, and BSS are locked and never
+  returned to the allocator.
+
+### 3.2 Virtual Memory Layout
+
+| Range              | Purpose                     |
+|:-------------------|:----------------------------|
+| `0x00000000`       | Reserved / NULL-trap region |
+| `0x00100000`       | Kernel loaded (1 MiB)       |
+| `0x40000000`       | User code (executable load) |
+| `0xC0000000`       | Kernel heap & pagetables    |
+| `0xE0000000`       | User stack (grows downward) |
+
+### 3.3 System Calls
+
+| Syscall                                          | Number            | Description                              |
+|:-------------------------------------------------|:------------------|:-----------------------------------------|
+| `m4k_brk(void *addr)`                            | `M4K_SYS_BRK`     | Set program break; return new break addr |
+| `m4k_map_memory(void *addr, size_t len, int prot, int flags, int fd, off_t off)` | `M4K_SYS_MMAP`  | Map memory region                        |
+| `m4k_unmap_memory(void *addr, size_t len)`       | `M4K_SYS_MUNMAP`  | Unmap memory region                      |
+| `m4k_get_memory_usage(uint32_t *pTotal, uint32_t *pUsed, uint32_t *pFree)` | `M4K_SYS_MEMINFO` | Query memory statistics |
+
+### 3.4 Protection Flags
+
+```c
+#define M4K_PROT_NONE   0x00
+#define M4K_PROT_READ   0x01
+#define M4K_PROT_WRITE  0x02
+#define M4K_PROT_EXEC   0x04
+```
+
+### 3.5 Mapping Flags
+
+```c
+#define M4K_MAP_PRIVATE     0x01
+#define M4K_MAP_SHARED      0x02
+#define M4K_MAP_ANONYMOUS   0x04
+#define M4K_MAP_FIXED       0x08
+#define M4K_MAP_GROWSDOWN   0x10
+```
+
+### 3.6 Memory Statistics (`m4k_get_memory_usage`)
+
+Fills the provided pointers with:
+- `pTotal`: Total physical memory in pages (4 KiB each).
+- `pUsed`: Pages currently allocated (kernel + user).
+- `pFree`: Pages available for allocation.
+
+---
+
+## 4. Process Management (4P1 Process Model)
+
+The 4P1 process model replaces the traditional POSIX `fork/exec`
+paradigm with a powerful, composable interface based on **state tag
+sets**, **selective inheritance (`m4k_fork_status`)**, **per-process
+namespaces**, and a **`/sys/proc` filesystem interface**.
+
+### 4.1 Process Identifiers (PID, PPID)
+
+Every process in M4KK1 is identified by a non-negative integer called
+a **Process ID (PID)**. PIDs are allocated sequentially and recycled
+only after the zombie is reaped.
+
+#### PID 0 (Idle Process)
+
+PID 0 is the kernel idle process. It is always in the `[SCHED_READY,
+IDLE]` state and runs only when no other process is schedulable.
+
+#### PID 1 (Init / M4SH)
+
+PID 1 is the first user-space process (the M4KK1 shell, `M4SH`).
+PID 1 has special properties:
+
+- It is never killed (even `SIGKILL` is ignored).
+- Orphaned children are re-parented to PID 1.
+- PID 1 is responsible for reaping orphaned zombies.
+
+#### Parent PID (PPID)
+
+Each process carries a `ppid` field referencing its creator. When a
+parent exits, all children are re-parented to PID 1. The PPID is
+read-only from userspace and visible via `/sys/proc/<PID>/status`.
+
+---
+
+### 4.2 Process State Model (The Tag Set Approach)
+
+#### 4.2.1 Principle
+
+A process state is **not** a single mutually-exclusive value (e.g.,
+`TASK_RUNNING`). Instead, it is a **set of boolean attributes** stored
+as a `uint64_t` bitmask. Any combination of tags may be active
+simultaneously, provided it is semantically coherent.
+
+#### 4.2.2 Tag Definitions
+
+```c
+/* Scheduling class (exactly one of these SHALL be set) */
+#define M4K_SCHED_READY     0x00000001ULL  /* Runnable, waiting for CPU */
+#define M4K_SCHED_RUNNING   0x00000002ULL  /* Currently executing on CPU */
+#define M4K_SCHED_SLEEPING  0x00000004ULL  /* Blocked, not runnable */
+
+/* Waiting reasons (blocking — zero or more may be set with SLEEPING) */
+#define M4K_WAIT_FS         0x00000100ULL  /* Disk / filesystem I/O */
+#define M4K_WAIT_PIPE       0x00000200ULL  /* Pipe read/write blocked */
+#define M4K_WAIT_TIMER      0x00000400ULL  /* Sleeping on a timer/tick */
+#define M4K_WAIT_IPC        0x00000800ULL  /* IPC message send/recv */
+#define M4K_WAIT_CHILD      0x00001000ULL  /* Waiting for child exit */
+#define M4K_WAIT_LOCK       0x00002000ULL  /* Waiting for mutex/spinlock */
+#define M4K_WAIT_TERMINAL   0x00004000ULL  /* Waiting for terminal input */
+
+/* Debug / control tags */
+#define M4K_TRACED          0x00010000ULL  /* Under ptrace-like inspection */
+#define M4K_STOPPED         0x00020000ULL  /* Suspended by ctl or signal */
+
+/* Lifecycle tags */
+#define M4K_ZOMBIE          0x01000000ULL  /* Exited, not yet reaped */
+#define M4K_IDLE            0x02000000ULL  /* Kernel idle process */
+
+/* Convenience masks */
+#define M4K_STATE_SCHED_MASK   0x00000007ULL  /* SCHED_READY|RUNNING|SLEEPING */
+#define M4K_STATE_WAIT_MASK    0x00007F00ULL  /* All WAIT_* bits */
+#define M4K_STATE_CTRL_MASK    0x00030000ULL  /* TRACED|STOPPED */
+#define M4K_STATE_LIFE_MASK    0x03000000ULL  /* ZOMBIE|IDLE */
+#define M4K_STATE_RESERVED     (~0x03037F07ULL) /* All reserved bits — writes rejected */
+```
+
+#### 4.2.3 Semantics
+
+The scheduler checks **only** `M4K_SCHED_READY`. A process must have
+`SCHED_READY` set (and `SCHED_RUNNING` clear) to be eligible for
+scheduling. When the scheduler dispatches the process, it clears
+`SCHED_READY` and sets `SCHED_RUNNING`. When the process yields or
+blocks, the kernel clears `SCHED_RUNNING` and sets either `SCHED_READY`
+(if still runnable) or `SCHED_SLEEPING` (if blocked).
+
+The waiting-reason tags (`WAIT_FS`, `WAIT_PIPE`, etc.) are
+**informational**; they help diagnostic tools (`/sys/proc/<PID>/status`)
+and the VFS/IPC subsystems understand why a process is blocked. They
+SHOULD be set by the subsystem that initiates the blocking operation.
+
+#### 4.2.4 State Coherence Rules
+
+| Condition                                          | Valid?     |
+|:---------------------------------------------------|:-----------|
+| `SCHED_READY` + `SCHED_RUNNING`                    | INVALID    |
+| `SCHED_READY` + `SCHED_SLEEPING`                   | INVALID    |
+| `SCHED_RUNNING` + `SCHED_SLEEPING`                 | INVALID    |
+| `SCHED_SLEEPING` + `WAIT_PIPE`                     | Valid      |
+| `SCHED_READY` + `WAIT_FS`                          | Valid      |
+| `SCHED_SLEEPING` + `WAIT_FS` + `WAIT_TIMER`        | Valid      |
+| `SCHED_SCHED_RUNNING` + `TRACED`                   | Valid      |
+| `ZOMBIE` + `SCHED_READY`                           | INVALID    |
+| `ZOMBIE` + any `WAIT_*`                            | INVALID    |
+
+#### 4.2.5 Userspace Representation
+
+When exposed to userspace (e.g., via `/sys/proc/<PID>/status`), the
+state set is rendered as a comma-separated, bracket-delimited list.
+Order is irrelevant — the representation is a **set**, not a vector.
+
+```
+State: [SCHED_SLEEPING, WAIT_PIPE]
+State: [SCHED_READY]
+State: [SCHED_RUNNING, TRACED]
+State: [ZOMBIE]
+```
+
+---
+
+### 4.3 Process Creation: `m4k_spawn` and `m4k_fork_status`
+
+#### 4.3.1 `m4k_spawn` — Load and Execute a New Program
+
+`m4k_spawn` creates a new process by loading an executable (M4KK1 ELF)
+from the filesystem into a fresh address space and starting it.
+It replaces the traditional POSIX `fork() + exec()` pattern.
+
+```c
+pid_t m4k_spawn(const char *path, char *const argv[],
+                char *const envp[], uint32_t flags);
+```
+
+**Arguments**:
+
+| Argument | Description                                      |
+|:---------|:-------------------------------------------------|
+| `path`   | Absolute or relative path to executable          |
+| `argv`   | Null-terminated array of argument strings        |
+| `envp`   | Null-terminated array of `KEY=VALUE` environment |
+| `flags`  | Bitmask of spawn flags (see below)              |
+
+**Spawn flags**:
+
+```c
+#define M4K_SPAWN_NEW_NS      0x0001  /* Create an empty namespace for child */
+#define M4K_SPAWN_NEW_FD      0x0002  /* Copy (not share) file descriptor table */
+#define M4K_SPAWN_NEW_ENV     0x0004  /* Copy (not share) environment vector */
+#define M4K_SPAWN_NOWAIT      0x0008  /* Daemon mode — no zombie on exit */
+#define M4K_SPAWN_TRACE       0x0010  /* Child starts with M4K_TRACED set */
+```
+
+**Return values**:
+
+| Result             | Meaning                                       |
+|:-------------------|:----------------------------------------------|
+| `>= 0`             | PID of the new child process                  |
+| `-M4K_EACCES`      | Permission denied on executable               |
+| `-M4K_ENOENT`      | Executable not found                          |
+| `-M4K_ENOMEM`      | Insufficient memory for new process           |
+| `-M4K_EEXEC`       | Executable format invalid or corrupted        |
+| `-M4K_EMFILE`      | Too many processes (system limit)             |
+
+#### 4.3.2 `m4k_fork_status` — Selective State Inheritance
+
+`m4k_fork_status` creates a new process that is a **clone of the
+caller**, but inherits **only** the explicitly requested state tags.
+This replaces the all-or-nothing POSIX `fork()` with a composable
+"genetic filter."
+
+```c
+pid_t m4k_fork_status(uint64_t inherit_mask, uint32_t flags);
+```
+
+**Arguments**:
+
+| Argument       | Description                                                   |
+|:---------------|:--------------------------------------------------------------|
+| `inherit_mask` | Bitmask of state flags the child inherits from the parent     |
+| `flags`        | `RFPROC` plus optional `RF*` modifiers (see below)            |
+
+**Flag Modifiers (`flags`)**:
+
+```c
+#define RFPROC      0x0001  /* Create new process (mandatory for fork) */
+#define RFFDG       0x0002  /* Copy file descriptor table (else shared) */
+#define RFNAMEG     0x0004  /* Copy namespace (else shared)          */
+#define RFENVG      0x0008  /* Copy environment (else shared)        */
+#define RFMEM       0x0010  /* Share memory address space (threads)  */
+#define RFNOWAIT    0x0020  /* Daemon mode — child never becomes zombie */
+```
+
+**Validations**:
+
+| Inherit Mask Violation                  | Error           |
+|:----------------------------------------|:----------------|
+| Inheriting `M4K_ZOMBIE`                 | `-M4K_EINVAL`   |
+| Inheriting `M4K_IDLE`                   | `-M4K_EINVAL`   |
+| Inheriting reserved bits                | `-M4K_EINVAL`   |
+| Calling without `RFPROC`                | `-M4K_EINVAL`   |
+| `RFNAMEG` set by unprivileged caller    | `-M4K_EPERM`    |
+
+---
+
+### 4.4 Process Namespaces (Isolation & Views)
+
+#### 4.4.1 Concept
+
+Every process carries a `struct m4k_namespace` that defines its
+**private view** of the filesystem. Namespaces enable:
+
+- Per-process mount tables (e.g., private `/tmp`, custom `/bin`).
+- Redirecting `/dev/cons` to a pipe or window handle.
+- Sandboxed execution without VFS-level chroot.
+
+#### 4.4.2 Namespace Structure
+
+```c
+struct m4k_namespace_entry {
+    char mnt_path[256];          /* Mount point (e.g., "/tmp") */
+    char target_path[256];       /* Backing directory or device */
+    uint32_t mnt_flags;          /* Mount flags (see below)    */
+};
+
+struct m4k_namespace {
+    struct m4k_namespace_entry entries[16];  /* Per-process mount table */
+    uint32_t entry_count;
+};
+```
+
+**Mount flags**:
+
+```c
+#define M4K_MNT_RDONLY      0x0001  /* Read-only bind */
+#define M4K_MNT_NOSUID      0x0002  /* Ignore setuid/setgid */
+#define M4K_MNT_PRIVATE     0x0004  /* Not propagated to children */
+#define M4K_MNT_BIND        0x0008  /* Bind-mount an existing path */
+```
+
+#### 4.4.3 Namespace Resolution Order
+
+When the VFS resolves a path, it follows this priority:
+
+1. If the path matches a mount point in the **calling process's**
+   `ns_mount_table`, redirect to `target_path`.
+2. If no match, consult the **global VFS root** (the M4KK1 FHS tree).
+
+This means a process can shadow any path in the global tree without
+affecting sibling processes.
+
+#### 4.4.4 Setting Namespace Entries
+
+```c
+int m4k_setns(const char *path, const char *target, uint32_t flags);
+```
+
+| Argument | Description                                     |
+|:---------|:------------------------------------------------|
+| `path`   | Mount point in the calling process's view       |
+| `target` | Existing global path to bind                     |
+| `flags`  | `M4K_MNT_*` flags                               |
+
+**Security rule**: Creating a **more isolated** namespace entry
+(e.g., pointing `/tmp` to a process-specific directory) is allowed
+for any process. Reducing isolation (e.g., sharing the parent's
+namespace without copying) requires `CAP_SYS_ADMIN`.
+
+---
+
+### 4.5 The `/sys/proc` Filesystem Interface
+
+#### 4.5.1 Mount Point
+
+The process filesystem is mounted at `/sys/proc`. It is a
+kernel-generated pseudo-filesystem (no persistent backing store).
+
+#### 4.5.2 Directory Structure
+
+```
+/sys/proc/
+├── <PID>/
+│   ├── status      -- Human-readable state tags and metadata
+│   ├── cmdline     -- Null-separated command-line arguments
+│   ├── environ     -- Null-separated environment variables
+│   ├── cwd         -- Symlink to current working directory
+│   ├── ns/         -- Namespace mount entries for this process
+│   └── ctl         -- Write-only control file (see §4.5.4)
+```
+
+#### 4.5.3 Per-File Specification
+
+##### `status`
+
+Example content:
+
+```
+PID: 42
+PPID: 1
+UID: 1000
+GID: 1000
+State: [SCHED_SLEEPING, WAIT_PIPE]
+Memory: 4096 KB (heap) + 64 KB (stack)
+User: alice
+CMD: sead 's/foo/bar/' input.txt
+```
+
+##### `cmdline`
+
+Null-separated argument vector, identical to the `argv` provided at
+spawn time.
+
+##### `environ`
+
+Null-separated environment strings (`KEY=VALUE\0KEY=VALUE\0`).
+
+##### `cwd`
+
+A symbolic link pointing to the process's current working directory
+(as resolved through its namespace). Reading the symlink returns the
+absolute path.
+
+##### `ns/`
+
+A directory listing namespace mount entries for the process, one file
+per active mount. Each file contains the target path and flags:
+
+```
+/tmp  ->  /home/user/.cache/m4kk1/tmp.42  (PRIVATE)
+/bin  ->  /sandbox/bin                    (RDONLY, PRIVATE, BIND)
+```
+
+##### `ctl` (Control File)
+
+The `ctl` file accepts **write-only** commands. Each command is a
+single line. Multiple commands may be written in a single write call
+by separating them with newlines.
+
+**Supported commands**:
+
+| Command                           | Description                                    |
+|:----------------------------------|:-----------------------------------------------|
+| `kill <signal>`                   | Send signal (e.g., `kill 9`)                   |
+| `suspend`                         | Set `M4K_STOPPED`, clear `SCHED_READY`         |
+| `resume`                          | Clear `M4K_STOPPED`, set `SCHED_READY`         |
+| `niceness <value>`                | Set scheduling priority                        |
+| `chroot <path>`                   | Change filesystem root for this process        |
+| `chdir <path>`                    | Change current working directory               |
+| `setenv <KEY>=<VALUE>`            | Set or update environment variable             |
+| `unsetenv <KEY>`                  | Remove environment variable                    |
+| `state +<TAG>`                    | Add a state tag (e.g., `+WAIT_TIMER`)          |
+| `state -<TAG>`                    | Remove a state tag                             |
+| `state =<TAG>`                    | Clear all tags, set only this one              |
+
+**Examples**:
+
+```bash
+# Kill process 1234
+echo "kill 9" > /sys/proc/1234/ctl
+
+# Suspend a runaway process
+echo "suspend" > /sys/proc/1234/ctl
+
+# Force a process into traced state
+echo "state +TRACED" > /sys/proc/1234/ctl
+```
+
+**Error responses**: Writes to `ctl` return the number of bytes
+written on success, or `-M4K_EINVAL` / `-M4K_EPERM` on error for
+the **first** failing command. The kernel processes commands
+sequentially and stops at the first error.
+
+#### 4.5.4 Permissions
+
+| File    | Read | Write | Notes                                      |
+|:--------|:-----|:------|:-------------------------------------------|
+| status  | any  | —     | All processes visible (no hiding)          |
+| cmdline | any  | —     |                                             |
+| environ | any  | —     |                                             |
+| cwd     | any  | —     | Symlink; target readable by all             |
+| ns/     | any  | —     |                                             |
+| ctl     | —    | owner | Only the process owner (or root) may write  |
+
+**Rationale**: Process visibility is wide-open by design to simplify
+diagnosis and monitoring. A future capability system may restrict
+visibility, but the default 4P1 model favors transparency.
+
+---
+
+### 4.6 Process Control & Signals (Minimalist)
+
+#### 4.6.1 Signals Model
+
+M4KK1 defines a minimal signal set. Unlike POSIX, signals are **not**
+the primary inter-process communication mechanism; they are reserved
+for process control (termination, stop, resume, trace).
+
+#### 4.6.2 Signal Definitions
+
+```c
+#define M4K_SIGABRT     1   /* Abort — abnormal termination       */
+#define M4K_SIGKILL     2   /* Kill — immediate termination       */
+#define M4K_SIGTERM     3   /* Term — graceful termination        */
+#define M4K_SIGSTOP     4   /* Stop — suspend execution           */
+#define M4K_SIGCONT     5   /* Continue — resume execution        */
+#define M4K_SIGTRAP     6   /* Trap — debugger / trace event      */
+#define M4K_SIGCHLD     7   /* Child — child exited or stopped    */
+#define M4K_SIGPIPE     8   /* Pipe — write to broken pipe        */
+#define M4K_SIGUSR1     9   /* User-defined 1                     */
+#define M4K_SIGUSR2     10  /* User-defined 2                     */
+```
+
+#### 4.6.3 Signal Delivery
+
+Signals are **not** queued. If a signal of a given number is already
+pending for a process, a subsequent `m4k_kill` with the same number
+has no effect. Signals are delivered at the next scheduler timeslice
+or immediately if the target is in `SCHED_SLEEPING` (the kernel wakes
+it).
+
+| Signal    | Default Action              | Maskable?  | Notes                       |
+|:----------|:----------------------------|:-----------|:----------------------------|
+| SIGABRT   | Terminate + core-like dump  | No         |                             |
+| SIGKILL   | Terminate immediately       | No         | PID 1 immune                |
+| SIGTERM   | Terminate gracefully        | Yes        | Process may clean up        |
+| SIGSTOP   | Suspend (set `STOPPED`)     | No         |                             |
+| SIGCONT   | Resume (clear `STOPPED`)    | No         |                             |
+| SIGTRAP   | Enter traced state          | No         | Set `TRACED`, wake tracer   |
+| SIGCHLD   | Ignored by default          | Yes        | Sent to parent on child exit|
+| SIGPIPE   | Terminate                   | Yes        |                             |
+| SIGUSR1   | Ignored by default          | Yes        |                             |
+| SIGUSR2   | Ignored by default          | Yes        |                             |
+
+#### 4.6.4 Signal Wrapper: `m4k_kill`
+
+```c
+int m4k_kill(pid_t pid, int sig);
+```
+
+The `m4k_kill` syscall sends signal `sig` to process `pid`. It returns
+0 on success or one of:
+
+| Error           | Condition                                        |
+|:----------------|:-------------------------------------------------|
+| `-M4K_EINVAL`   | `sig` is not a valid signal number               |
+| `-M4K_ESRCH`    | No process with `pid` exists                     |
+| `-M4K_EPERM`    | Caller does not have permission to signal `pid`  |
+| `-M4K_EBUSY`    | Signal already pending for this process          |
+
+#### 4.6.5 Exit and Wait
+
+```c
+void m4k_exit(int status) __attribute__((noreturn));
+pid_t m4k_waitpid(pid_t pid, int *status, int options);
+```
+
+**`m4k_exit`** terminates the calling process:
+
+1. All open file descriptors are closed.
+2. Children are re-parented to PID 1.
+3. The process state is set to `[ZOMBIE]` (unless `RFNOWAIT` was set).
+4. `SIGCHLD` is sent to the parent.
+5. The scheduler is invoked (the process is never run again).
+
+**`m4k_waitpid`** collects exit status:
+
+| `options` flag     | Behavior                                     |
+|:-------------------|:---------------------------------------------|
+| `0`                | Block until `pid` exits                      |
+| `M4K_WNOHANG`      | Return immediately if `pid` has not exited   |
+| `M4K_WUNTRACED`    | Also return for stopped processes            |
+| `M4K_WCONTINUED`   | Also return for resumed processes            |
+
+| `pid` value    | Targets                                       |
+|:---------------|:----------------------------------------------|
+| `> 0`          | Specific PID                                  |
+| `-1`           | Any child                                     |
+| `0`            | Any child in the same process group           |
+| `< -1`         | Any child in the process group `-pid`         |
+
+Return values: PID of the child on success, 0 with `M4K_WNOHANG` if no
+child has exited, or `-M4K_ECHILD` if no matching children exist.
+
+#### 4.6.6 Status Encoding
+
+The `status` integer returned by `m4k_waitpid` encodes exit information:
+
+```c
+#define M4K_WEXITSTATUS(s)  (((s) >> 8) & 0xFF)   /* Exit code         */
+#define M4K_WTERMSIG(s)     ((s) & 0x7F)           /* Terminating signal */
+#define M4K_WCOREDUMP(s)    ((s) & 0x80)           /* Core dumped?      */
+#define M4K_WIFEXITED(s)    (M4K_WTERMSIG(s) == 0) /* Normal exit?      */
+#define M4K_WIFSIGNALED(s)  (M4K_WTERMSIG(s) > 0)  /* Killed by signal? */
+#define M4K_WIFSTOPPED(s)   ((s) & 0x10000)        /* Stopped?          */
+#define M4K_WSTOPSIG(s)     (((s) >> 16) & 0xFF)   /* Stop signal       */
+```
+
+---
+
+### 4.7 System Call Reference
+
+#### 4.7.1 Process Management Syscalls
+
+| Syscall                                                          | Number             | Description                                           |
+|:-----------------------------------------------------------------|:-------------------|:------------------------------------------------------|
+| `m4k_exit(int status)`                                           | `M4K_SYS_EXIT`     | Terminate current process                             |
+| `m4k_spawn(const char *path, char *const argv[], char *const envp[], uint32_t flags)` | `M4K_SYS_SPAWN`    | Load and execute a new program                        |
+| `m4k_fork_status(uint64_t inherit_mask, uint32_t flags)`         | `M4K_SYS_FORK_ST`  | Clone process with selective state inheritance        |
+| `m4k_waitpid(pid_t pid, int *status, int options)`               | `M4K_SYS_WAIT`     | Wait for process state change                         |
+| `m4k_kill(pid_t pid, int sig)`                                   | `M4K_SYS_KILL`     | Send signal to process                                |
+| `m4k_getpid(void)`                                               | `M4K_SYS_GETPID`   | Return current PID                                    |
+| `m4k_getppid(void)`                                              | `M4K_SYS_GETPPID`  | Return parent PID                                     |
+| `m4k_setns(const char *path, const char *target, uint32_t flags)`| `M4K_SYS_SETNS`    | Add namespace mount entry for calling process         |
+
+#### 4.7.2 Syscall Number Allocation
+
+```c
+#define M4K_SYS_EXIT        0x4D000001
+#define M4K_SYS_SPAWN       0x4D000002
+#define M4K_SYS_WAIT        0x4D000003
+#define M4K_SYS_GETPID      0x4D000004
+#define M4K_SYS_KILL        0x4D000005
+#define M4K_SYS_GETPPID     0x4D000006
+#define M4K_SYS_FORK_ST     0x4D000007
+#define M4K_SYS_SETNS       0x4D000008
+```
+
+---
+
+## 5. Libraries
+
+### 5.1 Standard Library (`libm4k.a`)
+
+M4KK1 provides a minimal C library for user-space programs. It is
+**not** POSIX-compliant; it exposes only the native M4KK1 ABI.
+
+**Headers**:
+- `<m4k/syscall.h>`: System call wrappers (`m4k_*`).
+- `<m4k/stdio.h>`: `musr_printf`, `musr_scanf`, `musr_getchar`, `musr_putchar`.
+- `<m4k/stdlib.h>`: `musr_malloc`, `musr_free`, `musr_atoi`, `musr_rand`.
+- `<m4k/string.h>`: `musr_strlen`, `musr_strcpy`, `musr_strcmp`, `musr_memcpy`.
+- `<m4k/unistd.h>`: `musr_getpid`, `musr_getuid`, `musr_setuid`, etc.
+- `<m4k/pwd.h>`: `musr_getpwnam`, `musr_getpwuid`, `musr_update_passwd`.
+- `<m4k/grp.h>`: `musr_getgrnam`, `musr_in_group`.
+
+### 5.2 Library Naming Convention
+
+All user-space library functions carry the `musr_` prefix (defined in
+the 4P1 Coding Style Specification). The system call wrappers use the
+`m4k_` prefix reserved for the ABI layer.
+
+---
+
+## 6. User & Identity Model (4P1 Identity Model)
+
+M4KK1 adopts a **"data/configuration separation"** architecture,
+replacing the cluttered Linux `/etc/passwd` + `/home` model with a
+clean, service-aware identity system.
+
+### 6.1 Design Philosophy
+
+1. **Data (heavy)**: User private files are stored under `/export`.
+2. **Configuration (light)**: System-wide and user-specific configs
+   are stored in `/export/cfg`, separate from data.
+3. **Service isolation**: System services (DNS, Web, Mail) run under
+   unprivileged system accounts stored in `/export/srv`, isolated
+   from human users.
+
+### 6.2 User Identifiers (UID, GID)
+
+The kernel tracks **only numeric UID/GID** values. Username-to-UID
+mapping is performed entirely in user-space by `libm4k`.
+
+| Type         | Range          | Purpose                       |
+|:-------------|:---------------|:------------------------------|
+| `uid_t`      | `uint32_t`     | User ID (0-4294967295)        |
+| `gid_t`      | `uint32_t`     | Group ID (0-4294967295)       |
+
+**Reserved UIDs**:
+
+| UID  | Name      | Purpose                        |
+|:-----|:----------|:-------------------------------|
+| 0    | `root`    | Superuser (unrestricted)       |
+| 1    | `daemon`  | System daemon base             |
+| 2    | `operator`| System operations (backup)     |
+| 53   | `bind`    | DNS service (if used)          |
+| 80   | `www`     | Web server service             |
+| 200  | `news`    | News service                   |
+| 1000 | `alice`   | First human user (demo)        |
+| 65534| `nobody`  | Unprivileged catch-all         |
+
+### 6.3 Directory Structure & Auto-Mounting
+
+#### 6.3.1 Home Directory Mapping
+
+**Rule**: `/home` is a **dynamic mount point**, not physical storage.
+Physical storage lives under `/export`.
+
+| User Type          | Physical Path                     | Mounted at       |
+|:-------------------|:----------------------------------|:-----------------|
+| Superuser (root)   | `/export/root`                    | `/root`          |
+| Human user         | `/export/home/{username}`         | `/home/{username}`|
+| Service user       | `/export/srv/{service_name}`      | Not mounted      |
+
+**Implementation**: The login manager (`login`) calls `m4k_mount("/export/home/alice", "/home/alice", M4K_MNT_BIND)` after authentication. The mount is automatically unmounted on logout (via `pam_session` hook).
+
+#### 6.3.2 System Configuration Directory (`/export/cfg`)
+
+- **Location**: `/export/cfg/`
+- **Purpose**: Replaces `/etc`. All global configuration files reside here.
+- **Subdirectories**:
+  - `/export/cfg/system/` — Hostname, network, boot scripts.
+  - `/export/cfg/users/` — User-specific configuration (e.g., `.vimrc` symlinks).
+  - `/export/cfg/services/` — Service configs (e.g., `httpd.conf`).
+
+**Permissions**: Only `root` and members of the `prime` group may write
+to `/export/cfg/`.
+
+#### 6.3.3 PATH Storage (`/export/PATH`)
+
+- **Principle**: `PATH` is managed centrally by the system, not via
+  shell scripts.
+- **Structure**:
+  ```
+  /export/PATH/
+  ├── root          # Content: /bin:/sbin:/usr/bin:/usr/sbin
+  ├── alice         # Content: /home/alice/bin:/usr/local/bin:/bin
+  └── default       # Fallback path (for users without custom file)
+  ```
+- **Behavior**: On login, the Shell reads `/export/PATH/$USER` and sets
+  the `PATH` environment variable accordingly.
+
+### 6.4 System Accounts & Service Users
+
+System accounts are used by **daemons**. Their home directories are
+under `/export/srv` and their default shell is `/sbin/nologin`
+(no interactive login).
+
+**Standard System Users (predefined by 4P1)**:
+
+| Username  | UID  | Purpose                     | Home Directory              |
+|:----------|:-----|:----------------------------|:----------------------------|
+| `daemon`  | 1    | Low-level system services   | `/export/srv/daemon`        |
+| `operator`| 2    | System maintenance (backup) | `/export/srv/operator`      |
+| `bind`    | 53   | DNS service                 | `/export/srv/bind`          |
+| `www`     | 80   | Web server                  | `/export/srv/www`           |
+| `news`    | 200  | News services               | `/export/srv/news`          |
+| `nobody`  | 65534| Unprivileged catch-all      | `/export/srv/nobody`        |
+
+**Security rule**: `usermod` must NOT grant login shells to system
+accounts unless explicitly overridden with `-s /bin/m4sh`.
+
+### 6.5 User Database (`/export/cfg/passwd.db`)
+
+**Format**: Plain text, one user per line, colon-separated (7 fields):
+
+```
+username:uid:gid:home:shell:gecos:password_hash
+```
+
+**Example**:
+```
+root:0:0:/root:/bin/m4sh:System Administrator:$2a$10$...
+alice:1001:1001:/home/alice:/bin/m4sh:Alice User:
+nobody:65534:65534:/export/srv/nobody:/sbin/nologin:Unprivileged:
+```
+
+**Library functions** (`libm4k/musr_pwd.c`):
+
+| Function                         | Description                                      |
+|:---------------------------------|:-------------------------------------------------|
+| `musr_getpwnam(const char *name)`| Look up entry by username                        |
+| `musr_getpwuid(uid_t uid)`       | Look up entry by UID                             |
+| `musr_update_passwd(entry)`      | Write entry back atomically (temp file + rename) |
+| `musr_validate_password(entry, passwd)` | Verify password against hash              |
+
+**Concurrency**: `usermod` and `groupmod` use `flock` on the database
+file to prevent simultaneous writes.
+
+### 6.6 Group Database (`/export/cfg/groups.db`)
+
+**Format**: Plain text, one group per line, colon-separated (3 fields):
+
+```
+groupname:gid:user1,user2,user3
+```
+
+**Example**:
+```
+prime:1001:alice,root
+staff:1002:bob,charlie
+```
+
+**Library functions** (`libm4k/musr_grp.c`):
+
+| Function                         | Description                                      |
+|:---------------------------------|:-------------------------------------------------|
+| `musr_getgrnam(const char *name)`| Look up group by name                            |
+| `musr_getgrgid(gid_t gid)`       | Look up group by GID                             |
+| `musr_in_group(uid_t uid, const char *group)` | Check if user is in group           |
+| `musr_update_group(entry)`       | Write group entry back atomically                |
+
+### 6.7 Password Storage & Hashing
+
+- **Algorithm**: `bcrypt` (cost factor 10, or hardware-adjusted).
+- **Format**: `$2a$10$...` in the `password_hash` field.
+- **Fallback**: If `crypt` is unavailable, SHA-256 with 16-byte salt
+  is acceptable (`$sha256$...`).
+- **Security**: `/export/cfg/passwd.db` must be `chmod 600` (read/write
+  only by root and `prime` group members).
+
+### 6.8 User Management Tools
+
+All tools reside in `/bin` or `/usr/sbin` and follow the 4P1 command-line
+standard (short `-x`, long `--word`, no flag stacking).
+
+#### 6.8.1 `usermod` — Modify User Account
+
+**Syntax**: `usermod [options] <username>`
+
+| Option | Long        | Description                                      |
+|:-------|:------------|:-------------------------------------------------|
+| `-a`   | `--add`     | Add user to supplementary group                  |
+| `-d`   | `--del`     | Remove user from group                           |
+| `-s`   | `--shell`   | Change login shell                               |
+| `-g`   | `--group`   | Set primary group                                |
+| `-L`   | `--lock`    | Lock account (prevent login)                     |
+| `-U`   | `--unlock`  | Unlock account                                   |
+| `-h`   | `--help`    | Show help                                        |
+
+**Examples**:
+```bash
+usermod -a --group prime alice   # Add alice to prime group
+usermod -s /bin/m4sh bob         # Change bob's shell
+```
+
+**Permissions**: Requires membership in the `prime` group.
+
+#### 6.8.2 `groupmod` — Modify Group
+
+**Syntax**: `groupmod [options] <groupname>`
+
+| Option | Long        | Description                                      |
+|:-------|:------------|:-------------------------------------------------|
+| `-a`   | `--add`     | Add user to group                                |
+| `-d`   | `--del`     | Remove user from group                           |
+| `-n`   | `--new`     | Rename group                                     |
+| `-h`   | `--help`    | Show help                                        |
+
+#### 6.8.3 `passwd` — Change Password
+
+**Syntax**: `passwd [username]`
+- No argument: Change current user's password.
+- With argument (requires `prime` group): Force-change another user's password.
+
+**Behavior**: Prompts for new password twice, updates the hash in
+`/export/cfg/passwd.db`.
+
+#### 6.8.4 `cu` — Change User
+
+**Syntax**: `cu <username>`
+
+**Function**:
+1. Immediately lock the account (set `locked` flag in `passwd.db`).
+2. Terminate all active processes owned by the user (send `SIGKILL`).
+3. Unmount `/home/<username>`.
+4. Log the action to `/var/log/auth.log`.
+5. Login to another user.
+
+**Permissions**: Requires `prime` group membership.
+
+**Restore**: Use `usermod -U <username>` to unlock.
+
+#### 6.8.5 `who` — Show Active Sessions
+
+**Syntax**: `who`
+
+**Output**:
+```
+USER     TTY     LOGIN_TIME          FROM
+alice    tty1    2026-07-17 14:23    local
+root     ttyS0   2026-07-17 09:15    serial
+```
+
+**Data source**: Reads `/sys/sessions/` (kernel-exported session info).
+
+#### 6.8.6 `userlog` — Show Login History
+
+**Syntax**: `userlog [username]`
+
+**Function**: Display `/var/log/userlog` entries.
+
+**Output**:
+```
+2026-07-17 14:23:45  alice   login   success  tty1
+2026-07-17 14:30:12  alice   logout  normal   tty1
+2026-07-17 09:15:03  root    login   success  ttyS0
+```
+
+### 6.9 Privileged Execution: `quell` & `prime` Group
+
+M4KK1 **does not** include `sudo`. Privilege escalation is handled by
+`quell`, based on **group membership** (`prime` group) instead of
+complex `/etc/sudoers` files.
+
+#### 6.9.1 `quell` Principle
+
+- **Command**: `quell <command> [args...]`
+- **Mechanism**: Check if the caller belongs to the `prime` group.
+- **If yes**: Execute `<command>` with `root` privileges (`euid=0`).
+- **If no**: Return `M4K_EPERM` and log to `/var/log/auth.log`.
+
+#### 6.9.2 The `prime` Group
+
+The `prime` group (GID `1001`) is the **single entry point** for all
+privileged operations. Users in this group can execute **any** command
+via `quell` without a password.
+
+**Operations allowed via `quell`** (no extra checks):
+- Modify `/export/cfg/*` (including user accounts, service configs).
+- Execute `mount` / `umount`.
+- Execute `usermod`, `groupmod`, `passwd`.
+- Execute `kill`, `nice`.
+
+**Why `quell` is superior to `sudo`**:
+- Configuration = group membership. No complex syntax.
+- Auditing: Just monitor `quell` invocations in `/var/log/auth.log`.
+
+#### 6.9.3 Implementation
+
+`quell` is a SUID-root binary (`chmod u+s /bin/quell`). It:
+
+1. Reads the real UID of the caller (`getuid()`).
+2. Looks up the user's group list (via `/sys/proc/self/status` or
+   `m4k_getgroups` syscall).
+3. If `prime` is in the list: `execvp(<command>, args)` with `euid=0`.
+4. Otherwise: print `quell: permission denied` and exit with code 1.
+
+### 6.10 Resource Limits: `login.conf` (BSD-style)
+
+M4KK1 adopts **login classes** (BSD style) for resource limiting,
+instead of `ulimit` scripts.
+
+#### 6.10.1 Configuration File
+
+- **Path**: `/export/login.conf`
+- **Format**:
+  ```
+  <class_name>:\
+      :<key>=<value>:\
+      :<key>=<value>:
+  ```
+
+#### 6.10.2 Standard Classes
+
+```conf
+# Default (unclassified users)
+default:\
+    :cputime=infinity:\
+    :datasize=256M:\
+    :stacksize=8M:\
+    :maxproc=100:\
+    :openfiles=64:
+
+# Privileged staff (relaxed)
+staff:\
+    :cputime=infinity:\
+    :datasize=1G:\
+    :maxproc=512:\
+    :openfiles=1024:
+
+# Daemons (strict, to prevent DoS)
+daemon:\
+    :cputime=600:\
+    :datasize=64M:\
+    :maxproc=20:\
+    :openfiles=32:
+```
+
+#### 6.10.3 Resource Keys (4P1 subset)
+
+| Key           | Description                         | Example         |
+|:--------------|:------------------------------------|:----------------|
+| `cputime`     | CPU time in seconds                 | `600`           |
+| `datasize`    | Data segment + heap                 | `256M`          |
+| `stacksize`   | Stack size                          | `8M`            |
+| `maxproc`     | Maximum number of processes         | `100`           |
+| `openfiles`   | Maximum open files                  | `64`            |
+| `memorylocked`| Locked memory limit                 | `64M`           |
+
+**Implementation**: The `login` program reads `/export/login.conf`,
+matches the user's class (or `default`), and calls `m4k_setrlimit()`
+before spawning the user's shell.
+
+### 6.11 Login Session Management
+
+#### 6.11.1 Login Flow
+
+1. `init` spawns `login` on each active console (`tty1`, `ttyS0`, etc.).
+2. `login` prompts for username and password.
+3. Validates against `/export/cfg/passwd.db` (using `musr_validate_password`).
+4. On success:
+   - Calls `m4k_setuid(user_uid)` to drop privileges.
+   - Calls `m4k_chdir(home_dir)`.
+   - Binds `/export/home/$USER` to `/home/$USER` (for human users).
+   - Sets `PATH` from `/export/PATH/$USER`.
+   - Spawns the user's shell (`/bin/m4sh`).
+5. On failure:
+   - Increments failure count.
+   - Logs to `/var/log/userlog`.
+   - Returns to prompt.
+
+#### 6.11.2 Sessions and `/sys/sessions`
+
+The kernel maintains a session list for each active login session.
+Sessions are exposed under `/sys/sessions/<TTY>/`:
+
+```
+/sys/sessions/tty1/
+├── uid          # 1001
+├── pid          # 456
+├── login_time   # 1721124309
+└── username     # alice
+```
+
+These are used by `who`, `userlog`, and `cu`.
+
+### 6.12 User-Related System Calls
+
+#### 6.12.1 UID/GID Syscalls
+
+| Syscall                              | Number          | Description                               |
+|:-------------------------------------|:----------------|:------------------------------------------|
+| `m4k_getuid(void)`                   | `0x4D000020`    | Return real UID                           |
+| `m4k_geteuid(void)`                  | `0x4D000021`    | Return effective UID                      |
+| `m4k_getgid(void)`                   | `0x4D000022`    | Return real GID                           |
+| `m4k_getegid(void)`                  | `0x4D000023`    | Return effective GID                      |
+| `m4k_setuid(uid_t uid)`              | `0x4D000024`    | Set both RUID and EUID (restricted)       |
+| `m4k_setgid(gid_t gid)`              | `0x4D000025`    | Set both RGID and EGID (restricted)       |
+| `m4k_getgroups(int size, gid_t *list)`| `0x4D000026`    | Get supplementary group list              |
+| `m4k_setgroups(int size, gid_t *list)`| `0x4D000027`    | Set supplementary group list (root-only)  |
+
+#### 6.12.2 Permission Control Syscalls
+
+| Syscall                              | Number          | Description                               |
+|:-------------------------------------|:----------------|:------------------------------------------|
+| `m4k_chmod(const char *path, mode_t mode)` | `0x4D000028` | Change file permissions                   |
+| `m4k_chown(const char *path, uid_t uid, gid_t gid)` | `0x4D000029` | Change file owner                   |
+| `m4k_access(const char *path, int mode)` | `0x4D00002A` | Check file access permissions              |
+
+#### 6.12.3 Resource Limit Syscalls
+
+| Syscall                              | Number          | Description                               |
+|:-------------------------------------|:----------------|:------------------------------------------|
+| `m4k_setrlimit(int resource, const struct m4k_rlimit *rlp)` | `0x4D000030` | Set resource limit               |
+| `m4k_getrlimit(int resource, struct m4k_rlimit *rlp)` | `0x4D000031` | Get resource limit               |
+
+#### 6.12.4 Setuid Semantics
+
+| Caller EUID | Target UID | Behavior                                      |
+|:------------|:-----------|:----------------------------------------------|
+| `0` (root)  | Any        | Sets both RUID and EUID to the target.        |
+| Non-root    | Current RUID or EUID | Sets EUID only (drops privileges temporarily). |
+| Non-root    | Other      | Returns `-M4K_EPERM` (cannot escalate).       |
+
+**Rule**: The kernel **never** allows unprivileged processes to raise
+their privileges. Once dropped, privileges cannot be regained unless
+the process was started as root.
+
+---
+
+## 7. Error Codes Reference
+
+All error codes are negative values. The absolute value is defined
+below.
+
+| Error Code       | Value         | Description                              |
+|:-----------------|:--------------|:-----------------------------------------|
+| `M4K_EPERM`      | `0x4D000001`  | Permission denied                        |
+| `M4K_ENOENT`     | `0x4D000002`  | No such file or directory                |
+| `M4K_EINTR`      | `0x4D000003`  | Interrupted system call                  |
+| `M4K_EIO`        | `0x4D000004`  | I/O error                                |
+| `M4K_ENOMEM`     | `0x4D000005`  | Out of memory                            |
+| `M4K_EACCES`     | `0x4D000006`  | Access denied                            |
+| `M4K_EFAULT`     | `0x4D000007`  | Bad address                              |
+| `M4K_EBUSY`      | `0x4D000008`  | Device or resource busy                  |
+| `M4K_EEXIST`     | `0x4D000009`  | File already exists                      |
+| `M4K_ENODEV`     | `0x4D00000A`  | No such device                           |
+| `M4K_ENOTDIR`    | `0x4D00000B`  | Not a directory                          |
+| `M4K_EISDIR`     | `0x4D00000C`  | Is a directory                           |
+| `M4K_EINVAL`     | `0x4D00000D`  | Invalid argument                         |
+| `M4K_ENFILE`     | `0x4D00000E`  | Too many open files in system            |
+| `M4K_EMFILE`     | `0x4D00000F`  | Too many open files for this process     |
+| `M4K_ENOSPC`     | `0x4D000010`  | No space left on device                  |
+| `M4K_ESPIPE`     | `0x4D000011`  | Illegal seek                             |
+| `M4K_EROFS`      | `0x4D000012`  | Read-only filesystem                     |
+| `M4K_ETIMEOUT`   | `0x4D000013`  | Operation timed out                      |
+| `M4K_ECHILD`     | `0x4D000014`  | No child process                         |
+| `M4K_ESRCH`      | `0x4D000015`  | No such process                          |
+| `M4K_EEXEC`      | `0x4D000016`  | Exec format error                        |
+| `M4K_EMFILEPROC` | `0x4D000017`  | Too many processes                       |
+
+---
+
+## 8. Appendices & Examples
+
+### A. Shell Examples
+
+#### A.1 Creating an Isolated Sandbox Shell
+
+```bash
+# Spawn a new M4SH with a fresh namespace and FD table
+m4k_spawn /bin/m4sh --isolate
+```
+
+#### A.2 Detaching a Debugger (Clearing TRACED)
+
+```c
+// Clone current process, but strip the TRACED flag
+pid_t child = m4k_fork_status(~M4K_TRACED & 0xFFFFFFFF,
+                               RFPROC | RFFDG | RFMEM);
+```
+
+#### A.3 Suspending a Runaway Process via /sys
+
+```bash
+echo "suspend" > /sys/proc/1234/ctl
+```
+
+#### A.4 Diagnosing a Blocked Process
+
+```bash
+cat /sys/proc/1234/status
+# Output: State: [SCHED_SLEEPING, WAIT_PIPE]
+```
+
+#### A.5 Creating a Thread (Shared Address Space)
+
+```c
+pid_t tid = m4k_fork_status(
+    0,                          // No special state inherited
+    RFPROC | RFMEM | RFFDG      // Thread: shared mem + fds
+);
+```
+
+#### A.6 Dynamic Namespace — Private /tmp
+
+```c
+// Point our own /tmp to a private directory
+m4k_setns("/tmp", "/home/user/.cache/m4kk1/private_tmp",
+          M4K_MNT_PRIVATE | M4K_MNT_BIND);
+```
+
+#### A.7 Sending Signals via ctl
+
+```bash
+echo "kill 9" > /sys/proc/42/ctl
+echo "state +WAIT_PIPE" > /sys/proc/42/ctl
+echo "niceness 10" > /sys/proc/42/ctl
+```
+
+### B. State Tag Quick Reference
+
+| Tag              | Mask                    | Meaning                           |
+|:-----------------|:------------------------|:----------------------------------|
+| `SCHED_READY`    | `0x00000001`            | Runnable, awaiting CPU            |
+| `SCHED_RUNNING`  | `0x00000002`            | Currently executing               |
+| `SCHED_SLEEPING` | `0x00000004`            | Blocked, not runnable             |
+| `WAIT_FS`        | `0x00000100`            | Blocked on filesystem I/O         |
+| `WAIT_PIPE`      | `0x00000200`            | Blocked on pipe                   |
+| `WAIT_TIMER`     | `0x00000400`            | Blocked on timer                  |
+| `WAIT_IPC`       | `0x00000800`            | Blocked on IPC message            |
+| `WAIT_CHILD`     | `0x00001000`            | Blocked on child exit             |
+| `WAIT_LOCK`      | `0x00002000`            | Blocked on mutex/spinlock         |
+| `WAIT_TERMINAL`  | `0x00004000`            | Blocked on terminal input         |
+| `TRACED`         | `0x00010000`            | Under debugger inspection         |
+| `STOPPED`        | `0x00020000`            | Suspended (suspend signal)        |
+| `ZOMBIE`         | `0x01000000`            | Exited, waiting for reaper        |
+| `IDLE`           | `0x02000000`            | Kernel idle process               |
+
+### C. User Management Tool Command Summary
+
+| Command      | Syntax                                | Description                         |
+|:-------------|:--------------------------------------|:------------------------------------|
+| `usermod`    | `usermod [-a|-d] -g GNAME USER`       | Modify user account                 |
+| `groupmod`   | `groupmod [-a|-d] USER GNAME`         | Modify group                        |
+| `passwd`     | `passwd [USER]`                       | Change password                     |
+| `cu`         | `cu USER`                             | Cancel user login                   |
+| `who`        | `who`                                 | Show active sessions                |
+| `userlog`    | `userlog [USER]`                      | Show login history                  |
+| `quell`      | `quell CMD [ARGS...]`                 | Execute privileged command          |
+
+### D. Revision History
+
+| Version | Date       | Changes                                                     |
+|:--------|:-----------|:------------------------------------------------------------|
+| v1.0    | 2026-06-01 | Initial 4P1 standard (memory management, basic syscalls)    |
+| v1.1    | 2026-07-16 | Added Chapter 4: Process Management                         |
+| v1.2    | 2026-07-17 | Added Chapter 6: User & Identity Model; expanded Chapter 3  |
+|         |            | (Memory Management details) and Chapter 4 (waiting reasons) |
+
+---
+
+*End of 4P1 Standard Specification v1.2*=== docs/architecture.md ===
+# 系统架构
+
+## 设计哲学
+
+M4KK1 采用 **宏内核 (Macro-kernel)** 设计。所有核心子系统（进程管理、文件系统、驱动、信号）都运行在内核空间。这是为了在开发初期简化实现和调试。
+
+## 分层结构
+
+```
+┌────────────────────────────────────┐
+│        用户空间 (Ring 0)*          │
+│  ┌──────────────────────────────┐  │
+│  │  M4SH Shell                  │  │
+│  │  (init ELF, PID 1)           │  │
+│  │  • 40+ 内置命令              │  │
+│  │  • 正则引擎                  │  │
+│  │  • 单进程，静态链接          │  │
+│  └──────────┬───────────────────┘  │
+├─────────────┼──────────────────────┤
+│        系统调用层                  │
+│  ┌──────────┴───────────────────┐  │
+│  │  int 0x80 (兼容)             │  │
+│  │  int 0x4D (原生 M4KK1)      │  │
+│  └──────────┬───────────────────┘  │
+├─────────────┼──────────────────────┤
+│        内核空间                    │
+│  ┌──────────┼───────────────────┐  │
+│  │   进程管理  │  文件系统       │  │
+│  │   ┌──────┐│  ┌──────┐       │  │
+│  │   │调度器 ││  │ VFS  │       │  │
+│  │   │信号   ││  │YAFS  │       │  │
+│  │   │命名空间││  │ProcFS│       │  │
+│  │   └──────┘│  └──────┘       │  │
+│  ├──────────┼───────────────────┤  │
+│  │   内存管理  │  驱动           │  │
+│  │   ┌──────┐│  ┌──────┐       │  │
+│  │   │页分配 ││  │串口   │       │  │
+│  │   │堆管理 ││  │键盘*  │       │  │
+│  │   └──────┘│  │鼠标*  │       │  │
+│  │           │  └──────┘       │  │
+│  ├──────────┼───────────────────┤  │
+│  │   架构层 (i386)               │  │
+│  │   GDT / IDT / PIT / RTC     │  │
+│  └──────────────────────────────┘  │
+└────────────────────────────────────┘
+```
+
+> **注意：** 当前所有代码运行在 Ring 0。Ring 3 用户态隔离尚未实现。
+> \* 键盘/鼠标驱动仅存根，未实现。
+
+## 启动流程
+
+```
+GRUB (multiboot)
+  │
+  ▼
+entry.asm ─── 设置内核入口，multiboot 头
+  │
+  ▼
+kmain() ─── 内核初始化
+  ├── 1. 内存管理 ────── mkrn_memory_init()
+  ├── 2. GDT ─────────── mkrn_gdt_init()
+  ├── 3. IDT ─────────── mkrn_idt_init()
+  ├── 4. 定时器 ──────── mkrn_timer_init(1000 Hz)
+  ├── 5. 进程管理 ────── mkrn_process_init()
+  ├── 6. 系统调用 ────── mkrn_syscall_init()
+  ├── 7. 动态链接器 ──── mkrn_ll_init()
+  ├── 8. YAFS ────────── mkrn_yafs_test(), 创建 FHS
+  ├── 9. 写入 ELF ────── m4sh.elf / login.elf → /bin/
+  └── 10. 加载 init ──── mkrn_execve(init.elf)
+                        │
+                        ▼
+                  init ─── 挂载 I/O, 启动 m4sh
+                        │
+                        ▼
+                  m4sh ─── 登录提示符 → Shell
+```
+
+## 关键设计决策
+
+| 决策 | 选择 | 原因 |
+|------|------|------|
+| 内核类型 | 宏内核 | 简化初期开发 |
+| CPU 模式 | 32-bit 保护模式 | i386 目标 |
+| 内存模型 | 无 MMU，单地址空间 | 初期简化 |
+| 系统调用 ABI | `int 0x80` + `int 0x4D` | 兼容 + 原生 |
+| 文件系统 | YAFS B+Tree | COW、快照潜力 |
+| 用户空间 | 单进程静态链接 Shell | 无需动态链接器 |
+| 控制台 | 串口 COM1 | 调试方便 |
+
+## 命名空间约定 (4P1 规范)
+
+| 前缀 | 范围 | 示例 |
+|------|------|------|
+| `mkrn_` | 内核全局函数/变量 | `mkrn_timer_init()` |
+| `musr_` | 用户空间全局函数/变量 | `musr_cmd_echo()` |
+| `m4k_` | 系统调用 ABI 层 | `m4k_sc0()` |
+| 无前缀 | 文件内静态 | `tokenize_quoted()` |
+=== docs/dev/build.md ===
+# 构建系统
+
+## 构建脚本
+
+**文件:** `tools/build/build_krn.sh` (185 行)
+
+构建入口是一个 Bash 脚本，核心构建流程：
+
+```
+build_krn.sh
+  │
+  ├── 读取 VERSION
+  ├── 设置编译标志
+  │
+  ├── 编译内核 C 文件
+  │   ├── kmain.o, process.o, execve.o
+  │   ├── syscall.o, syscall_m4k.o
+  │   ├── timer.o, gdt_c.o, idt_c.o
+  │   ├── vfs.o, btree.o, yafs_*.o
+  │   ├── memory.o, console.o
+  │   ├── string.o, debug.o
+  │   └── ...
+  │
+  ├── 汇编 NASM 文件
+  │   ├── entry.o
+  │   ├── gdt_asm.o, idt_asm.o
+  │
+  ├── 构建 M4SH 用户空间 ELF
+  │   ├── 自动发现 m4sh/**/*.c
+  │   ├── 静态链接 → m4sh/m4sh.elf
+  │
+  ├── 构建 Login ELF
+  │   ├── login_standalone.c → login.elf
+  │
+  ├── 构建 Init ELF
+  │   ├── init.c → init.elf
+  │
+  ├── 生成 ELF 数据数组
+  │   ├── xxd -i → init/*_elf.c
+  │
+  ├── 编译 ELF 数据数组
+  │
+  ├── 链接内核
+  │   ├── 使用 linker.ld
+  │   ├── 输出 m4kk1.krn
+  │
+  └── 创建 ISO
+      ├── 设置 GRUB 菜单
+      └── grub-mkrescue → iso/*.iso
+```
+
+## 编译标志
+
+### 内核
+
+```bash
+CFLAGS="-Wall -Wextra -O2 -g"
+CFLAGS="$CFLAGS -ffreestanding -nostdlib -nostdinc"
+CFLAGS="$CFLAGS -m32 -mno-sse -mno-sse2 -mno-mmx"
+CFLAGS="$CFLAGS -std=gnu99 -fno-stack-protector"
+CFLAGS="$CFLAGS -fno-pic -fno-pie"
+```
+
+### 用户空间 (M4SH)
+
+```bash
+M4SH_CFLAGS="-ffreestanding -nostdlib -nostdinc"
+M4SH_CFLAGS="$M4SH_CFLAGS -m32 -mno-sse -std=gnu99"
+M4SH_CFLAGS="$M4SH_CFLAGS -fno-stack-protector -fno-pic -fno-pie"
+```
+
+## 链接脚本
+
+### 内核 (`sys/src/init/linker.ld`)
+
+```
+加载地址: 0x100000 (1 MB)
+内存布局: multiboot 头 → .text → .rodata → .data → .bss → heap (4 MB) → stack (16 KB)
+```
+
+### 用户空间 (`m4sh/m4sh.ld`)
+
+```
+加载地址: 0x800000
+标准 ELF 段: .text → .rodata → .data → .bss
+```
+
+## ISO 结构
+
+```
+/boot/grub/grub.cfg
+  └── menuentry "M4KK1" {
+        multiboot /boot/kernel/m4kk1.krn
+        boot
+      }
+/boot/kernel/m4kk1.krn
+```
+
+## Makefile (非主构建)
+
+当前 `tools/build/build_krn.sh` 是**事实上的构建入口**。项目中的 Makefile 是多架构支撑框架，尚未完全工作。
+
+```bash
+# 推荐构建方式
+bash tools/build/build_krn.sh
+```
+
+## 输出产物
+
+| 产物 | 路径 | 用途 |
+|------|------|------|
+| 内核二进制 | `m4kk1.krn` (~680 KB) | GRUB 加载 |
+| M4SH ELF | `m4sh/m4sh.elf` (~290 KB) | 嵌入内核 |
+| Login ELF | `m4sh/login/login.elf` (~15 KB) | 嵌入内核 |
+| Init ELF | `init/init.elf` (~15 KB) | 嵌入内核 |
+| ISO | `iso/m4kk1_*.iso` (~33 MB) | QEMU/物理机可引导 |
+=== docs/dev/guide.md ===
+# 开发指南
+
+## 开发环境
+
+### 必需工具
+
+| 工具 | 版本要求 | 用途 |
+|------|---------|------|
+| GCC | 支持 `-m32` | 编译 C 代码 |
+| NASM | ≥ 2.0 | 汇编入口和 GDT/IDT |
+| GNU ld | 支持 `-m elf_i386` | 链接内核和 ELF |
+| grub-mkrescue | GRUB 2.0+ | 创建可引导 ISO |
+| QEMU | ≥ 4.0 | 模拟运行和测试 |
+| Python | ≥ 3.6 | 测试脚本 |
+| xxd | 任意 | 二进制→C 数组转换 |
+
+### 安装 (Debian/Ubuntu)
+
+```bash
+sudo apt install build-essential nasm grub-pc-bin grub-common \
+                 xorriso qemu-system-x86 python3 xxd
+```
+
+## 工作流程
+
+### 日常开发循环
+
+```bash
+# 1. 修改代码
+vim sys/src/kernel/kmain.c
+vim m4sh/core/m4sh_main.c
+
+# 2. 构建
+bash tools/build/build_krn.sh
+
+# 3. 测试 (QEMU)
+qemu-system-x86_64 -cdrom iso/m4kk1_1.0.0_build1-alpha1.iso -serial stdio
+
+# 4. 运行自动化测试
+python3 /tmp/qemu_acceptance.py
+```
+
+### 快速重启
+
+由于 QEMU 启动较快，建议每次修改后完整构建 + 测试。完整构建时间约 5-10 秒。
+
+## 编码规范
+
+遵循 4P1 编码风格 (`docs/style/README.md`)：
+
+### 命名
+
+| 前缀 | 用于 |
+|------|------|
+| `mkrn_` | 内核全局函数/变量 |
+| `musr_` | 用户空间全局函数/变量 |
+| `m4k_` | 系统调用 ABI 包装 |
+| 无前缀 | 文件内静态 |
+
+### 类型
+
+使用 4P1 匈牙利标记：
+
+| 前缀 | 含义 |
+|------|------|
+| `u32`、`u64`、`u8` | 无符号整数 |
+| `p` | 指针 |
+| `sz` | 字符串 |
+| `b` | 布尔 |
+| `fn` | 函数指针 |
+
+### 缩进和括号
+
+- K&R 风格括号
+- 4 空格缩进（无 tab）
+- 行宽 80 字符
+
+## 添加新命令
+
+1. 在 `m4sh/coreutils/` 下创建 `.c` 文件
+2. 实现 `void musr_cmd_xxx(int ac, char **av)`
+3. 在 `m4sh/m4sh.h` 中添加前向声明
+4. 在 `m4sh/core/m4sh_main.c` 的命令表中添加条目
+5. 构建测试
+
+### 示例
+
+```c
+// m4sh/coreutils/hello.c
+#include "../m4sh.h"
+
+void musr_cmd_hello(int ac, char **av)
+{
+    out_puts("Hello, M4KK1!\n");
+}
+```
+
+```c
+// m4sh/core/m4sh_main.c 命令表
+{"hello", musr_cmd_hello, "Say hello"},
+```
+
+## 调试
+
+### 内核调试
+
+```c
+mkrn_console_write("debug message\n");
+mkrn_console_write_hex(value);
+mkrn_console_write_dec(number);
+```
+
+### 日志宏
+
+```c
+M4K_LOG_INFO("message");
+M4K_LOG_WARN("warning");
+M4K_LOG_ERROR("error");
+```
+
+### 内核 Panic
+
+```c
+mkrn_panic("Something went wrong");  // 停止所有执行
+```
+
+### QEMU 调试
+
+```bash
+# QEMU 监控 (Ctrl+Alt+2)
+info registers   # 查看寄存器
+system_reset     # 重启
+
+# 使用 -d 标志查看指令跟踪
+qemu-system-x86_64 -cdrom m4kk1-test.iso -serial stdio -d cpu_reset
+```
+
+## 常见问题
+
+### 构建错误：`-m32` 不支持
+
+```bash
+# 安装 multilib 支持
+sudo apt install gcc-multilib
+```
+
+### QEMU 无输出
+
+检查串口配置：
+```bash
+qemu-system-x86_64 -cdrom ... -serial stdio
+```
+
+### 内核 Panic 在启动时
+
+检查 `sys/src/init/linker.ld` 中的内存布局，确保堆和栈不重叠。
+=== docs/dev/testing.md ===
+# 测试指南
+
+## 测试框架
+
+测试分为 **主机端 (Host)** 和 **目标端 (Target)** 测试。
+
+**文件:** `tools/testing/README.md` (中文)
+
+## 主机端测试
+
+### ELF 检查
+
+```bash
+python3 tools/testing/host/check_elf.py m4kk1.krn
+```
+
+检查内核 ELF 的有效性。
+
+### 代码风格检查
+
+```bash
+bash tools/testing/host/check_style.sh
+```
+
+基于 4P1 编码规范检查源文件。
+
+### QEMU 自动化测试
+
+`/tmp/qemu_acceptance.py` — 完整的自动化测试套件，覆盖：
+
+- Shell 引号处理
+- 管道和命令操作符
+- 变量展开
+- 内置命令功能
+- grep 正则搜索
+- date 时间显示
+- echo 转义序列
+
+运行方式：
+
+```bash
+# 先构建最新 ISO
+bash tools/build/build_krn.sh
+
+# 运行自动化测试
+python3 /tmp/qemu_acceptance.py
+```
+
+测试结果示例：
+
+```
+=== RESULTS: 23 passed, 0 failed ===
+```
+
+## 目标端测试
+
+目标端测试在 QEMU 内运行，位于 `tools/testing/target/`。
+
+### 目录结构
+
+```
+tools/testing/target/
+├── run_all.sh           # 运行全部测试
+├── lib/test_util.m4sh   # 测试工具库
+├── syscall/             # 系统调用测试
+├── fs/                  # 文件系统测试
+├── proc/                # 进程管理测试
+└── stress/              # 压力测试
+```
+
+### 手工执行
+
+```bash
+# 在 M4SH Shell 中:
+help                           # 列出所有命令
+date                           # 验证时间
+grep ^root /export/cfg/passwd.db  # 搜索
+echo 'hello\nworld'            # 转义序列
+```
+
+## QEMU 测试脚本示例
+
+```python
+# 启动 QEMU
+qemu = subprocess.Popen([
+    "qemu-system-x86_64",
+    "-cdrom", "iso/m4kk1_1.0.0_build1-alpha1.iso",
+    "-serial", "stdio",
+    "-m", "256M", "-no-reboot",
+    "-display", "none"
+], stdin=PIPE, stdout=PIPE)
+
+# 等待登录提示
+expect(b"M4KK1 login:")
+write("root\r")
+
+# 发送命令并验证输出
+write("date\r")
+out = read()
+assert "2026" in out
+
+# 关闭
+qemu.terminate()
+```
+
+## 手动测试清单
+
+每次修改后建议验证：
+
+- [ ] 构建成功 (无错误)
+- [ ] 内核启动到登录提示
+- [ ] 使用 root/123456 成功登录
+- [ ] 基本命令 (`help`, `pwd`, `ls`, `date`)
+- [ ] Shell 引号 (`echo 'hello world'`)
+- [ ] 命令操作符 (`;` `&&` `||`)
+- [ ] 修改的关键功能
+=== docs/dev/versioning.md ===
+# 版本管理
+
+## 版本号规范
+
+**文档:** `docs/style/versions_standard.md`
+
+版本号格式: **MAJOR.MINOR.PATCH** (语义化版本)
+
+### 版本级别
+
+| 级别 | 说明 |
+|------|------|
+| MAJOR | 不兼容的 API 变更 |
+| MINOR | 向后兼容的功能新增 |
+| PATCH | 向后兼容的 bug 修复 |
+
+### 构建号
+
+每次构建递增。格式: `build{number}`
+
+### 分类器 (Classifier)
+
+用于预发布版本：
+
+| 分类器 | 说明 |
+|--------|------|
+| `alpha` | 内部测试 |
+| `beta` | 外部测试 |
+| `rc` | 发布候选 |
+| (无) | 正式发布 |
+
+## ISO 命名规范
+
+```
+m4kk1_{MAJOR}.{MINOR}.{PATCH}_build{BUILD}-{CLASSIFIER}.iso
+m4kk1_{MAJOR}.{MINOR}.{PATCH}_build{BUILD}.iso
+```
+
+### 示例
+
+| ISO 文件名 | 版本 | 阶段 |
+|-----------|------|------|
+| `m4kk1_1.0.0_build1-alpha1.iso` | 1.0.0 | Alpha 1 |
+| `m4kk1_1.0.0_build2-beta1.iso` | 1.0.0 | Beta 1 |
+| `m4kk1_1.0.0_build5-rc1.iso` | 1.0.0 | RC 1 |
+| `m4kk1_1.0.0_build6.iso` | 1.0.0 | 正式发布 |
+
+## VERSION 文件
+
+**文件:** `VERSION`
+
+```
+MAJOR=1
+MINOR=0
+PATCH=0
+BUILD=1
+CLASSIFIER=alpha1
+```
+
+## Git 标签
+
+版本发布对应 git tag:
+
+```bash
+git tag v{MAJOR}.{MINOR}.{PATCH}-{CLASSIFIER}
+git tag v1.0.0-alpha1
+```
+
+## 当前版本
+
+| 字段 | 值 |
+|------|-----|
+| MAJOR | 1 |
+| MINOR | 0 |
+| PATCH | 0 |
+| BUILD | 1 |
+| CLASSIFIER | alpha1 |
+| ISO | `m4kk1_1.0.0_build1-alpha1.iso` |
+=== docs/en/architecture.md ===
+# System Architecture
+
+## Design Philosophy
+
+M4KK1 uses a **macro-kernel** design. All core subsystems (process management, file system, drivers, signals) run in kernel space. This simplifies early-stage development and debugging.
+
+## Layer Structure
+
+```
+┌────────────────────────────────────┐
+│        Userspace (Ring 0)*         │
+│  ┌──────────────────────────────┐  │
+│  │  M4SH Shell                  │  │
+│  │  (init ELF, PID 1)           │  │
+│  │  • 40+ built-in commands     │  │
+│  │  • Regex engine              │  │
+│  │  • Single process, static    │  │
+│  └──────────┬───────────────────┘  │
+├─────────────┼──────────────────────┤
+│        Syscall Layer               │
+│  ┌──────────┴───────────────────┐  │
+│  │  int 0x80 (compat)           │  │
+│  │  int 0x4D (native M4KK1)    │  │
+│  └──────────┬───────────────────┘  │
+├─────────────┼──────────────────────┤
+│        Kernel Space                │
+│  ┌──────────┼───────────────────┐  │
+│  │  Process    │  Filesystem    │  │
+│  │  ┌──────┐  │  ┌──────┐      │  │
+│  │  │Sched │  │  │ VFS  │      │  │
+│  │  │Signal│  │  │YAFS  │      │  │
+│  │  │NS    │  │  │ProcFS│      │  │
+│  │  └──────┘  │  └──────┘      │  │
+│  ├──────────┼───────────────────┤  │
+│  │  Memory     │  Drivers       │  │
+│  │  ┌──────┐  │  ┌──────┐      │  │
+│  │  │Page  │  │  │Serial│      │  │
+│  │  │Alloc │  │  │KBD*  │      │  │
+│  │  │Heap  │  │  │Mouse*│      │  │
+│  │  └──────┘  │  └──────┘      │  │
+│  ├──────────┼───────────────────┤  │
+│  │  Arch Layer (i386)           │  │
+│  │  GDT / IDT / PIT / RTC      │  │
+│  └──────────────────────────────┘  │
+└────────────────────────────────────┘
+```
+
+> **Note:** All code currently runs at Ring 0. Ring 3 userspace isolation is not yet implemented.
+> * Keyboard/mouse drivers are stubs only.
+
+## Boot Sequence
+
+```
+GRUB (multiboot)
+  │
+  ▼
+entry.asm — kernel entry, multiboot header
+  │
+  ▼
+kmain() — kernel initialization
+  ├── 1. Memory mgmt  ──── mkrn_memory_init()
+  ├── 2. GDT ───────────── mkrn_gdt_init()
+  ├── 3. IDT ───────────── mkrn_idt_init()
+  ├── 4. Timer ─────────── mkrn_timer_init(1000 Hz)
+  ├── 5. Process mgmt ──── mkrn_process_init()
+  ├── 6. Syscalls ──────── mkrn_syscall_init()
+  ├── 7. Dynamic linker ── mkrn_ll_init()
+  ├── 8. YAFS ──────────── mkrn_yafs_test(), create FHS
+  ├── 9. Write ELFs ────── m4sh.elf / login.elf → /bin/
+  └── 10. Load init ────── mkrn_execve(init.elf)
+                          │
+                          ▼
+                    init — mount I/O, start m4sh
+                          │
+                          ▼
+                    m4sh — login prompt → Shell
+```
+
+## Key Design Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Kernel type | Macro-kernel | Simplify early development |
+| CPU mode | 32-bit protected mode | i386 target |
+| Memory model | No MMU, single address space | Initial simplicity |
+| Syscall ABI | `int 0x80` + `int 0x4D` | Compatibility + native |
+| Filesystem | YAFS B+Tree | COW, snapshot potential |
+| Userspace | Single process static shell | No dynamic linker needed |
+| Console | Serial COM1 | Debug convenience |
+
+## Naming Conventions (4P1)
+
+| Prefix | Scope | Example |
+|--------|-------|---------|
+| `mkrn_` | Kernel global | `mkrn_timer_init()` |
+| `musr_` | Userspace global | `musr_cmd_echo()` |
+| `m4k_` | Syscall ABI layer | `m4k_sc0()` |
+| No prefix | File-static | `tokenize_quoted()` |
+=== docs/en/dev/build.md ===
+# Build System
+
+## Build Script
+
+**File:** `tools/build/build_krn.sh` (185 lines)
+
+The build entry point is a Bash script. Core build flow:
+
+```
+build_krn.sh
+  │
+  ├── Read VERSION
+  ├── Set compiler flags
+  │
+  ├── Compile kernel C sources
+  │   ├── kmain.o, process.o, execve.o
+  │   ├── syscall.o, syscall_m4k.o
+  │   ├── timer.o, gdt_c.o, idt_c.o
+  │   ├── vfs.o, btree.o, yafs_*.o
+  │   ├── memory.o, console.o
+  │   ├── string.o, debug.o
+  │   └── ...
+  │
+  ├── Assemble NASM files
+  │   ├── entry.o
+  │   ├── gdt_asm.o, idt_asm.o
+  │
+  ├── Build M4SH userspace ELF
+  │   ├── Auto-discover m4sh/**/*.c
+  │   ├── Static link → m4sh/m4sh.elf
+  │
+  ├── Build Login ELF
+  │   ├── login_standalone.c → login.elf
+  │
+  ├── Build Init ELF
+  │   ├── init.c → init.elf
+  │
+  ├── Generate ELF data arrays
+  │   ├── xxd -i → init/*_elf.c
+  │
+  ├── Compile ELF data arrays
+  │
+  ├── Link kernel
+  │   ├── Using linker.ld
+  │   ├── Output m4kk1.krn
+  │
+  └── Create ISO
+      ├── Setup GRUB menu
+      └── grub-mkrescue → iso/*.iso
+```
+
+## Compiler Flags
+
+### Kernel
+
+```bash
+CFLAGS="-Wall -Wextra -O2 -g"
+CFLAGS="$CFLAGS -ffreestanding -nostdlib -nostdinc"
+CFLAGS="$CFLAGS -m32 -mno-sse -mno-sse2 -mno-mmx"
+CFLAGS="$CFLAGS -std=gnu99 -fno-stack-protector"
+CFLAGS="$CFLAGS -fno-pic -fno-pie"
+```
+
+### Userspace (M4SH)
+
+```bash
+M4SH_CFLAGS="-ffreestanding -nostdlib -nostdinc"
+M4SH_CFLAGS="$M4SH_CFLAGS -m32 -mno-sse -std=gnu99"
+M4SH_CFLAGS="$M4SH_CFLAGS -fno-stack-protector -fno-pic -fno-pie"
+```
+
+## Linker Scripts
+
+### Kernel (`sys/src/init/linker.ld`)
+
+```
+Load address: 0x100000 (1 MB)
+Layout: multiboot header → .text → .rodata → .data → .bss → heap (4 MB) → stack (16 KB)
+```
+
+### Userspace (`m4sh/m4sh.ld`)
+
+```
+Load address: 0x800000
+Standard ELF segments: .text → .rodata → .data → .bss
+```
+
+## ISO Structure
+
+```
+/boot/grub/grub.cfg
+  └── menuentry "M4KK1" {
+        multiboot /boot/kernel/m4kk1.krn
+        boot
+      }
+/boot/kernel/m4kk1.krn
+```
+
+## Build Artifacts
+
+| Artifact | Path | Size | Purpose |
+|----------|------|------|---------|
+| Kernel binary | `m4kk1.krn` | ~680 KB | GRUB loads this |
+| M4SH ELF | `m4sh/m4sh.elf` | ~290 KB | Embedded in kernel |
+| Login ELF | `m4sh/login/login.elf` | ~15 KB | Embedded in kernel |
+| Init ELF | `init/init.elf` | ~15 KB | Embedded in kernel |
+| ISO | `iso/m4kk1_*.iso` | ~33 MB | Bootable image |
+=== docs/en/dev/guide.md ===
+# Development Guide
+
+## Environment Setup
+
+### Required Tools
+
+| Tool | Requirement | Purpose |
+|------|-------------|---------|
+| GCC | with `-m32` support | Compile C code |
+| NASM | ≥ 2.0 | Assembly (entry, GDT, IDT) |
+| GNU ld | with `-m elf_i386` | Link kernel and ELFs |
+| grub-mkrescue | GRUB 2.0+ | Create bootable ISO |
+| QEMU | ≥ 4.0 | Emulation and testing |
+| Python | ≥ 3.6 | Test scripts |
+| xxd | any | Binary → C array conversion |
+
+### Installation (Debian/Ubuntu)
+
+```bash
+sudo apt install build-essential nasm grub-pc-bin grub-common \
+                 xorriso qemu-system-x86 python3 xxd
+```
+
+## Development Workflow
+
+### Daily Cycle
+
+```bash
+# 1. Edit code
+vim sys/src/kernel/kmain.c
+vim m4sh/core/m4sh_main.c
+
+# 2. Build
+bash tools/build/build_krn.sh
+
+# 3. Test (QEMU)
+qemu-system-x86_64 -cdrom iso/m4kk1_1.0.0_build1-alpha1.iso -serial stdio
+
+# 4. Run automated tests
+python3 /tmp/qemu_acceptance.py
+```
+
+## Adding a New Command
+
+1. Create `.c` file in `m4sh/coreutils/`
+2. Implement `void musr_cmd_xxx(int ac, char **av)`
+3. Add forward declaration in `m4sh/m4sh.h`
+4. Add entry in `m4sh/core/m4sh_main.c` command table
+5. Build and test
+
+### Example
+
+```c
+// m4sh/coreutils/hello.c
+#include "../m4sh.h"
+
+void musr_cmd_hello(int ac, char **av)
+{
+    out_puts("Hello, M4KK1!\n");
+}
+```
+
+```c
+// In m4sh/core/m4sh_main.c command table:
+{"hello", musr_cmd_hello, "Say hello"},
+```
+
+## Debugging
+
+### Kernel Debug
+
+```c
+mkrn_console_write("debug message\n");
+mkrn_console_write_hex(value);
+mkrn_console_write_dec(number);
+```
+
+### Logging Macros
+
+```c
+M4K_LOG_INFO("message");
+M4K_LOG_WARN("warning");
+M4K_LOG_ERROR("error");
+```
+
+### Kernel Panic
+
+```c
+mkrn_panic("Something went wrong");  // Halts all execution
+```
+
+### QEMU Debug
+
+```bash
+# QEMU monitor (Ctrl+Alt+2)
+info registers   # View registers
+system_reset     # Reboot
+
+# Instruction tracing
+qemu-system-x86_64 -cdrom m4kk1-test.iso -serial stdio -d cpu_reset
+```
+
+## Common Issues
+
+### Build error: `-m32` not supported
+
+```bash
+# Install multilib support
+sudo apt install gcc-multilib
+```
+
+### QEMU shows no output
+
+Check serial configuration:
+```bash
+qemu-system-x86_64 -cdrom ... -serial stdio
+```
+
+### Kernel panic at boot
+
+Check memory layout in `sys/src/init/linker.ld` — ensure heap and stack don't overlap.
+=== docs/en/dev/testing.md ===
+# Testing Guide
+
+## Test Framework
+
+Tests are split into **Host-side** (run on development machine) and **Target-side** (run inside QEMU).
+
+**File:** `tools/testing/README.md` (Chinese)
+
+## Host-Side Tests
+
+### ELF Validation
+
+```bash
+python3 tools/testing/host/check_elf.py m4kk1.krn
+```
+
+### Code Style Check
+
+```bash
+bash tools/testing/host/check_style.sh
+```
+
+### QEMU Automated Test Suite
+
+`/tmp/qemu_acceptance.py` — Full automated test suite covering:
+
+- Shell quote handling
+- Shell operators (pipe, AND, OR)
+- Variable expansion
+- Built-in command functionality
+- grep regex search
+- date time display
+- echo escape sequences
+
+Running:
+
+```bash
+# First build latest ISO
+bash tools/build/build_krn.sh
+
+# Run automated tests
+python3 /tmp/qemu_acceptance.py
+```
+
+Example output:
+
+```
+=== RESULTS: 23 passed, 0 failed ===
+```
+
+## Target-Side Tests
+
+Target-side tests run inside QEMU, located at `tools/testing/target/`.
+
+### Structure
+
+```
+tools/testing/target/
+├── run_all.sh           # Run all tests
+├── lib/test_util.m4sh   # Test utility library
+├── syscall/             # Syscall tests
+├── fs/                  # Filesystem tests
+├── proc/                # Process management tests
+└── stress/              # Stress tests
+```
+
+### Manual Execution
+
+```bash
+# Inside M4SH Shell:
+help                           # List all commands
+date                           # Verify time
+grep ^root /export/cfg/passwd.db  # Search
+echo 'hello\nworld'            # Escape sequences
+```
+
+## QEMU Test Script Example
+
+```python
+# Start QEMU
+qemu = subprocess.Popen([
+    "qemu-system-x86_64",
+    "-cdrom", "iso/m4kk1_1.0.0_build1-alpha1.iso",
+    "-serial", "stdio",
+    "-m", "256M", "-no-reboot",
+    "-display", "none"
+], stdin=PIPE, stdout=PIPE)
+
+# Wait for login prompt
+expect(b"M4KK1 login:")
+write("root\r")
+
+# Send command and verify output
+write("date\r")
+out = read()
+assert "2026" in out
+
+# Cleanup
+qemu.terminate()
+```
+
+## Manual Test Checklist
+
+After each change, verify:
+
+- [ ] Build succeeds (no errors)
+- [ ] Kernel boots to login prompt
+- [ ] Login as root/123456 succeeds
+- [ ] Basic commands work (`help`, `pwd`, `ls`, `date`)
+- [ ] Shell quotes (`echo 'hello world'`)
+- [ ] Command operators (`;` `&&` `||`)
+- [ ] Modified functionality works
+=== docs/en/dev/versioning.md ===
+# Version Management
+
+## Version Format
+
+**Spec:** `docs/style/versions_standard.md`
+
+Format: **MAJOR.MINOR.PATCH** (semantic versioning)
+
+### Version Levels
+
+| Level | Description |
+|-------|-------------|
+| MAJOR | Incompatible API changes |
+| MINOR | Backward-compatible features |
+| PATCH | Backward-compatible bug fixes |
+
+### Build Number
+
+Increments with each build. Format: `build{number}`
+
+### Classifier
+
+For pre-release versions:
+
+| Classifier | Description |
+|------------|-------------|
+| `alpha` | Internal testing |
+| `beta` | External testing |
+| `rc` | Release candidate |
+| (none) | Stable release |
+
+## ISO Naming
+
+```
+m4kk1_{MAJOR}.{MINOR}.{PATCH}_build{BUILD}-{CLASSIFIER}.iso
+m4kk1_{MAJOR}.{MINOR}.{PATCH}_build{BUILD}.iso
+```
+
+### Examples
+
+| ISO filename | Version | Stage |
+|-------------|---------|-------|
+| `m4kk1_1.0.0_build1-alpha1.iso` | 1.0.0 | Alpha 1 |
+| `m4kk1_1.0.0_build2-beta1.iso` | 1.0.0 | Beta 1 |
+| `m4kk1_1.0.0_build5-rc1.iso` | 1.0.0 | RC 1 |
+| `m4kk1_1.0.0_build6.iso` | 1.0.0 | Stable |
+
+## VERSION File
+
+**File:** `VERSION`
+
+```
+MAJOR=1
+MINOR=0
+PATCH=0
+BUILD=1
+CLASSIFIER=alpha1
+```
+
+## Git Tags
+
+Releases correspond to git tags:
+
+```bash
+git tag v{MAJOR}.{MINOR}.{PATCH}-{CLASSIFIER}
+git tag v1.0.0-alpha1
+```
+
+## Current Version
+
+| Field | Value |
+|-------|-------|
+| MAJOR | 1 |
+| MINOR | 0 |
+| PATCH | 0 |
+| BUILD | 1 |
+| CLASSIFIER | alpha1 |
+| ISO | `m4kk1_1.0.0_build1-alpha1.iso` |
+=== docs/en/fs/overview.md ===
+# Filesystem Overview
+
+## Directory Hierarchy
+
+```
+/
+├── bin/              # Executables
+│   ├── login         # Login ELF
+│   └── m4sh          # Shell ELF
+├── dev/              # Device files
+│   └── yafs0         # YAFS block device
+├── export/
+│   ├── cfg/          # Configuration
+│   │   ├── passwd.db     # User database
+│   │   ├── groups.db     # Group database
+│   │   └── timezone      # Timezone (+0000)
+│   ├── home/
+│   │   └── testuser      # Test user home
+│   └── root/              # Root user home
+├── etc/              # System configuration
+├── mnt/              # Mount points
+├── proc/             # Process info
+├── sys/
+│   ├── proc/         # Process pseudo-FS (/proc/PID/{status,cmdline,...})
+│   └── sessions/     # Session management
+├── tmp/              # Temporary files
+└── usr/              # User programs
+```
+
+## FHS Directory Creation
+
+At boot, `mkrn_yafs_create_fhs()` creates the standard directory tree:
+
+```c
+"bin", "dev", "etc", "export", "export/cfg",
+"export/home", "export/root", "mnt", "proc",
+"sys", "sys/proc", "sys/sessions", "tmp", "usr"
+```
+
+## Supported Filesystems
+
+| Type | Description | Status |
+|------|-------------|--------|
+| YAFS | COW B+Tree filesystem | ✅ (basic ops) |
+| ramfs | In-memory filesystem | ✅ |
+| ProcFS | Process pseudo-filesystem | ✅ |
+| devfs | Device filesystem | ❌ |
+
+## Mounting
+
+Root filesystem is mounted at boot:
+
+```c
+mkrn_vfs_set_root_yafs(NULL, yafs_root);
+mkrn_vfs_mount("/dev/yafs0", "/", "yafs");
+```
+
+View current mounts:
+
+```bash
+mount
+```
+=== docs/en/kernel/overview.md ===
+# Kernel Overview
+
+## Basic Info
+
+| Property | Value |
+|----------|-------|
+| Name | Y4KU (Yaku Kernel Universe) |
+| Architecture | i386 (32-bit x86) |
+| Boot | GRUB multiboot |
+| Language | Freestanding C + NASM assembly |
+| Memory model | Single address space (no MMU) |
+| Privilege | All Ring 0 |
+| Timer | PIT 1000 Hz |
+
+## Source Structure
+
+```
+sys/src/
+├── kernel/            # Kernel core
+│   ├── kmain.c        # Main entry
+│   ├── process.c      # Process management
+│   ├── execve.c       # ELF loader
+│   ├── syscall.c      # int 0x80 dispatch
+│   ├── syscall_m4k.c  # int 0x4D dispatch
+│   ├── signal.c       # Signal handling
+│   ├── namespace.c    # Namespaces
+│   ├── shell.c        # Kernel debug shell
+│   ├── ldso.c         # Dynamic linker stub
+│   ├── proc/          # Scheduler
+│   ├── syscall/       # Native syscall handlers
+│   └── vfs/           # VFS permissions
+├── arch/m4kk1/        # Architecture-specific
+│   ├── gdt.c / gdt.asm
+│   ├── idt.c / idt.asm
+│   └── timer.c        # PIT and RTC
+├── drivers/           # Drivers
+│   └── console.c      # Serial console
+├── fs/                # Filesystems
+│   ├── vfs.c
+│   ├── procfs.c
+│   └── yafs/
+├── mm/                # Memory management
+│   └── memory.c
+├── lib/               # Utility library
+│   ├── string.c
+│   └── debug.c
+└── include/           # Headers
+    ├── kernel.h
+    ├── process.h
+    ├── syscall.h
+    ├── vfs.h
+    └── ...
+```
+
+## Feature Status
+
+### Implemented
+- GDT setup (code, data, TSS segments)
+- IDT setup (32 interrupt handlers)
+- PIT timer (1000 Hz tick)
+- RTC CMOS read/write (BCD conversion)
+- Physical memory allocator (buddy system)
+- Process create/destroy/wait
+- ELF executable loading
+- 10 signals (SIGABRT, SIGKILL, SIGTERM, SIGSTOP, SIGCONT, SIGTRAP, SIGCHLD, SIGPIPE, SIGUSR1, SIGUSR2)
+- Namespaces (16 mount points per process)
+- VFS (ramfs, YAFS)
+- ProcFS (/sys/proc)
+- Syscall table registration
+
+### Not Implemented
+- MMU / paging
+- Ring 3 userspace
+- Dynamic linker
+- Block device cache
+- SMP / multi-core
+- APIC / IOAPIC
+- Real-time scheduling
+- Network stack
+=== docs/en/plan/roadmap.md ===
+# Development Roadmap
+
+## Current (v1.0.0-alpha1)
+
+### Completed
+- [x] Kernel core (GDT, IDT, PIT, process scheduling)
+- [x] Syscall framework (int 0x80 + int 0x4D)
+- [x] YAFS filesystem (basic B+Tree operations)
+- [x] VFS layer
+- [x] M4SH Shell (quotes, operators, pipes)
+- [x] 40+ built-in commands
+- [x] Regex engine (grep)
+- [x] Login authentication (SHA-256 passwords)
+- [x] date command (full implementation)
+- [x] Timezone support
+- [x] Build system
+
+## Short-term (v1.1.0 - v1.3.0)
+
+### Shell Enhancements (1-2 weeks)
+- [ ] I/O redirection (`>` `<` `>>` `2>`) — highest priority
+- [ ] `test`/`[` command
+- [ ] Shell script execution
+- [ ] for/while loops
+- [ ] `true`/`false` commands
+- [ ] Alias support
+
+### Filesystem (1-2 weeks)
+- [ ] Ensure `/export/cfg/` exists in FHS creation
+- [ ] Block cache
+- [ ] File permission checking
+- [ ] Symbolic links
+
+### Device Drivers (2-3 weeks)
+- [ ] PS/2 keyboard driver (IRQ1)
+- [ ] Framebuffer (VBE/VESA)
+- [ ] Bitmap font rendering
+- [ ] Framebuffer terminal
+
+### Testing (ongoing)
+- [ ] Expand automated test suite
+- [ ] Stress testing
+- [ ] Regression testing
+
+## Medium-term (v2.0.0)
+
+### Graphics (3-4 weeks)
+- [ ] PS/2 mouse driver
+- [ ] Basic window manager
+- [ ] GUI terminal
+
+### Networking (3-4 weeks)
+- [ ] RTL8139 / NE2000 driver
+- [ ] lwIP integration
+- [ ] TCP/UDP basic communication
+- [ ] DNS resolution
+
+### Memory Management (2-3 weeks)
+- [ ] Paging / MMU
+- [ ] Ring 3 userspace isolation
+- [ ] Dynamic linker
+- [ ] `malloc`/`free`
+
+### Storage (2 weeks)
+- [ ] ATA/PATA driver
+- [ ] AHCI driver
+- [ ] YAFS disk backend
+
+## Long-term (v3.0.0+)
+
+### System Features
+- [ ] SMP multi-core support
+- [ ] APIC / IOAPIC
+- [ ] POSIX compatibility layer
+- [ ] Userspace drivers
+- [ ] Package manager (pkgmgr)
+- [ ] Real-time scheduling
+- [ ] SELinux / MAC
+
+### YAFS Completion
+- [ ] COW snapshots
+- [ ] Journaling / crash recovery
+- [ ] AES-128 XTS encryption
+- [ ] yafsctl management tool
+
+### Architecture Ports
+- [ ] x86_64
+- [ ] ARM
+- [ ] RISC-V
+
+## Milestones
+
+| Version | Goal | Estimated |
+|---------|------|-----------|
+| v1.0.0-beta1 | Shell I/O redirection + keyboard driver | ~2 weeks |
+| v1.0.0-rc1 | Framebuffer terminal + auto tests | ~4 weeks |
+| v1.0.0 | Stable release | ~6 weeks |
+| v2.0.0-alpha1 | Basic GUI + networking | ~10 weeks |
+| v2.0.0 | MMU + userspace isolation | ~16 weeks |
+=== docs/en/README.md ===
+# M4KK1 Documentation
+
+> Language: English
+
+Welcome to the M4KK1 operating system documentation.
+
+**中文文档 (Chinese):** [../README.md](../README.md)
+
+## Navigation
+
+### Architecture
+- **[System Architecture](architecture.md)** — Overall design, layering, philosophy
+
+### Kernel Subsystem (Y4KU)
+- **[Kernel Overview](kernel/overview.md)** — Architecture, interrupts, scheduling
+- **[Process Model](kernel/process.md)** — Process lifecycle, state tags, scheduler
+- **[System Calls](kernel/syscall.md)** — `int 0x80` / `int 0x4D` ABI
+- **[Timer & RTC](kernel/timer.md)** — PIT timer, CMOS RTC, alarm system
+- **[Memory Management](kernel/memory.md)** — Physical page allocator
+- **[Boot Sequence](kernel/init.md)** — From power-on to userspace
+- **[Drivers](kernel/drivers.md)** — Serial console, PS/2 stubs
+
+### Userspace (M4SH)
+- **[Userspace Overview](userspace/overview.md)** — Userspace program model
+- **[M4SH Shell](userspace/m4sh.md)** — Shell design, quotes, operators
+- **[Command Reference](userspace/commands.md)** — All 40+ built-in commands
+- **[Authentication](userspace/auth.md)** — Login, passwords, groups, permissions
+- **[Regex Engine](userspace/regex.md)** — Built-in regex engine for grep
+
+### Filesystem
+- **[Filesystem Overview](fs/overview.md)** — Directory hierarchy & supported FS
+- **[VFS Layer](fs/vfs.md)** — Virtual filesystem interface
+- **[YAFS Filesystem](fs/yafs.md)** — COW B+Tree filesystem
+
+### Development
+- **[Development Guide](dev/guide.md)** — Setup, workflow, coding style
+- **[Build System](dev/build.md)** — Build script, flags, linker scripts
+- **[Testing Guide](dev/testing.md)** — Host-side and target-side testing
+- **[Versioning](dev/versioning.md)** — Version numbers, ISO naming, releases
+
+### Planning
+- **[Roadmap](plan/roadmap.md)** — Short-term and long-term goals
+
+## Quick Links
+
+| Resource | Location |
+|----------|----------|
+| Source root | `/mnt/f/M4KK1/` |
+| Build script | `tools/build/build_krn.sh` |
+| Kernel entry | `sys/src/init/entry.asm` |
+| Kernel main | `sys/src/kernel/kmain.c` |
+| Shell main | `m4sh/core/m4sh_main.c` |
+| 4P1 spec | `docs/4P1/standard.md` |
+| Coding style | `docs/style/README.md` |
+=== docs/en/userspace/overview.md ===
+# Userspace Overview
+
+## Architecture
+
+M4KK1's userspace is a **single-process, single-address-space** freestanding environment. No libc, no dynamic linking, no MMU isolation.
+
+```
+init (PID 1)
+  │
+  ├── /bin/login  — Login session management
+  │
+  └── /bin/m4sh   — Shell (40+ built-in commands)
+       │
+       ├── coreutils/  — File, process, text, admin tools
+       ├── lib/        — Password and group database
+       ├── core/       — Shell main loop, regex engine
+       └── login/      — Standalone login ELF
+```
+
+## ELF Format
+
+- Architecture: i386 (32-bit)
+- Load address: 0x800000
+- Linker script: `m4sh/m4sh.ld`
+- Compilation: `-m32 -ffreestanding -nostdlib -nostdinc`
+- Entry: `_start` (defined in `m4sh_main.c`)
+
+## Binary Embedding
+
+Userspace ELFs are converted to C arrays at build time and linked into the kernel:
+
+```bash
+xxd -i m4sh/m4sh.elf > init/m4sh_elf.c
+# Generates m4sh_init_elf[] and m4sh_init_elf_len
+```
+
+At boot, the kernel writes these arrays to the YAFS filesystem.
+
+## Runtime Support
+
+### Memory
+
+- No dynamic heap allocation (no `malloc`/`free`)
+- Fixed-size global buffers (command buffer 512 bytes, argv 32 slots)
+- Environment variables: 16 slots, 128 bytes each
+
+### I/O
+
+Output is abstracted through `out_fd`:
+
+```c
+extern int out_fd;  // 1 = serial, other = file descriptor
+
+void out_putc(char c);
+void out_puts(const char *s);
+void out_printf(const char *s);  // same as out_puts
+```
+
+### String Functions
+
+Built-in (no libc dependency):
+
+```c
+musr_strlen(), musr_strcpy(), musr_strcmp(),
+musr_strcat(), musr_strncmp(), musr_strpref(),
+musr_strchr(), musr_atoi()
+```
+
+### Numeric Output
+
+```c
+void print_u32(uint32_t v);       // unsigned decimal
+void print_u64(uint64_t v);       // 64-bit (simplified)
+void print_s32(int32_t v);        // signed decimal
+void print_pad_u32(v, w);         // padded to width
+```
+
+### Header File
+
+All userspace functionality is provided through a single master header:
+
+`m4sh/m4sh.h` (750 lines) includes:
+- Memory operation macros (`memcpy`, `memset`)
+- String functions
+- Syscall number definitions
+- Syscall wrapper functions (`musr_sc*`, `m4k_sc*`)
+- Serial I/O (`ser_putc`, `ser_gets`, `ser_getc`)
+- ANSI color functions
+- Output abstraction layer
+- CWD management
+- Command table types
+- Environment variable management
+- Password/group database types
+- Forward declarations for all commands
+=== docs/fs/overview.md ===
+# 文件系统概述
+
+## 文件系统层次
+
+```
+/
+├── bin/              # 可执行文件
+│   ├── login         # 登录 ELF
+│   └── m4sh          # Shell ELF
+├── dev/              # 设备文件
+│   └── yafs0         # YAFS 块设备
+├── export/
+│   ├── cfg/          # 配置文件
+│   │   ├── passwd.db     # 用户数据库
+│   │   ├── groups.db     # 组数据库
+│   │   └── timezone      # 时区 (+0000)
+│   ├── home/
+│   │   └── testuser      # 测试用户 home
+│   └── root/              # root 用户 home
+├── etc/              # 系统配置
+├── mnt/              # 挂载点
+├── proc/             # 进程信息
+├── sys/
+│   ├── proc/         # 进程伪文件系统 (/proc/PID/{status,cmdline,...})
+│   └── sessions/     # 会话管理
+├── tmp/              # 临时文件
+└── usr/              # 用户程序
+```
+
+## FHS 目录创建
+
+内核启动时 `mkrn_yafs_create_fhs()` 创建标准目录树：
+
+```c
+"bin", "dev", "etc", "export", "export/cfg",
+"export/home", "export/root", "mnt", "proc",
+"sys", "sys/proc", "sys/sessions", "tmp", "usr"
+```
+
+## 支持的文件系统
+
+| 类型 | 说明 | 状态 |
+|------|------|------|
+| YAFS | COW B+Tree 文件系统 | ✅ (基础功能) |
+| ramfs | 内存文件系统 | ✅ |
+| ProcFS | 进程伪文件系统 | ✅ |
+| devfs | 设备文件系统 | ❌ |
+
+## 挂载
+
+根文件系统在启动时挂载：
+
+```c
+mkrn_vfs_set_root_yafs(NULL, yafs_root);
+mkrn_vfs_mount("/dev/yafs0", "/", "yafs");
+```
+
+查看当前挂载：
+
+```bash
+mount
+```
+=== docs/fs/vfs.md ===
+# VFS 层
+
+## 概述
+
+虚拟文件系统层 (VFS) 提供统一的文件操作接口，支持多种文件系统共存。
+
+**文件:** `sys/src/fs/vfs.c`
+
+## VFS 接口
+
+### 文件操作
+
+```c
+int  mkrn_vfs_open(const char *path, int flags);
+int  mkrn_vfs_close(int fd);
+int  mkrn_vfs_read(int fd, void *buf, int count);
+int  mkrn_vfs_write(int fd, const void *buf, int count);
+int  mkrn_vfs_seek(int fd, int offset, int whence);
+int  mkrn_vfs_readdir(int fd, struct mkrn_vfs_dirent *ents, int max);
+int  mkrn_vfs_stat(int fd, struct mkrn_vfs_stat *st);
+```
+
+### 目录操作
+
+```c
+int mkrn_vfs_mkdir(const char *path);
+int mkrn_vfs_rmdir(const char *path);
+int mkrn_vfs_unlink(const char *path);
+int mkrn_vfs_rename(const char *old, const char *new);
+```
+
+### 挂载操作
+
+```c
+int mkrn_vfs_mount(const char *source, const char *target, const char *type);
+int mkrn_vfs_umount(const char *target);
+int mkrn_vfs_get_mount_info(struct mount_entry *entries, int max);
+```
+
+### 路径操作
+
+```c
+int  mkrn_vfs_getcwd(char *buf, int size);
+int  mkrn_vfs_chdir(const char *path);
+char mkrn_vfs_separator(void);  // 返回 '/'
+```
+
+## 文件描述符
+
+- 每个进程最多 16 个文件描述符
+- FD 0/1/2: 标准输入/输出/错误 (当前为串口)
+- `musr_sc_dup2(old, new)` 复制文件描述符
+
+## 文件打开标志
+
+```c
+#define M4K_O_RDONLY  0x0001   // 只读
+#define M4K_O_WRONLY  0x0002   // 只写
+#define M4K_O_RDWR    0x0004   // 读写
+#define M4K_O_CREAT   0x0100   // 不存在则创建
+#define M4K_O_EXCL    0x0200   // 与 CREAT 一起，存在则失败
+#define M4K_O_TRUNC   0x1000   // 截断到零长度
+#define M4K_O_APPEND  0x2000   // 追加模式
+```
+
+## VFS 目录条目
+
+```c
+struct mkrn_vfs_dirent {
+    uint64_t inode;
+    uint32_t type;      // 1=文件, 2=目录
+    char name[256];
+    uint64_t size;
+};
+```
+
+## 文件系统注册
+
+文件系统通过 VFS 的 ops 结构注册：
+
+```c
+struct mkrn_vfs_ops {
+    int (*open)(...);
+    int (*close)(...);
+    int (*read)(...);
+    int (*write)(...);
+    // ...
+};
+```
+=== docs/fs/yafs.md ===
+# YAFS 文件系统
+
+## 概述
+
+YAFS (Yet Another File System) 是一个 **日志结构、写时复制 (COW) B+Tree** 文件系统。
+
+**设计文档:** `sys/src/fs/yafs/docs/design.md` (866 行, 英文)
+
+## 核心设计
+
+### 磁盘布局
+
+```
+Block 0:  超级块 (备份 x2)
+Block 1:  超级块备份
+Block 2+: B+Tree 节点 + 文件数据 + 空闲位图
+```
+
+### 数据结构
+
+```c
+struct yafs_superblock {
+    uint64_t magic;              // YAFS_MAGIC
+    uint64_t root_tree_addr;     // 根 B+Tree 的 LBA
+    uint64_t total_blocks;       // 总块数
+    uint64_t block_size;         // 块大小 (当前 4096)
+    uint64_t free_blocks;        // 空闲块
+    uint64_t used_blocks;        // 已用块
+    // ...
+};
+```
+
+### B+Tree
+
+- 每个节点 = 一个磁盘块 (4096 字节)
+- 内部节点: 键值对数组 + 子节点指针
+- 叶子节点: 文件条目 (文件名 → inode 映射)
+- 支持: 插入、查找、删除、遍历
+
+### 写时复制 (COW)
+
+修改 B+Tree 时，从叶子到根的所有路径节点都被复制到新位置，根指针更新。这样旧根仍然完整，可实现快照。
+
+## 状态
+
+### 已实现
+- 超级块创建/读取
+- B+Tree 插入、查找、删除、遍历
+- 空闲块分配/释放
+- FHS 目录树创建
+- 文件创建/读取/写入/删除
+- VFS 集成 (yafs_vfs.c)
+- RAMDISK 后端 (4096 块, 16 MB)
+
+### 未实现
+- 日志/崩溃一致性
+- 快照/回滚
+- AES-128 XTS 加密
+- 并行读取
+- yafsctl 工具
+- 磁盘后端 (ATA/AHCI)
+
+## API
+
+### 内核级
+
+```c
+// 初始化
+void  mkrn_yafs_test(void);
+int   mkrn_yafs_create_fhs(u64 *root_lba);
+
+// 文件操作
+int   mkrn_yafs_create_file(const char *path);
+int   mkrn_yafs_read(const char *path, void *buf, u64 size);
+int   mkrn_yafs_write(const char *path, const void *buf, u64 size);
+int   mkrn_yafs_delete(const char *path);
+
+// 目录操作
+int   mkrn_yafs_readdir(u64 tree, u32 inode, struct mkrn_vfs_dirent *ents, int max);
+
+// 设备 I/O
+int   mkrn_yafs_dev_read(u64 lba, void *buf);
+int   mkrn_yafs_dev_write(u64 lba, const void *buf);
+```
+
+### 用户级
+
+```bash
+df          # 查看 YAFS 磁盘使用
+mount       # 查看 YAFS 挂载
+```
+
+## 实现文件
+
+```
+sys/src/fs/yafs/
+├── core/yafs/
+│   ├── btree.c           # B+Tree 核心操作
+│   ├── yafs_test.c       # 测试和初始化
+│   └── yafs_vfs.c        # VFS 集成
+├── docs/design.md        # 完整设计文档
+├── include/
+│   ├── yafs.h            # 超级块、inode、快照结构
+│   └── yafs_btree.h      # B+Tree 节点结构
+└── mkrn_yafs_inode.h     # Inode 内部结构
+```
+
+## 性能特征
+
+| 操作 | 复杂度 | 说明 |
+|------|--------|------|
+| 文件查找 | O(log N) | B+Tree 遍历 |
+| 文件创建 | O(log N) | 插入叶子节点 |
+| 文件删除 | O(log N) | 删除叶子节点 |
+| 目录遍历 | O(N) | 叶子节点扫描 |
+| 块分配 | O(1) | 空闲位图 |
+=== docs/kernel/drivers.md ===
+# 驱动子系统
+
+## 当前状态
+
+| 驱动 | 状态 | 说明 |
+|------|------|------|
+| 串口 (COM1) | ✅ 完成 | 输入输出 38400 8N1 |
+| PS/2 键盘 | 📋 存根 | 有头文件，功能未实现 |
+| PS/2 鼠标 | 📋 存根 | 有头文件，功能未实现 |
+| ATA/PATA | ❌ 未开始 | |
+| AHCI | ❌ 未开始 | |
+| NE2000 | ❌ 未开始 | |
+| RTL8139 | ❌ 未开始 | |
+| USB | ❌ 未开始 | |
+| VBE/VESA | ❌ 未开始 | |
+
+## 串口控制台
+
+文件: `sys/src/drivers/console.c`
+
+### 配置
+
+- 端口: COM1 (0x3F8)
+- 波特率: 38400
+- 数据位: 8
+- 停止位: 1
+- 校验: 无
+- 流控: 无
+
+### 寄存器
+
+| 端口偏移 | 功能 |
+|---------|------|
+| +0 | 数据 (R/W) |
+| +1 | 中断使能 |
+| +5 | 线路状态 |
+| +5 bit 6 | 发送保持寄存器空 (THR) |
+| +5 bit 0 | 数据就绪 (DR) |
+
+### 核心函数
+
+```c
+void ser_putc(char c);     // 发送字符 (忙等待)
+void ser_puts(const char *s);  // 发送字符串
+int  ser_getc(void);       // 非阻塞读取 (-1 = 无数据)
+char ser_getchar(void);    // 阻塞读取
+```
+
+### 控制台 API
+
+```c
+void mkrn_console_init(void);           // 初始化
+void mkrn_console_write(const char *s); // 写字符串
+void mkrn_console_write_hex(u32 v);     // 写十六进制
+void mkrn_console_write_dec(u32 v);     // 写十进制
+```
+
+## ANSI 颜色支持
+
+用户空间通过以下函数输出 ANSI 转义码：
+
+| 函数 | ANSI 码 | 颜色 |
+|------|---------|------|
+| `c_grn()` | `\x1B[32m` | 绿色 |
+| `c_red()` | `\x1B[31m` | 红色 |
+| `c_ylw()` | `\x1B[33m` | 黄色 |
+| `c_cyn()` | `\x1B[36m` | 青色 |
+| `c_mag()` | `\x1B[35m` | 洋红 |
+| `c_wht()` | `\x1B[37m` | 白色 |
+| `c_rst()` | `\x1B[0m` | 重置 |
+
+## PS/2 键盘 (存根)
+
+文件: `sys/src/drivers/keyboard/`
+
+### 端口
+
+| I/O 端口 | 功能 |
+|----------|------|
+| 0x60 | 数据端口 |
+| 0x64 | 状态/命令端口 |
+
+### 计划功能
+
+- 8042 控制器初始化
+- IRQ1 中断处理
+- 扫描码 → ASCII 转换
+- US 键盘布局
+=== docs/kernel/init.md ===
+# 初始化流程
+
+## 从加电到用户 Shell
+
+### 阶段 1: Bootloader
+
+```
+BIOS → GRUB (multiboot)
+  └── 加载 m4kk1.krn 到 0x100000
+  └── 提供 multiboot_info 结构
+  └── 跳转到入口点
+```
+
+### 阶段 2: 汇编入口
+
+文件: `sys/src/init/entry.asm`
+
+```
+- 设置 multiboot 头 (MAGIC=0x1BADB002, FLAGS=0x00010003)
+- 初始化内核栈 (16 KB)
+- 清零 BSS 段
+- 调用 mkrn_main(mb_info, magic)
+```
+
+### 阶段 3: 内核主函数
+
+文件: `sys/src/kernel/kmain.c`
+
+```
+mkrn_main()
+  ├── 1. mkrn_console_init()         串口初始化 (COM1, 38400)
+  ├── 2. mkrn_memory_init(mb_info)   内存管理初始化
+  ├── 3. mkrn_gdt_init()             GDT 设置
+  ├── 4. mkrn_idt_init()             IDT + 中断处理程序
+  ├── 5. mkrn_timer_init(1000)       PIT 定时器 1000Hz
+  ├── 6. mkrn_process_init()         进程管理
+  ├── 7. mkrn_syscall_init()         int 0x80 系统调用表
+  ├──    m4k_syscall_init()          int 0x4D 系统调用表
+  ├──    mkrn_vfs_init()             VFS 初始化
+  ├──    mkrn_procfs_init()          /sys/proc
+  ├──    mkrn_sessions_init()        会话管理
+  ├── 8. mkrn_ll_init()              动态链接器 (存根)
+  ├── 9. mkrn_yafs_test()            YAFS 初始化
+  ├──    mkrn_yafs_create_fhs()      创建 FHS 目录树
+  ├──    mkrn_vfs_mount("/dev/yafs0", "/", "yafs")
+  ├── 10. 写入 ELF
+  │     ├── /bin/login          ← login_init_elf
+  │     ├── /bin/m4sh           ← m4sh_init_elf
+  │     └── /export/home/testuser
+  ├── 11. 创建配置文件
+  │     ├── /export/cfg/passwd.db    用户数据库
+  │     ├── /export/cfg/groups.db    组数据库
+  │     └── /export/cfg/timezone     时区 (+0000)
+  └── 12. mkrn_execve(init.elf)     启动 init 进程
+```
+
+### 阶段 4: Init 进程
+
+文件: `init/init.c`
+
+```
+m4k_spawn("/bin/login", 0)  启动登录程序
+└── m4k_fork_status()
+└── m4k_waitpid()
+```
+
+### 阶段 5: Login
+
+文件: `m4sh/login/login_standalone.c`
+
+```
+提示符: "M4KK1 login:"
+密码验证 (SHA-256 + salt)
+读取 /export/cfg/passwd.db
+成功 → exec /bin/m4sh
+失败 → 重试 (3 次后退出)
+```
+
+### 阶段 6: M4SH Shell
+
+文件: `m4sh/core/m4sh_main.c`
+
+```
+显示欢迎信息
+检查 euid == 0 → 运行 musr_boot_setup()
+循环登录 (直到 musr_login_ok)
+显示提示符 [m4kk1]@m4sh ~>
+字符逐个输入 / 行编辑 / 历史
+命令执行 (引号感知, &&, ||, ;, |)
+```
+
+## 启动输出示例
+
+```
+====================================
+    M4KK1 Y4KU Kernel Starting...
+====================================
+Bootloader Magic: 0x2BADB002
+Kernel Version: 1.0.0-build1
+...
+8. Initializing YAFS filesystem...
+   YAFS root tree LBA: 0x2
+   FHS directory tree created.
+   YAFS mounted as root filesystem.
+   Root dir listing (kernel):
+     D bin
+     D dev
+     ...
+9. Writing userspace ELFs and user DB to YAFS...
+10. Loading init...
+   Init loaded.
+====================================
+Starting Scheduler...
+====================================
+Switching to init process...
+```
+=== docs/kernel/memory.md ===
+# 内存管理
+
+## 物理内存分配器
+
+使用简单的 **伙伴系统 (Buddy System)** 管理物理内存，定义在 `sys/src/mm/memory.c`。
+
+### 设计
+
+- 最小块大小: 4 KB (一页)
+- 最大阶 (order): 4 (64 KB 连续块)
+- 分配策略: 首次适配
+- 使用位图跟踪空闲块
+
+### 初始化
+
+```c
+mkrn_memory_init(mb_info);
+// 从 GRUB multiboot 信息中读取内存映射
+// 标记已用区域，初始化空闲列表
+```
+
+### API
+
+| 函数 | 说明 |
+|------|------|
+| `mkrn_memory_init(mb_info)` | 使用 multiboot 信息初始化 |
+| `mkrn_memory_get_total()` | 获取总物理内存 (字节) |
+| `mkrn_memory_get_free()` | 获取空闲内存 (字节) |
+| `mkrn_memory_alloc_page()` | 分配一页 (4 KB) |
+| `mkrn_memory_free_page(addr)` | 释放一页 |
+
+### 内存统计 (启动时)
+
+```
+Total memory: 261044 KB
+Free memory:  257640 KB
+Used memory:  3404 KB
+```
+
+## 内核堆
+
+- 位置: 内核 BSS 段末尾
+- 大小: 4 MB (硬编码在 `linker.ld`)
+- 用途: 内核动态分配 (`mkrn_malloc` 未完全实现)
+
+## 链接器脚本
+
+```lds
+/* sys/src/init/linker.ld */
+SECTIONS
+{
+    . = 0x100000;                    // 加载地址 1 MB
+    
+    .multiboot : { *(.multiboot) }   // Multiboot 头
+    .text      : { *(.text) }
+    .rodata    : { *(.rodata) }
+    .data      : { *(.data) }
+    .bss       : { *(.bss) }
+    
+    _heap_start = .;
+    . += 4M;                         // 4 MB 堆
+    _heap_end = .;
+    
+    _kernel_stack = . + 16K;         // 16 KB 内核栈
+}
+```
+
+## 限制
+
+| 限制 | 说明 |
+|------|------|
+| 无分页 | 物理地址 == 虚拟地址 |
+| 无 MMU | 无内存保护 |
+| 无页缓存 | 直接磁盘 I/O |
+| 无交换 | Swap2 仅设计文档 |
+| 无 `mmap` | 仅 `brk` 系统调用 |
+=== docs/kernel/overview.md ===
+# 内核概述
+
+## 基本信息
+
+| 属性 | 值 |
+|------|-----|
+| 名称 | Y4KU (Yaku Kernel Universe) |
+| 架构 | i386 (32-bit x86) |
+| 引导 | GRUB multiboot |
+| 语言 | Freestanding C + NASM 汇编 |
+| 内存模型 | 单地址空间 (无 MMU) |
+| 特权级 | 全部 Ring 0 |
+| 频率 | PIT 定时器 1000 Hz |
+
+## 源代码结构
+
+```
+sys/src/
+├── kernel/            # 内核核心
+│   ├── kmain.c        # 主入口
+│   ├── process.c      # 进程管理
+│   ├── execve.c       # ELF 加载器
+│   ├── syscall.c      # int 0x80 系统调用分发
+│   ├── syscall_m4k.c  # int 0x4D 系统调用分发
+│   ├── signal.c       # 信号处理
+│   ├── namespace.c    # 命名空间
+│   ├── shell.c        # 内核 debug shell
+│   ├── ldso.c         # 动态链接器存根
+│   ├── proc/          # 调度器
+│   ├── syscall/       # 原生系统调用处理
+│   └── vfs/           # VFS 权限检查
+├── arch/m4kk1/        # 架构相关
+│   ├── gdt.c / gdt.asm
+│   ├── idt.c / idt.asm
+│   └── timer.c        # PIT 和 RTC
+├── drivers/           # 驱动
+│   └── console.c      # 串口
+├── fs/                # 文件系统
+│   ├── vfs.c
+│   ├── procfs.c
+│   └── yafs/
+├── mm/                # 内存管理
+│   └── memory.c
+├── lib/               # 工具库
+│   ├── string.c
+│   └── debug.c
+└── include/           # 头文件
+    ├── kernel.h
+    ├── process.h
+    ├── syscall.h
+    ├── vfs.h
+    └── ...
+```
+
+## 内核功能清单
+
+### 已实现
+- GDT 设置 (代码段、数据段、TSS)
+- IDT 设置 (32 个中断处理程序)
+- PIT 定时器 (1000 Hz 调度滴答)
+- RTC CMOS 读写 (BCD 转换)
+- 物理内存分配 (buddy 系统)
+- 进程创建/销毁/等待
+- ELF 可执行文件加载
+- 10 个信号 (SIGABRT, SIGKILL, SIGTERM, SIGSTOP, SIGCONT, SIGTRAP, SIGCHLD, SIGPIPE, SIGUSR1, SIGUSR2)
+- 命名空间 (每个进程 16 个挂载点)
+- VFS (ramfs, YAFS)
+- ProcFS (/sys/proc)
+- 系统调用表注册
+
+### 未实现
+- MMU / 分页
+- Ring 3 用户态
+- 动态链接器
+- 块设备缓存
+- SMP / 多核
+- APIC / IOAPIC
+- 实时调度
+- 网络协议栈
+=== docs/kernel/process.md ===
+# 进程模型
+
+## 进程控制块
+
+每个进程由 `mkrn_process_t`（定义在 `process.h`）表示，包含：
+
+```c
+typedef struct {
+    uint32_t    pid;              // 进程 ID
+    uint32_t    ppid;             // 父进程 ID
+    uint64_t    state_tag;        // 状态标签位掩码
+    char        name[32];         // 进程名
+    // ... 寄存器上下文、文件描述符表、命名空间等
+} mkrn_process_t;
+```
+
+## 状态标签 (State Tag)
+
+进程状态使用 `uint64_t` 位掩码，支持组合状态：
+
+| 标签 | 值 (位) | 说明 |
+|------|---------|------|
+| `SCHED_READY` | 0 | 就绪 |
+| `SCHED_RUNNING` | 1 | 运行中 |
+| `SCHED_SLEEPING` | 2 | 睡眠 |
+| `WAIT_FS` | 3 | 等待文件系统 |
+| `WAIT_PIPE` | 4 | 等待管道 |
+| `WAIT_TIMER` | 5 | 等待定时器 |
+| `WAIT_IPC` | 6 | 等待 IPC |
+| `WAIT_CHILD` | 7 | 等待子进程 |
+| `WAIT_LOCK` | 8 | 等待锁 |
+| `WAIT_TERMINAL` | 9 | 等待终端 I/O |
+| `TRACED` | 10 | 被跟踪 |
+| `STOPPED` | 11 | 已停止 |
+| `ZOMBIE` | 12 | 僵尸进程 |
+| `IDLE` | 13 | IDLE 进程 |
+
+## 进程生命周期
+
+```
+创建 (mkrn_process_create / m4k_spawn / fork)
+  │
+  ▼
+就绪 (SCHED_READY)
+  │
+  ▼
+运行 (SCHED_RUNNING) ←── 调度器选择
+  │
+  ├──▶ 睡眠 (SCHED_SLEEPING + WAIT_*) ──▶ 就绪
+  ├──▶ 停止 (STOPPED) ──▶ 就绪
+  ├──▶ 僵尸 (ZOMBIE) ──▶ (父进程 waitpid 后销毁)
+  └──▶ 退出 (mkrn_process_exit)
+```
+
+## 调度器
+
+当前使用 **协作式轮转调度** (`mkrn_pick_next_task`)。调度器遍历进程列表，选择第一个 `SCHED_READY` 进程运行。没有时间片抢占，进程需要主动让出 CPU（通过系统调用）。
+
+```c
+// mkrn_sched.c
+uint32_t mkrn_pick_next_task(void)
+{
+    for (uint32_t i = 0; ; i++) {
+        uint32_t pid = (last_pid + i) % max_pids;
+        if (processes[pid].state_tag & SCHED_READY)
+            return pid;
+    }
+}
+```
+
+## 系统调用 (进程相关)
+
+| 系统调用 | 功能 |
+|----------|------|
+| `S_FORK` (0x02) | 创建子进程 |
+| `S_EXIT` (0x01) | 退出当前进程 |
+| `S_WAITPID` (0x07) | 等待子进程 |
+| `S_GETPID` (0x09) | 获取 PID |
+| `S_GETPPID` (0x0A) | 获取父 PID |
+| `S_KILL` (0x64) | 发送信号 |
+| `S_GETPROCS` (0x85) | 获取进程列表 |
+
+## 特殊进程
+
+| 进程 | PID | 说明 |
+|------|-----|------|
+| init | 1 | 第一个用户进程，加载 m4sh |
+| idle | - | 空闲进程 (未完全实现) |
+
+## 进程限制
+
+- 最大进程数: `MAX_PROCESSES` (默认 64)
+- PID 范围: 0 ~ MAX_PROCESSES-1
+- 每个进程文件描述符: 16
+- 每个进程命名空间挂载点: 16
+=== docs/kernel/syscall.md ===
+# 系统调用
+
+M4KK1 支持两套系统调用 ABI：**`int 0x80`**（兼容路径）和 **`int 0x4D`**（M4KK1 原生路径）。
+
+## int 0x80 (兼容路径)
+
+### 调用约定
+
+```
+输入:
+  %eax = 系统调用号
+  %ebx = arg1 (如果存在)
+  %ecx = arg2 (如果存在)
+  %edx = arg3 (如果存在)
+
+输出:
+  %eax = 返回值
+```
+
+### 包装函数
+
+用户空间通过 `m4sh.h` 中的内联函数调用：
+
+```c
+static inline uint32_t musr_sc0(uint32_t n)       // 0 参数
+static inline uint32_t musr_sc1(uint32_t n, a)     // 1 参数
+static inline uint32_t musr_sc2(uint32_t n, a, b)  // 2 参数
+static inline uint32_t musr_sc3(uint32_t n, a,b,c) // 3 参数
+```
+
+### 系统调用表 (部分)
+
+| 号 | 名称 | 功能 | musr_* 包装 |
+|----|------|------|-------------|
+| 0x01 | EXIT | 退出进程 | `musr_sc0(S_EXIT)` |
+| 0x02 | FORK | 创建进程 | `musr_sc0(S_FORK)` |
+| 0x03 | READ | 读文件 | `musr_sc3(S_READ, fd, buf, count)` |
+| 0x04 | WRITE | 写文件 | `musr_sc3(S_WRITE, fd, buf, count)` |
+| 0x05 | OPEN | 打开文件 | `musr_sc2(S_OPEN, path, flags)` |
+| 0x06 | CLOSE | 关闭文件 | `musr_sc1(S_CLOSE, fd)` |
+| 0x07 | WAITPID | 等待子进程 | `musr_sc3(S_WAITPID, pid, status, opts)` |
+| 0x09 | GETPID | 获取 PID | `musr_sc0(S_GETPID)` |
+| 0x0B | BRK | 设置堆边界 | `musr_sc1(S_BRK, addr)` |
+| 0x10 | GETCWD | 获取工作目录 | `musr_sc2(S_GETCWD, buf, size)` |
+| 0x11 | CHDIR | 切换目录 | `musr_sc1(S_CHDIR, path)` |
+| 0x12 | MKDIR | 创建目录 | `musr_sc1(S_MKDIR, path)` |
+| 0x13 | RMDIR | 删除目录 | `musr_sc1(S_RMDIR, path)` |
+| 0x15 | UNLINK | 删除文件 | `musr_sc1(S_UNLINK, path)` |
+| 0x16 | RENAME | 重命名 | `musr_sc2(S_RENAME, old, new)` |
+| 0x1E | TIME | 获取时间 | `musr_sc0(S_TIME)` |
+| 0x28 | PIPE | 创建管道 | `musr_sc1(S_PIPE, &fds)` |
+| 0x2A | DUP2 | 复制 FD | `musr_sc2(S_DUP2, old, new)` |
+| 0x47 | GETDENTS | 读目录 | `musr_sc3(S_GETDENTS, fd, buf, count)` |
+| 0x5D | SETTIME | 设置时间 | `musr_sc1(S_SETTIME, epoch)` |
+| 0x64 | KILL | 发送信号 | `musr_sc2(S_KILL, pid, sig)` |
+| 0x73 | UNAME | 系统信息 | `musr_sc1(S_UNAME, &buf)` |
+| 0x84 | SYSINFO | 内存信息 | `musr_sc1(S_SYSINFO, &buf)` |
+| 0x85 | GETPROCS | 进程列表 | `musr_sc2(S_GETPROCS, buf, max)` |
+| 0x86 | STATFS | 文件系统信息 | `musr_sc1(S_STATFS, &buf)` |
+| 0x87 | MOUNT | 挂载 | `musr_sc3(S_MOUNT, src, tgt, fst)` |
+| 0x88 | UMOUNT | 卸载 | `musr_sc1(S_UMOUNT, tgt)` |
+| 0x89 | MOUNTINFO | 挂载信息 | `musr_sc2(S_MOUNTINFO, buf, max)` |
+| 0x8A | GETGROUPS | 获取组列表 | `musr_sc2(S_GETGROUPS, size, list)` |
+| 0x8C | UPTIME | 运行时间 | `musr_sc0(S_UPTIME)` |
+| 0x8D | RTCREAD | 读 RTC | `musr_sc1(S_RTCREAD, &buf)` |
+| 0x8E | RTCWRITE | 写 RTC | `musr_sc1(S_RTCWRITE, &buf)` |
+| 0x8F | TIMERLIST | 定时器列表 | `musr_sc0(S_TIMERLIST)` |
+
+## int 0x4D (M4KK1 原生路径)
+
+M4KK1 原生系统调用使用 `int 0x4D` (ASCII 'M')，系统调用号为 `0x4D00XXXX` 格式。
+
+```c
+static inline uint32_t m4k_sc0(uint32_t n)        // 0 参数
+static inline uint32_t m4k_sc1(uint32_t n, a)     // 1 参数
+static inline uint32_t m4k_sc2(uint32_t n, a, b)  // 2 参数
+static inline uint32_t m4k_sc3(uint32_t n, a,b,c) // 3 参数
+static inline uint32_t m4k_sc4(uint32_t n, a,b,c,d) // 4 参数 (使用 esi)
+```
+
+### 原生系统调用号
+
+| 号 | 名称 | 功能 |
+|--------|------|------|
+| 0x4D000001 | M4K_SYS_EXIT | 退出进程 |
+| 0x4D000002 | M4K_SYS_SPAWN | 创建进程 |
+| 0x4D000003 | M4K_SYS_WAIT | 等待进程 |
+| 0x4D000004 | M4K_SYS_GETPID | 获取 PID |
+| 0x4D000005 | M4K_SYS_KILL | 发送信号 |
+| 0x4D000007 | M4K_SYS_FORK_ST | fork 状态 |
+| 0x4D000008 | M4K_SYS_SETNS | 设置命名空间 |
+| 0x4D00000E | M4K_SYS_MMAP | 内存映射 |
+| 0x4D00000F | M4K_SYS_MUNMAP | 取消映射 |
+| 0x4D000010 | M4K_SYS_MEMINFO | 内存信息 |
+| 0x4D000020-0x4D00002A | 用户/组相关 | UID, GID, chmod, chown, access |
+| 0x4D000030-0x4D000031 | rlimit | set/get rlimit |
+| 0x4D000040 | M4K_SYS_BRK | 设置堆边界 |
+=== docs/kernel/timer.md ===
+# 定时器与 RTC
+
+## PIT 定时器
+
+使用 Intel 8253 PIT (Programmable Interval Timer) 芯片。
+
+### 初始化
+
+```c
+mkrn_timer_init(1000);  // 1000 Hz
+```
+
+- 通道 0，模式 3 (方波)
+- 除数 = 1193180 / frequency
+- 默认频率: 1000 Hz (每 1ms 一次中断)
+
+### 内核 API
+
+| 函数 | 说明 |
+|------|------|
+| `mkrn_timer_init(freq)` | 初始化定时器 |
+| `mkrn_timer_get_ticks()` | 获取滴答计数 |
+| `mkrn_timer_get_uptime()` | 获取运行时间 (ms) |
+| `mkrn_timer_wait(ms)` | 忙等待 (毫秒) |
+| `mkrn_timer_sleep(s)` | 睡眠 (秒) |
+| `mkrn_timer_usleep(us)` | 休眠 (微秒) |
+| `mkrn_timer_nsleep(ns)` | 休眠 (纳秒) |
+| `mkrn_timer_set_frequency(hz)` | 重新设置频率 |
+| `mkrn_timer_get_frequency()` | 获取当前频率 |
+| `mkrn_timer_get_cpu_frequency()` | 获取校准的 CPU 频率 |
+| `mkrn_timer_calibrate()` | 校准 CPU 频率 |
+| `mkrn_timer_get_nanoseconds()` | 获取纳秒时间戳 |
+
+### 定时器中断处理
+
+```c
+// 每秒调用 1000 次
+mkrn_timer_handler() {
+    u32TimerTicks++;
+    u64TimerNanoseconds += 1000000;  // 1ms
+    // 检查并触发闹钟
+    // 调用回调函数
+}
+```
+
+## RTC (CMOS)
+
+使用 CMOS RAM (Motorola MC146818) 读取/设置实时时钟。
+
+### 寄存器映射
+
+| I/O 端口 | 功能 |
+|----------|------|
+| 0x70 | 寄存器选择 (NMI 控制位) |
+| 0x71 | 数据读写 |
+
+### 常用寄存器
+
+| 寄存器 | 索引 | 说明 |
+|--------|------|------|
+| RTC_SECONDS | 0x00 | 秒 (0-59) |
+| RTC_MINUTES | 0x02 | 分 (0-59) |
+| RTC_HOURS | 0x04 | 时 (0-23) |
+| RTC_DAY | 0x07 | 日 (1-31) |
+| RTC_MONTH | 0x08 | 月 (1-12) |
+| RTC_YEAR | 0x09 | 年 (0-99) |
+| STATUS_A | 0x0A | 状态 A (UIP 位) |
+| STATUS_B | 0x0B | 状态 B (二进制/BCD 标志) |
+
+### BCD 转换
+
+RTC 默认使用 BCD 编码。当 `STATUS_B` 的二进制模式位未设置时，内核自动转换：
+
+```c
+// BCD → 二进制
+value = (value >> 4) * 10 + (value & 0x0F);
+
+// 二进制 → BCD (写)
+value = ((value / 10) << 4) | (value % 10);
+```
+
+`mkrn_timer_read_rtc()` 已修复 BCD 双转换 bug（年份不再重复加 2000）。
+
+### RTC API
+
+| 函数 | 说明 |
+|------|------|
+| `mkrn_timer_read_rtc(&time)` | 读取当前 RTC 时间 |
+| `mkrn_timer_set_rtc(&time)` | 设置 RTC 时间 |
+
+## 闹钟系统
+
+### 数据结构
+
+```c
+#define MAX_ALARMS 256
+
+typedef struct {
+    uint32_t id;                // 闹钟 ID
+    uint32_t interval_ms;       // 间隔 (ms, 0=一次性)
+    uint32_t remaining_ms;      // 剩余时间
+    uint8_t  active;            // 是否激活
+    void     (*callback)(void); // 回调函数
+} mkrn_timer_alarm_t;
+```
+
+### API
+
+| 函数 | 说明 |
+|------|------|
+| `mkrn_timer_create_alarm(ms, callback)` | 创建闹钟 |
+| `mkrn_timer_destroy_alarm(id)` | 销毁闹钟 |
+| `mkrn_timer_get_active_count()` | 获取活跃闹钟数 |
+
+### 系统调用
+
+| 系统调用 | 功能 |
+|----------|------|
+| `S_TIME` (0x1E) | 获取 Unix 时间戳 |
+| `S_SETTIME` (0x5D) | 设置系统时间 |
+| `S_UPTIME` (0x8C) | 获取运行时间 |
+| `S_RTCREAD` (0x8D) | 读取 RTC 时间 |
+| `S_RTCWRITE` (0x8E) | 设置 RTC 时间 |
+| `S_TIMERLIST` (0x8F) | 获取活跃定时器数 |
+=== docs/plan/roadmap.md ===
+# 开发路线图
+
+## 当前 (v1.0.0-alpha1)
+
+### 已完成
+- [x] 内核核心 (GDT, IDT, PIT, 进程调度)
+- [x] 系统调用框架 (int 0x80 + int 0x4D)
+- [x] YAFS 文件系统 (B+Tree 基础操作)
+- [x] VFS 层
+- [x] M4SH Shell (引号、操作符、管道)
+- [x] 40+ 内置命令
+- [x] 正则引擎 (grep)
+- [x] 登录认证 (密码 SHA-256)
+- [x] date 命令 (完整实现)
+- [x] 时区支持
+- [x] 构建系统
+
+## 短期 (v1.1.0 - v1.3.0)
+
+### Shell 增强 (1-2 周)
+- [ ] I/O 重定向 (`>` `<` `>>` `2>`) — 最刚需
+- [ ] `test`/`[` 命令
+- [ ] Shell 脚本执行
+- [ ] for/while 循环
+- [ ] `true`/`false` 命令
+- [ ] 别名支持
+
+### 文件系统 (1-2 周)
+- [ ] 确保 `/export/cfg/` 目录在 FHS 创建中存在
+- [ ] 块缓存
+- [ ] 文件权限检查
+- [ ] 符号链接
+
+### 设备驱动 (2-3 周)
+- [ ] PS/2 键盘驱动 (IRQ1)
+- [ ] 帧缓冲 (VBE/VESA)
+- [ ] 点阵字体渲染
+- [ ] 帧缓冲终端
+
+### 测试 (持续)
+- [ ] 完善自动化测试套件
+- [ ] 压力测试
+- [ ] 回归测试
+
+## 中期 (v2.0.0)
+
+### 图形界面 (3-4 周)
+- [ ] PS/2 鼠标驱动
+- [ ] 窗口管理器基础
+- [ ] GUI 终端
+
+### 网络 (3-4 周)
+- [ ] RTL8139 / NE2000 驱动
+- [ ] lwIP 集成
+- [ ] TCP/UDP 基本通信
+- [ ] DNS 解析
+
+### 内存管理 (2-3 周)
+- [ ] 分页 / MMU
+- [ ] Ring 3 用户态隔离
+- [ ] 动态链接器
+- [ ] `malloc`/`free`
+
+### 存储 (2 周)
+- [ ] ATA/PATA 驱动
+- [ ] AHCI 驱动
+- [ ] YAFS 磁盘后端
+
+## 长期 (v3.0.0+)
+
+### 系统功能
+- [ ] SMP 多核支持
+- [ ] APIC / IOAPIC
+- [ ] POSIX 兼容层
+- [ ] 用户态驱动程序
+- [ ] 包管理器 (pkgmgr)
+- [ ] 实时调度
+- [ ] SELinux / 强制访问控制
+
+### YAFS 完善
+- [ ] COW 快照
+- [ ] 日志 / 崩溃恢复
+- [ ] AES-128 XTS 加密
+- [ ] yafsctl 管理工具
+
+### 体系结构移植
+- [ ] x86_64
+- [ ] ARM
+- [ ] RISC-V
+
+## 里程碑
+
+| 版本 | 目标 | 预计 |
+|------|------|------|
+| v1.0.0-beta1 | Shell I/O 重定向 + 键盘驱动 | ~2 周 |
+| v1.0.0-rc1 | 帧缓冲终端 + 自动化测试 | ~4 周 |
+| v1.0.0 | 稳定发布 | ~6 周 |
+| v2.0.0-alpha1 | 基本 GUI + 网络 | ~10 周 |
+| v2.0.0 | MMU + 用户态 | ~16 周 |
+=== docs/README.md ===
+# M4KK1 文档中心
+
+> **语言选择 | Language:**
+> - **[中文 (zh-CN)](README.md)** ← 当前
+> - **[English (en)](en/README.md)**
+
+本文档以中文为主要语言。英文版正在持续翻译中。
+
+## 文档导航
+
+### 架构概述
+- **[系统架构](architecture.md)** — 整体设计、分层结构、设计哲学
+
+### 内核子系统 (Y4KU)
+- **[内核概述](kernel/overview.md)** — 内核架构、中断、调度
+- **[进程模型](kernel/process.md)** — 进程生命周期、状态标签、调度器
+- **[系统调用](kernel/syscall.md)** — `int 0x80` / `int 0x4D` ABI
+- **[定时器与 RTC](kernel/timer.md)** — PIT 定时器、CMOS RTC、闹钟系统
+- **[内存管理](kernel/memory.md)** — 物理内存分配器
+- **[初始化流程](kernel/init.md)** — 从启动到用户态
+- **[驱动子系统](kernel/drivers.md)** — 串口控制台、PS/2 键盘/鼠标存根
+
+### 用户空间 (M4SH)
+- **[用户空间概述](userspace/overview.md)** — 用户态程序模型
+- **[M4SH Shell](userspace/m4sh.md)** — Shell 设计、引号处理、操作符
+- **[命令参考](userspace/commands.md)** — 全部 40+ 内置命令
+- **[认证与授权](userspace/auth.md)** — 登录、密码、组、权限
+- **[正则引擎](userspace/regex.md)** — 内置正则表达式引擎
+
+### 文件系统
+- **[文件系统概述](fs/overview.md)** — 目录层次与支持的文件系统
+- **[VFS 层](fs/vfs.md)** — 虚拟文件系统接口
+- **[YAFS 文件系统](fs/yafs.md)** — COW B+Tree 文件系统
+
+### 开发指南
+- **[开发指南](dev/guide.md)** — 开发环境、工作流、贡献
+- **[构建系统](dev/build.md)** — 构建脚本、编译选项、链接
+- **[测试指南](dev/testing.md)** — 主机端和目标端测试
+- **[版本管理](dev/versioning.md)** — 版本号、ISO 命名、发布流程
+
+### 计划
+- **[开发路线图](plan/roadmap.md)** — 近期和远期目标
+
+## 快速链接
+
+| 资源 | 位置 |
+|------|------|
+| 源代码根目录 | `/mnt/f/M4KK1/` |
+| 构建脚本 | `tools/build/build_krn.sh` |
+| 内核入口 | `sys/src/init/entry.asm` |
+| 内核主函数 | `sys/src/kernel/kmain.c` |
+| Shell 主程序 | `m4sh/core/m4sh_main.c` |
+| 4P1 规范 | `docs/4P1/standard.md` |
+| 编码规范 | `docs/style/README.md` |
+=== docs/style/README.md ===
+# M4KK1 4P1 Coding Style Specification (v1.0)
+**"Readability by Convention. Consistency by Force."**
+
+---
+
+## 0. Core Principles
+
+1. **Convention over configuration**: Write strictly to this spec.
+   No extra formatting tooling required for human readability.
+2. **Explicit over implicit**: Use naming and prefixes to clearly
+   identify scope and type.
+3. **Minimalism**: Deep nesting (pointer depth and logic branching)
+   is forbidden.
+
+---
+
+## 1. Basic Formatting
+
+### 1.1 Indentation and Line Width
+
+- **Indent**: 4 spaces (no tab characters).
+- **Line width**: Maximum **80 characters**.
+- **Wrapping**: When a line exceeds 80 chars, break after an operator
+  (`+`, `&&`, `||`, etc.) and indent the continuation by 8 spaces.
+
+### 1.2 Brace Style (K&R)
+
+**Control flow**: Opening brace `{` stays on the same line. Closing
+brace `}` is on its own line.
+
+```c
+/* Correct (K&R) */
+if (condition) {
+    do_something();
+} else {
+    do_other();
+}
+
+/* Wrong (Allman) */
+if (condition)
+{
+    do_something();
+}
+```
+
+**Exception -- function definitions**: The opening brace goes on a
+**new line**.
+
+```c
+/* Function definition: brace on new line */
+int mkrn_schedule(void)
+{
+    return 0;
+}
+```
+
+---
+
+## 2. Naming Convention
+
+Uses a **Hungarian + camelCase** hybrid style, strictly
+distinguishing **kernel space** from **user space**.
+
+### 2.1 Scope and Ownership Prefixes
+
+| Prefix | Full Name | Scope | Example |
+| :--- | :--- | :--- | :--- |
+| `mkrn_` | M4K KeRnel | **Kernel source** (`sys/src/` all files) | `mkrn_page_alloc()`, `mkrn_current_task` |
+| `musr_` | M4K USeR | **User-space** (`usr/bin/`, `lib/`) | `musr_printf()`, `musr_strlen` |
+| (none) | local | **File-static or local** variables | `int total; char *buf;` |
+
+> **Mandatory**: Every exported global function or variable **must**
+> carry `mkrn_` or `musr_`. No prefix means it is `static` to that
+> translation unit.
+
+**Note on `m4k_`**: The `m4k_` prefix is reserved for the **syscall
+ABI layer** (declared in `<m4k/syscall.h>`) and is the only exception
+to the `mkrn_`/`musr_` rule.
+
+### 2.2 Hungarian Type Tags
+
+Append a type tag after the prefix (and before the camelCase name).
+
+| Tag | Meaning | Example |
+| :--- | :--- | :--- |
+| `u32` | uint32_t | `mkrn_u32TickCount` |
+| `s64` | int64_t | `mkrn_s64Offset` |
+| `p` | Pointer | `pCharBuffer` (`char*`), `pM4kTask` |
+| `sz` | Null-terminated string | `szPathname` |
+| `b` | Boolean | `bIsReady` |
+| `e` | Enum | `eFileMode` |
+| `fn` | Function pointer | `fnCallback` |
+
+**Examples**:
+- Kernel global function: `mkrn_schedule()` (no type tag, just
+  camelCase).
+- Kernel global variable: `mkrn_u32TickCount`.
+- User-space static function: `static int musr_format_buffer()`.
+- User-space local pointer: `char *pBuf`.
+
+### 2.3 Macros and Constants
+
+- **Macros**: ALL_CAPS + underscore.
+```c
+#define M4K_SYS_OPEN  0xM4K00010
+#define SEAD_OPS_MAX  64
+```
+- **Enum values**: ALL_CAPS + underscore.
+```c
+enum file_flags {
+    FILE_FLAG_READ  = 0x01,
+    FILE_FLAG_WRITE = 0x02
+};
+```
+
+---
+
+## 3. Pointer Restrictions
+
+**Hard limit**: Pointer nesting must not exceed **2 levels**
+(i.e., `***` is strictly forbidden).
+
+| Level | Example | Allowed? | Alternative |
+| :--- | :--- | :--- | :--- |
+| 0 | `int value` | Yes | |
+| 1 | `int *pValue` | Yes | |
+| 2 | `char **argv` | Yes (function params only) | |
+| 3+ | `void ***pppData` | **No** | Use `struct` + double pointer |
+
+**Additional rules for double pointers**:
+- Only **function parameters** may use `char **argv`.
+- Struct members must not be double pointers (prevents leaks and
+  dangling references).
+
+---
+
+## 4. Comment Style
+
+### 4.1 File Header
+
+Every `.c` / `.h` file must begin with:
+
+```c
+/*
+ * M4KK1 4P1 - filename.c
+ * Description: Brief description of purpose.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
+ */
+```
+
+### 4.2 Function Documentation (Doxygen)
+
+Every exported (`mkrn_` / `musr_` / `m4k_`) function must have:
+
+```c
+/**
+ * mkrn_page_alloc - Allocate physical memory pages
+ * @order: Number of contiguous pages (2^order)
+ *
+ * Return: Physical address, or NULL_PHYS on failure
+ */
+uintptr_t mkrn_page_alloc(int order);
+```
+
+### 4.3 Inline Comments
+
+- Use `/* comment */` format only. Do **not** use `//` comments.
+- Write comments to explain **why**, not **what**.
+
+---
+
+## 5. Headers and Includes
+
+### 5.1 Header Guard
+
+Use `#pragma once` (supported by GCC and Clang).
+
+```c
+#pragma once
+```
+
+### 5.2 Include Order (Strict)
+
+In every `.c` file, `#include` directives must appear in this order:
+
+1. **Corresponding header** (e.g., `src.c` first includes
+   `"src.h"`).
+2. **Kernel-wide headers** (`<m4k/types.h>`).
+3. **Library headers** (alphabetical, e.g., `<string.h>`).
+4. **Local headers** (`"local_dep.h"`).
+
+---
+
+## 6. Error Handling
+
+- Every `mkrn_` function must return values per the 4P1 error
+  convention: 0 or positive on success, negative `M4K_E*` on failure.
+- Do **not** call `panic()` inside functions (reserve for
+  unrecoverable hardware faults).
+- Callers must check return values unless marked `__must_check`.
+
+```c
+int ret = mkrn_open(szPath, flags);
+if (ret < 0) {
+    return ret;
+}
+```
+
+---
+
+## 7. Hard Limits Quick Reference
+
+| Item | Limit |
+| :--- | :--- |
+| Pointer nesting | Max **2 levels** (`**`) |
+| Function length | Max **100 lines** (40 recommended) |
+| Branch nesting | Max **3 levels** (`if`/`for`/`while`) |
+| Global variables | Must have `mkrn_`/`musr_` prefix; declare `extern` in header |
+| Casts | Explicit casts **must** be followed by a comment explaining safety |
+
+---
+
+## 8. Good Code vs. Bad Code
+
+### Correct (4P1-compliant)
+
+```c
+/*
+ * M4KK1 4P1 - kernel/vm/mkrn_page.c
+ * Description: Physical page frame allocator core.
+ *
+ * Copyright (c) 2026 Yaku Makki
+ * SPDX-License-Identifier: 4P1-Custom
+ */
+
+#pragma once
+#include <m4k/types.h>
+
+/* Global kernel variable */
+uint32_t mkrn_u32FreePages = 0;
+
+/**
+ * mkrn_alloc_frame - Allocate one physical page
+ *
+ * Return: Physical address, or M4K_ENOMEM on error
+ */
+uintptr_t mkrn_alloc_frame(void)
+{
+    uint32_t u32Frame = mkrn_find_free();
+    if (u32Frame == INVALID) {
+        return -M4K_ENOMEM;
+    }
+    mkrn_u32FreePages--;
+    return (uintptr_t)(u32Frame << 12);
+}
+```
+
+### Wrong (not 4P1-compliant)
+
+```c
+// ERROR 1: tab indent, missing prefix
+void my_malloc() {
+    int ***pData; /* ERROR 2: triple pointer */
+    // ERROR 3: no Hungarian notation
+    int a;
+}
+```
+=== docs/style/versions_standard.md ===
+# M4KK1 4P1 Versioning & ISO Naming Standard
+**Version**: v1.0  
+**Status**: Active  
+**Scope**: M4KK1 Project Artifacts (ISO, Binaries, Releases)
+
+---
+
+## 1. Core Naming Schema
+
+All M4KK1 release images (ISO) and core binary packages **must** adhere to the following naming schema, they must under ./iso:
+
+```text
+m4kk1_<MAJOR>.<MINOR>.<PATCH>_build<BUILD>-<CLASSIFIER><CLASSIFIER_VER>.iso
+```
+
+**Example parsed name**:  
+`m4kk1_1.7.2_build1267-alpha4.iso`
+
+| Segment | Example Value | Meaning |
+| :--- | :--- | :--- |
+| **Product** | `m4kk1` | Fixed project prefix (lowercase). |
+| **MAJOR** | `1` | Major architectural changes or breaking API changes (see §2). |
+| **MINOR** | `7` | New features, backward‑compatible (**increments up to 19, then carries to MAJOR**, see §3). |
+| **PATCH** | `2` | Bug fixes, security patches, performance tweaks (no new features). |
+| **BUILD** | `1267` | Automatically incremented build number (starts at 1). |
+| **CLASSIFIER** | `alpha` | Release stage identifier (see §4). |
+| **CLASSIFIER_VER** | `4` | Iteration number for that classifier (4th alpha). |
+
+---
+
+## 2. Segment Definitions
+
+### 2.1 MAJOR Version
+- **Triggers**:
+  - **Kernel ABI break**: changes to `int 0x4D` syscall numbers, or significant changes to core `mkrn_task_t` layout.
+  - **Filesystem format change**: YAFS on‑disk format modifications (e.g., inode structure changes) that prevent mounting older images.
+  - **Major architecture shift**: e.g., moving from i386 to x86_64 and dropping 32‑bit support, or rewriting the scheduler core causing behaviour changes.
+- **Increment rule**: Manual (decided by the lead maintainer). If MINOR reaches 20 and carries over, MAJOR is incremented by 1 and MINOR resets to 0.
+
+### 2.2 MINOR Version
+- **Triggers**:
+  - Addition of new system calls (`M4K_SYS_*`).
+  - Addition of new standard tools (e.g., `chmod`, `usermod`).
+  - Extension of `/sys/proc` fields or addition of new kernel‑exported files.
+  - MINOR starts at 0 and increments up to 19.
+  - When MINOR reaches `20`, it **must** carry over: `MAJOR += 1`, `MINOR = 0`.
+  - *Example*: the version after `1.19.0` must be `2.0.0` (not `1.20.0`).
+  - *Rationale*: This reflects the 4P1 philosophy of "minimalism" – forcing a consolidation and architectural review after 20 feature milestones.
+
+### 2.3 PATCH Version
+- **Triggers**:
+  - Fixes for critical kernel crashes (Panics) or memory leaks.
+  - Documentation corrections or build script compatibility fixes.
+  - **No** new features or API changes allowed in a PATCH release.
+- **Increment rule**: Incremented manually or by script after a hotfix. When MAJOR or MINOR increments, PATCH resets to 0.
+
+---
+
+## 3. Build Metadata
+
+### 3.1 BUILD Number
+- **Definition**: `build<BUILD>` is a strictly increasing integer uniquely identifying a build artifact.
+- **Source**: Recommended to use CI/CD system build numbers (e.g., GitHub Actions `run-id`), or local developers can use the last 4 digits of `date +%s`.
+- **Reset policy**: This number **never resets** over the entire project lifetime. It distinguishes artifacts built under the same version string but with different environments (e.g., different GCC versions).
+
+### 3.2 CLASSIFIER and CLASSIFIER_VER
+Identifies the software lifecycle stage, helping testers assess stability.
+
+| Classifier | Meaning | When used | Example |
+| :--- | :--- | :--- | :--- |
+| `alpha` | Internal development | Unstable, core developers only | `m4kk1_2.0.0_build100-alpha1.iso` |
+| `beta` | Public beta | Main features locked, early adopters | `m4kk1_2.0.0_build150-beta3.iso` |
+| `rc` (Release Candidate) | Candidate for release | Critical bugs fixed, preparing for final | `m4kk1_2.0.0_build200-rc1.iso` |
+| *(omitted)* | Stable release | Fully tested, production‑ready | `m4kk1_1.7.2_build1267.iso` |
+
+**Rules**:
+- When releasing a **Stable** build, the `-classifier` suffix must be omitted.
+- Classifier version starts at 1 and increments each time a new build of the same classifier is released (e.g., `rc1` → `rc2`).
+
+---
+
+## 4. Mapping to Git Tags
+
+To ease traceability, Git tags should map to ISO version strings as follows:
+
+| Type | Git Tag Format | Corresponding ISO Name |
+| :--- | :--- | :--- |
+| Development snapshot | `v1.7.2-alpha1` | `m4kk1_1.7.2_buildXXX-alpha1.iso` |
+| Release Candidate | `v1.7.2-rc2` | `m4kk1_1.7.2_buildXXX-rc2.iso` |
+| Stable release | `v1.7.2` | `m4kk1_1.7.2_buildXXX.iso` |
+
+---
+
+## 5. Version Increment Decision Table
+
+| Change Type | MAJOR | MINOR | PATCH | Example (current: `1.7.2`) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Incompatible syscall added** | +1 | 0 | 0 | `2.0.0` |
+| **New 4P1 standard tool added** | 0 | +1 | 0 | `1.8.0` (or `2.0.0` if MINOR was 19) |
+| **Critical panic/memory leak fixed** | 0 | 0 | +1 | `1.7.3` |
+| **Documentation/build script fixes** | 0 | 0 | +1 | `1.7.3` |
+| **Internal refactoring (no API changes)** | 0 | 0 | +1 | `1.7.3` (**must** change PATCH to ensure rollback traceability) |
+
+---
+
+## 6. Automation and Storage
+
+### 6.1 Root `VERSION` File
+To ensure build consistency, the project root **must** contain a `VERSION` file with the following content:
+
+```text
+MAJOR=1
+MINOR=7
+PATCH=2
+BUILD=1267
+CLASSIFIER=alpha4
+```
+
+Build scripts (Makefile) must read this file before packaging the ISO to guarantee the ISO name matches the code state.
+
+### 6.2 Multi‑Architecture Support
+When M4KK1 supports ARM64 or RISC‑V, the architecture label should be inserted (before `_build`):
+
+```text
+m4kk1_1.7.2_arm64_build1267-alpha4.iso
+m4kk1_1.7.2_x86_64_build1267.iso
+```
+
+---
+
+**End of Document**=== docs/userspace/auth.md ===
+# 认证与授权
+
+## 用户数据库
+
+文件: `/export/cfg/passwd.db`
+
+格式 (类似 `/etc/passwd`)：
+
+```
+username:uid:gid:home:shell:gecos:password_hash
+```
+
+### 默认用户
+
+```
+root:0:0:/export/root:/bin/m4sh:System Administrator:<hash>
+testuser:1001:1001:/home/testuser:/bin/m4sh:Test User:<hash>
+nobody:65534:65534:/export/srv/nobody:/sbin/nologin:Unprivileged:<hash>
+```
+
+### C 数据结构
+
+```c
+typedef struct {
+    char username[64];
+    uint32_t uid;
+    uint32_t gid;
+    char home[128];
+    char shell[64];
+    char gecos[128];
+    char password_hash[256];
+} passwd_entry_t;
+```
+
+### API (lib/pwd.c)
+
+| 函数 | 说明 |
+|------|------|
+| `musr_read_passwd_db(entries, max)` | 读取全部用户 |
+| `musr_getpwnam(name, &out)` | 按用户名查找 |
+| `musr_getpwuid(uid, &out)` | 按 UID 查找 |
+| `musr_update_passwd_db(entries, count)` | 写入数据库 |
+
+## 组数据库
+
+文件: `/export/cfg/groups.db`
+
+格式：
+
+```
+groupname:gid:member1,member2,...
+```
+
+### 默认组
+
+```
+prime:1001:testuser,root
+```
+
+### C 数据结构
+
+```c
+typedef struct {
+    char groupname[64];
+    uint32_t gid;
+    char members[256];  // 逗号分隔
+} group_entry_t;
+```
+
+### API (lib/grp.c)
+
+| 函数 | 说明 |
+|------|------|
+| `musr_read_groups_db(entries, max)` | 读取全部组 |
+| `musr_getgrnam(name, &out)` | 按组名查找 |
+| `musr_getgrgid(gid, &out)` | 按 GID 查找 |
+| `musr_in_group(username, groupname)` | 检查组成员 |
+| `musr_update_groups_db(entries, count)` | 写入数据库 |
+
+## 密码哈希
+
+使用 SHA-256 + 随机 salt。
+
+```c
+void musr_hash_password(password, salt, hash_out);
+int  musr_verify_password(password, stored_hash);
+void musr_make_password_hash(password, hash_out);
+```
+
+哈希格式: `$SHA$<base64_salt>$<base64_hash>`
+
+## 登录流程
+
+```
+1. 显示 "M4KK1 login:"
+2. 读取用户名
+3. 显示 "Password:"
+4. 读取密码 (不回显)
+5. musr_getpwnam(username)
+6. musr_verify_password(password, stored_hash)
+7. 成功 → 设置 UID/GID, 进入 Shell
+8. 失败 → 重试 (最多 3 次)
+```
+
+## 权限系统
+
+### 用户类别 (login_class_t)
+
+```c
+typedef struct {
+    char class_name[32];
+    uint64_t cputime;
+    uint64_t datasize;
+    uint64_t stacksize;
+    uint32_t maxproc;
+    uint32_t openfiles;
+} login_class_t;
+```
+
+### quell 命令
+
+`quell` 命令允许用户以 `prime` 组成员身份执行命令：
+
+```bash
+quell /bin/some_privileged_command
+```
+
+### 系统调用
+
+| 系统调用 | 功能 |
+|----------|------|
+| `S_GETUID` (0x20) | 获取 UID |
+| `S_GETGID` (0x21) | 获取 GID |
+| `S_SETUID` (0x22) | 设置 UID |
+| `S_SETGID` (0x23) | 设置 GID |
+| `S_GETEUID` (0x24) | 获取有效 UID |
+| `S_GETEGID` (0x25) | 获取有效 GID |
+| `S_CHMOD` (0x28) | 修改文件权限 |
+| `S_CHOWN` (0x29) | 修改文件所有者 |
+| `S_ACCESS` (0x2A) | 检查文件访问 |
+| `S_GETGROUPS` (0x8A) | 获取组列表 |
+=== docs/userspace/commands.md ===
+# 命令参考手册
+
+M4SH 内置 40+ 命令，全在 `m4sh/coreutils/` 目录下。
+
+## 文件和目录操作
+
+| 命令 | 功能 | 文件 |
+|------|------|------|
+| `ls [路径]` | 列出目录 | `ls.c` |
+| `cat <文件>` | 显示文件内容 | `cat.c` |
+| `cd <目录>` | 切换工作目录 | `cd.c` |
+| `pwd` | 显示工作目录 | `pwd.c` |
+| `mkdir <目录>` | 创建目录 | `mkdir.c` |
+| `rm <文件>` | 删除文件 | `rm.c` |
+| `rmdir <目录>` | 删除空目录 | `rmdir.c` |
+| `mv <源> <目标>` | 移动/重命名 | `mv.c` |
+| `cp <源> <目标>` | 复制文件 | `cp.c` |
+| `touch <文件>` | 创建空文件 | `touch.c` |
+
+## 进程管理
+
+| 命令 | 功能 | 文件 |
+|------|------|------|
+| `ps` | 显示进程列表 | `ps.c` |
+| `kill <pid> [信号]` | 发送信号 | `kill.c` |
+| `nice <优先级> <命令>` | 设置优先级运行 | `nice.c` |
+| `time <命令>` | 计时运行命令 | `time.c` |
+| `exit` | 退出 Shell | `exit.c` |
+
+## 文本处理
+
+| 命令 | 功能 | 文件 |
+|------|------|------|
+| `grep <模式> [文件]` | 正则搜索文本 | `grep.c` |
+| `wc [文件]` | 统计行/词/字符 | `wc.c` |
+| `diff <文件1> <文件2>` | 比较文件差异 | `diff.c` |
+| `sead <脚本> [文件]` | 流编辑器 (sed 替代) | `sead.c` |
+| `echo [-e] [-E] [-n] <参数>` | 输出文本 | `echo.c` |
+
+### echo 转义序列
+
+| 序列 | 含义 |
+|------|------|
+| `\n` | 换行 |
+| `\t` | 制表符 |
+| `\r` | 回车 |
+| `\\` | 反斜杠 |
+| `\a` | 响铃 |
+| `\b` | 退格 |
+| `\f` | 换页 |
+| `\v` | 垂直制表 |
+| `\0NNN` | 八进制字符 |
+
+### grep 正则表达式
+
+| 语法 | 含义 |
+|------|------|
+| `.` | 任意字符（除换行） |
+| `*` | 前项零次或多次 |
+| `+` | 前项一次或多次 |
+| `?` | 前项零次或一次 |
+| `[...]` | 字符类 |
+| `[^...]` | 否定字符类 |
+| `^` | 行首 |
+| `$` | 行尾 |
+| `\|` | 交替 |
+| `(...)` | 分组 |
+| `*?` `+?` `??` | 非贪婪匹配 |
+| `\` | 转义 |
+
+## 时间和日历
+
+| 命令 | 功能 | 文件 |
+|------|------|------|
+| `date [选项]` | 显示/设置日期时间 | `date.c` (904 行) |
+| `cal [月] [年]` | 显示日历 | `cal.c` |
+| `clear` | 清屏 | `clear.c` |
+| `uname -a` | 系统信息 | `uname.c` |
+
+### date 选项
+
+| 选项 | 功能 |
+|------|------|
+| `-f, --format FMT` | strftime 格式输出 |
+| `-u, --utc` | UTC 时间 |
+| `-d, --date DT` | 解析并显示日期 |
+| `-s, --set DT` | 设置系统时间 |
+| `-c, --countdown DT` | 倒计时 |
+| `--diff D1 D2` | 两日期差值 |
+| `--uptime` | 运行时间 |
+| `--hwclock` | 读取 RTC |
+| `--hw2sys` | RTC → 系统时间 |
+| `--sys2hw` | 系统时间 → RTC |
+| `--timers` | 活跃内核定时器 |
+| `--timezone OFFSET` | 设置时区 (+HHMM) |
+
+### date 格式符
+
+| 格式 | 含义 |
+|------|------|
+| `%Y` | 4 位年份 |
+| `%y` | 2 位年份 |
+| `%m` | 月份 (01-12) |
+| `%d` | 日期 (01-31) |
+| `%H` | 小时 (00-23) |
+| `%I` | 小时 (01-12) |
+| `%M` | 分钟 (00-59) |
+| `%S` | 秒 (00-59) |
+| `%s` | Unix 时间戳 |
+| `%p` | AM/PM |
+| `%a` | 缩写星期 |
+| `%A` | 完整星期 |
+| `%b` | 缩写月份 |
+| `%B` | 完整月份 |
+| `%Z` / `%z` | 时区字符串 |
+| `%n` | 换行 |
+
+## 系统管理
+
+| 命令 | 功能 | 文件 |
+|------|------|------|
+| `free` | 内存统计 | `free.c` |
+| `df` | 磁盘使用 | `df.c` |
+| `mount` | 显示/挂载文件系统 | `mount.c` |
+| `umount <目标>` | 卸载文件系统 | `umount.c` |
+| `blkid` | 块设备信息 | `blkid.c` |
+| `id` | 显示用户身份 | `id.c` |
+| `help` | 显示帮助 | `help.c` |
+
+## 认证和用户管理
+
+| 命令 | 功能 | 文件 |
+|------|------|------|
+| `login` | 登录 | `login.c` |
+| `passwd` | 修改密码 | `passwd.c` |
+| `who` | 活跃会话 | `who.c` |
+| `usermod` | 修改用户 | `usermod.c` |
+| `groupmod` | 修改组 | `groupmod.c` |
+| `userlog` | 登录历史 | `userlog.c` |
+| `cu <用户名>` | 切换用户 | `cu.c` |
+| `quell <命令>` | 以 prime 组执行 | `quell.c` |
+
+## 其他
+
+| 命令 | 功能 | 文件 |
+|------|------|------|
+| `export VAR=值` | 设置环境变量 | `export.c` |
+| `at <时间> <命令>` | 定时执行 | `at.c` |
+| `batch <命令>` | 批处理 | `batch.c` |
+| `calc <表达式>` | 计算器 | `calc.c` |
+=== docs/userspace/m4sh.md ===
+# M4SH Shell
+
+## 概述
+
+M4SH (M4KK1 Shell) 是系统的 init 进程，提供交互式命令行环境。
+
+**文件:** `m4sh/core/m4sh_main.c` (578 行)
+
+## 主要功能
+
+### 提示符
+
+```
+[m4kk1]@m4sh ~>
+```
+
+- 彩色显示（黄色 `[m4kk1]`，青色 `m4sh`，绿色/红色命令名）
+- 有效命令显示为绿色，无效命令显示为红色
+
+### 命令行编辑
+
+| 按键 | 功能 |
+|------|------|
+| 字符键 | 追加到命令行 |
+| Backspace / 0x7F | 删除最后一个字符 |
+| Enter / 0x0D | 执行命令 |
+| Tab | 命令名补全 |
+| ↑ / Esc [ A | 历史上一条 |
+| ↓ / Esc [ B | 历史下一条 |
+| Ctrl+C | 取消当前行 |
+| Ctrl+D | 空行时退出 shell |
+| 其他可打印字符 | 追加 |
+
+### 命令历史
+
+- 最多 16 条历史记录
+- 去重（不连续重复不计入）
+
+### Tab 补全
+
+- 匹配命令表中的命令名前缀
+- 单个匹配：自动补全
+- 多个匹配：列出所有匹配项
+
+## 引号处理
+
+M4SH 支持三种引号模式，解析发生在多个层面。
+
+### 语法解析层 (`execute_command_list`)
+
+在分割 `;` `&&` `||` 操作符时跳过引号内的内容：
+
+```c
+int in_single_quote = 0;
+int in_double_quote = 0;
+
+while (*p) {
+    if (*p == '\'' && !in_double_quote)
+        in_single_quote = !in_single_quote;
+    else if (*p == '"' && !in_single_quote)
+        in_double_quote = !in_double_quote;
+    else if (!in_single_quote && !in_double_quote) {
+        if (*p == ';')  { /* split */ }
+        else if (*p == '&' && p[1] == '&') { /* split */ }
+        else if (*p == '|' && p[1] == '|') { /* split */ }
+    }
+    p++;
+}
+```
+
+### 管道解析层 (`run_pipeline`)
+
+在分割 `|` 时同样跳过引号：
+
+```c
+if (*p == '|' && !in_single_quote && !in_double_quote) {
+    *p = '\0'; p++; break;
+}
+```
+
+### Token 化层 (`tokenize_quoted`)
+
+将参数字符串解析成 argv 数组：
+
+```c
+// 单引号: 逐字保留内容
+if (*p == '\'') {
+    p++;
+    while (*p && *p != '\'') *out++ = *p++;
+    if (*p == '\'') p++;
+}
+// 双引号: 保留内容，处理 \" \\ \$ 转义
+else if (*p == '"') {
+    p++;
+    while (*p && *p != '"') {
+        if (*p == '\\' && (p[1] == '"' || p[1] == '\\' || p[1] == '$'))
+            p++;
+        *out++ = *p++;
+    }
+    if (*p == '"') p++;
+}
+// 反斜杠: 转义下一个字符
+else if (*p == '\\' && p[1]) {
+    p++; *out++ = *p++;
+}
+```
+
+## 命令执行
+
+### 命令列表 (`execute_command_list`)
+
+```
+echo hello ; echo world    → 两个命令依次执行
+echo ok && echo also       → 第一个成功则执行第二个
+bad_cmd || echo fallback   → 第一个失败则执行第二个
+```
+
+执行跟踪 `last_exit_code`：
+
+| 场景 | exit code |
+|------|-----------|
+| 命令成功 | 0 |
+| 命令未找到 | 127 |
+
+### 管道 (`run_pipeline`)
+
+```
+echo hello | grep h
+```
+
+- 最多 8 个管道段
+- 使用 `musr_sc_pipe()` 和 `musr_sc_dup2()` 实现
+- `out_fd` 抽象层支持管道重定向输出
+
+## 环境变量
+
+- 最多 16 个变量
+- 每个变量名值最大 128 字节
+- 展开语法: `$VAR` 和 `${VAR}`
+- 单引号内不展开变量
+
+```bash
+export PATH=/bin:/usr/bin
+echo $PATH        # → /bin:/usr/bin
+echo '$PATH'      # → $PATH (字面)
+```
+
+## 启动流程
+
+```c
+_start()
+  ├── ser_puts(欢迎信息)
+  ├── cwd_init()                    // 初始化工作目录
+  ├── m4k_geteuid() == 0?
+  │     ├── musr_boot_setup()       // SSH 密钥生成等
+  │     └── musr_cmd_login()        // 登录循环
+  ├── render_line()                 // 首次提示符
+  └── while(1) {
+        musr_at_check_jobs()        // 检查 at/batch 任务
+        ser_getc()                  // 读取按键
+        handle_key(ch)              // 处理按键
+        render_line()               // 更新显示
+      }
+```
+
+## 命令注册
+
+命令表在 `musr_cmd_table[]` 中定义：
+
+```c
+musr_cmd_t musr_cmd_table[] = {
+    {"help",   musr_cmd_help,   "Show this help"},
+    {"echo",   musr_cmd_echo,   "Print arguments"},
+    {"grep",   musr_cmd_grep,   "Search text"},
+    // ... 40+ 命令
+    {NULL, NULL, NULL}           // 终止符
+};
+```
+=== docs/userspace/overview.md ===
+# 用户空间概述
+
+## 架构
+
+M4KK1 的用户空间当前是一个 **单进程、单地址空间** 的 freestanding 环境。没有 libc、没有动态链接、没有 MMU 隔离。
+
+```
+init (PID 1)
+  │
+  ├── /bin/login ─── 登录会话管理
+  │
+  └── /bin/m4sh  ─── Shell (40+ 内置命令)
+       │
+       ├── coreutils/  ─── 文件、进程、文本、管理工具
+       ├── lib/        ─── 密码和组数据库
+       ├── core/       ─── Shell 主循环、正则引擎
+       └── login/      ─── 独立登录 ELF
+```
+
+## ELF 格式
+
+- 体系结构: i386 (32-bit)
+- 加载地址: 0x800000
+- 链接脚本: `m4sh/m4sh.ld`
+- 编译: `-m32 -ffreestanding -nostdlib -nostdinc`
+- 入口: `_start` (定义在 `m4sh_main.c`)
+
+## 二进制嵌入
+
+用户空间 ELF 通过构建脚本转换成 C 数组，链接到内核中：
+
+```bash
+xxd -i m4sh/m4sh.elf > init/m4sh_elf.c
+# 生成 m4sh_init_elf[] 和 m4sh_init_elf_len
+```
+
+内核启动时将这些数据写入 YAFS 文件系统。
+
+## 运行时支持
+
+### 内存
+
+- 无动态堆分配 (`malloc`/`free`)
+- 固定大小的全局缓冲区 (命令缓冲区 512 字节，参数数组 32 个)
+- 环境变量: 16 个槽位，每个 128 字节
+
+### I/O
+
+输出通过 `out_fd` 抽象层：
+
+```c
+extern int out_fd;  // 1 = 串口, 其他 = 文件描述符
+
+void out_putc(char c);
+void out_puts(const char *s);
+void out_printf(const char *s);  // 同 out_puts
+```
+
+### 字符串
+
+内置字符串函数 (无 libc)：
+
+```c
+musr_strlen(), musr_strcpy(), musr_strcmp(),
+musr_strcat(), musr_strncmp(), musr_strpref(),
+musr_strchr(), musr_atoi()
+```
+
+### 数字输出
+
+```c
+void print_u32(uint32_t v);   // 无符号十进制
+void print_u64(uint64_t v);   // 64位 (简化)
+void print_s32(int32_t v);    // 有符号十进制
+void print_pad_u32(v, w);     // 填充到指定宽度
+```
+
+### 头文件
+
+所有用户空间功能通过单个主头文件提供：
+
+`m4sh/m4sh.h` (750 行) 包含：
+- 内存操作宏 (`memcpy`, `memset`)
+- 字符串函数
+- 系统调用号定义
+- 系统调用包装函数 (`musr_sc*`, `m4k_sc*`)
+- 串口 I/O (`ser_putc`, `ser_gets`, `ser_getc`)
+- ANSI 颜色函数
+- 输出抽象层
+- CWD 管理
+- 命令表类型
+- 环境变量
+- 密码/组数据库类型
+- 所有命令函数前向声明
+=== docs/userspace/regex.md ===
+# 正则引擎
+
+## 概述
+
+M4KK1 内置了一个轻量级正则表达式引擎，用于 `grep` 和 `sead` 命令。引擎使用 **递归回溯 NFA** 实现。
+
+**文件:** `m4sh/core/regex.h` (48 行), `m4sh/core/regex.c` (332 行)
+
+## 支持语法
+
+| 语法 | 含义 | 示例 |
+|------|------|------|
+| `abc` | 字面量匹配 | `hello` 匹配 "hello" |
+| `.` | 任意单字符（除换行） | `h.llo` 匹配 "hello" |
+| `*` | 前项零次或多次 | `ab*c` 匹配 "ac", "abc", "abbc" |
+| `+` | 前项一次或多次 | `ab+c` 匹配 "abc", "abbc" |
+| `?` | 前项零次或一次 | `ab?c` 匹配 "ac", "abc" |
+| `*?` `+?` `??` | 非贪婪版本 | `a.*?b` 匹配最短 |
+| `^` | 行首锚定 | `^hello` 匹配行首的 "hello" |
+| `$` | 行尾锚定 | `world$` 匹配行尾的 "world" |
+| `[...]` | 字符类 | `[aeiou]` 匹配元音 |
+| `[^...]` | 否定字符类 | `[^0-9]` 匹配非数字 |
+| `[a-z]` | 字符范围 | `[a-zA-Z]` 匹配字母 |
+| `\|` | 交替 | `cat\|dog` 匹配 "cat" 或 "dog" |
+| `(...)` | 分组（捕获） | `(ab)+` 匹配 "abab" |
+| `\` | 转义特殊字符 | `\.` 匹配字面点号 |
+
+## 节点类型
+
+```c
+#define NODE_LITERAL      1   // 字面字符
+#define NODE_DOT          2   // 任意字符
+#define NODE_CLASS        3   // 字符类
+#define NODE_ANCHOR_START 4   // ^
+#define NODE_ANCHOR_END   5   // $
+#define NODE_GROUP        6   // ()
+#define NODE_ALT          7   // |
+```
+
+## 编译过程
+
+`regex_compile()` 将模式串解析为节点链表：
+
+```
+输入: "a(b|c)+d"
+输出:
+  LITERAL('a') → GROUP(1) → LITERAL('d')
+                    │
+                    ALT ──→ LITERAL('c') (重复 1+)
+                    │
+              LITERAL('b')
+```
+
+## 匹配过程
+
+`regex_match()` 和 `regex_search()` 使用递归回溯：
+
+1. `match_node()` 尝试匹配当前节点
+2. 对于重复节点 (`*` `+` `?`)，先贪心匹配所有可能位置
+3. 递归尝试后续节点
+4. 失败则回溯尝试较少重复
+
+```c
+match_repetition(node, text, &pp, result) {
+    // 先贪心匹配到最大值
+    while (count < max_rep) { ... count++; }
+    // 需要至少 min_rep 次
+    if (count < min_rep) return 0;
+    // 设置输出位置（贪心=末尾，非贪心=最早满足）
+}
+```
+
+## API
+
+```c
+// 编译正则表达式，返回 0 成功
+int regex_compile(regex_t *re, const char *pattern);
+
+// 完全匹配 (从开头到结尾)
+int regex_match(regex_t *re, const char *text, regex_result_t *result);
+
+// 搜索 (任意位置匹配)
+int regex_search(regex_t *re, const char *text, regex_result_t *result);
+
+// 释放资源
+void regex_free(regex_t *re);
+```
+
+### 数据结构
+
+```c
+#define REGEX_MAX_GROUPS 10
+#define REGEX_MAX_NODES 256
+
+typedef struct {
+    int start;
+    int end;
+} regex_match_t;
+
+typedef struct {
+    regex_match_t groups[REGEX_MAX_GROUPS];
+    int num_groups;
+} regex_result_t;
+
+typedef struct regex_node {
+    int type;
+    int ch;
+    struct regex_node *next;
+    struct regex_node *child;
+    int min_rep;       // 最小重复次数
+    int max_rep;       // 最大重复次数 (-1 = 无限)
+    int greedy;        // 0 = 非贪婪
+    int group_id;      // 捕获组 ID
+    int negated;       // 字符类取反
+    char char_class[256];  // 字符类位图
+} regex_node_t;
+
+typedef struct {
+    regex_node_t nodes[REGEX_MAX_NODES];
+    int node_count;
+    regex_node_t *root;
+} regex_t;
+```
+
+## 限制
+
+| 限制 | 说明 |
+|------|------|
+| 最大节点数 | 256 |
+| 最大捕获组 | 10 |
+| 无反向引用 | `\1` 不支持 |
+| 无前瞻/后顾 | `(?=...)` `(?<=...)` 不支持 |
+| 递归深度 | 受 C 调用栈限制 |
+| 性能 | 回溯 NFA，最坏 O(2^n) |

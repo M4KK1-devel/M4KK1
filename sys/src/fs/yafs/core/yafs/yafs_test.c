@@ -14,7 +14,7 @@
 #include <yafs.h>
 #include <yafs_btree.h>
 
-#define RAMDISK_BLOCKS  1024
+#define RAMDISK_BLOCKS  4096
 #define RAMDISK_SIZE    (RAMDISK_BLOCKS * YAFS_BTREE_BLOCK_SIZE)
 
 static uint8_t ramdisk[RAMDISK_SIZE];

@@ -218,7 +218,9 @@ static const struct fhs_entry fhs_tree[] = {
     { "dev/dsk",            YAFS_FT_DIR,      NULL },
     { "dev/rdsk",           YAFS_FT_DIR,      NULL },
     { "devices/fd",         YAFS_FT_DIR,      NULL },
+    { "export/cfg",         YAFS_FT_DIR,      NULL },
     { "export/home",        YAFS_FT_DIR,      NULL },
+    { "export/PATH",        YAFS_FT_DIR,      NULL },
     { "export/root",        YAFS_FT_DIR,      NULL },
     { "mnt/media",          YAFS_FT_DIR,      NULL },
     { "sys/proc",           YAFS_FT_DIR,      NULL },
@@ -664,7 +666,6 @@ err:
     return -1;
 }
 
-#define YAFS_DATA_BLOCK_SIZE 4096
 #define YAFS_BLOCKS_PER_EXTENT 1
 
 int
@@ -707,7 +708,7 @@ mkrn_yafs_read_file_data(struct yafs_mount *pM,
         if (u32ExtentLen == 0)
             break;
 
-        uint8_t block_buf[YAFS_DATA_BLOCK_SIZE];
+        static uint8_t block_buf[YAFS_DATA_BLOCK_SIZE];
         for (uint32_t bi = 0;
              bi < u32ExtentLen && u32Remaining > 0;
              bi++)
@@ -768,7 +769,7 @@ mkrn_yafs_write_file_data(struct yafs_mount *pM,
                  &ext_val)
              == 0);
 
-        uint8_t block_buf[YAFS_DATA_BLOCK_SIZE];
+        static uint8_t block_buf[YAFS_DATA_BLOCK_SIZE];
         uint64_t u64Lba;
 
         if (bFound) {

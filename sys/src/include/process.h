@@ -69,6 +69,23 @@ typedef uint32_t gid_t;
 #define M4K_SPAWN_NOWAIT      0x0008
 #define M4K_SPAWN_TRACE       0x0010
 
+/* ── Resource Limits (§6.10, §6.12.3) ── */
+
+#define M4K_RLIMIT_CPU        0
+#define M4K_RLIMIT_DATA       1
+#define M4K_RLIMIT_STACK      2
+#define M4K_RLIMIT_NPROC      3
+#define M4K_RLIMIT_NOFILE     4
+#define M4K_RLIMIT_MEMLOCK    5
+#define M4K_RLIMIT_NLIMITS    6
+
+#define M4K_RLIM_INFINITY    (~0ULL)
+
+struct m4k_rlimit {
+    uint64_t rlim_cur;
+    uint64_t rlim_max;
+};
+
 /* ── Priorities ── */
 
 #define M4K_PRIO_HIGH   0
@@ -86,6 +103,7 @@ typedef struct mkrn_process {
     uint32_t egid;
     uint32_t group_count;
     uint32_t group_list[16];
+    struct m4k_rlimit rlimits[M4K_RLIMIT_NLIMITS];
     uint32_t priority;
     uint32_t thread_esp;
     uint32_t sleep_ticks;
@@ -119,7 +137,7 @@ typedef struct {
 struct mkrn_procinfo {
     uint32_t pid;
     uint32_t ppid;
-    uint64_t state;
+    uint32_t state;
     char name[32];
 };
 
@@ -129,7 +147,7 @@ struct mkrn_procinfo {
 /* ── Public API ── */
 
 void mkrn_process_init(void);
-int mkrn_execve(uint8_t *elf_data, uint32_t size);
+int mkrn_execve(uint8_t *elf_data, uint32_t size, const char *proc_name);
 void mkrn_sched_start(void);
 void mkrn_process_yield(void);
 void mkrn_process_switch_first(void);
@@ -150,6 +168,8 @@ int mkrn_process_set_gid(uint32_t gid);
 int mkrn_process_get_groups(uint32_t *list, int size);
 int mkrn_process_set_groups(int size, const uint32_t *list);
 uint32_t mkrn_process_get_count(void);
+int mkrn_process_set_rlimit(int resource, const struct m4k_rlimit *rlp);
+int mkrn_process_get_rlimit(int resource, struct m4k_rlimit *rlp);
 
 int mkrn_process_fill_info(struct mkrn_procinfo *buf, uint32_t max);
 

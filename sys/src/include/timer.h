@@ -195,6 +195,13 @@ u32 mkrn_timer_create_alarm(u32 interval_ms, void (*callback)(void));
 s32 mkrn_timer_destroy_alarm(u32 alarm_id);
 
 /**
+ * mkrn_timer_get_active_count - Get active alarm count
+ *
+ * Return: Number of active alarms
+ */
+u32 mkrn_timer_get_active_count(void);
+
+/**
  * mkrn_timer_get_nanoseconds - Get nanosecond timestamp
  *
  * Return: Current nanosecond timestamp

@@ -151,6 +151,12 @@
 #define M4K_SC_MOUNT            0x87
 #define M4K_SC_UMOUNT           0x88
 #define M4K_SC_MOUNTINFO        0x89
+#define M4K_SC_GETGROUPS        0x8A
+#define M4K_SC_SETGROUPS        0x8B
+#define M4K_SC_UPTIME           0x8C
+#define M4K_SC_RTCREAD          0x8D
+#define M4K_SC_RTCWRITE         0x8E
+#define M4K_SC_TIMER_LIST       0x8F
 
 #define M4K_SC_SUCCESS 0
 #define M4K_SC_ERROR   (-1)

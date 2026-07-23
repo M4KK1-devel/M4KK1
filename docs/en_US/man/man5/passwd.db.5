@@ -1,0 +1,30 @@
+.\" M4KK1 4P1 - passwd.db.5
+.TH PASSWD.DB 5 "2026-07-22" "M4KK1 1.0" "M4KK1 Configuration Files"
+.SH NAME
+passwd.db \- M4KK1 user database
+.SH DESCRIPTION
+/export/cfg/passwd.db contains per-user account information. Each line has 7 colon-separated fields:
+.TP
+.B username
+User login name
+.TP
+.B uid
+User ID
+.TP
+.B gid
+Primary group ID
+.TP
+.B home
+Home directory path
+.TP
+.B shell
+Login shell
+.TP
+.B gecos
+Full name / description
+.TP
+.B password_hash
+Password hash ($SHA$salt$hash format)
+.SH SEE ALSO
+.BR groups.db (5),
+.BR login.conf (5)

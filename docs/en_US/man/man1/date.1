@@ -1,0 +1,34 @@
+.\" M4KK1 4P1 - date.1
+.TH DATE 1 "2026-07-22" "M4KK1 1.0" "M4KK1 User Commands"
+.SH NAME
+date \- display or set system date and time
+.SH SYNOPSIS
+.B date
+[\fIoptions\fR]
+.SH DESCRIPTION
+Display the current system date and time, or set the system time.
+.SH OPTIONS
+.TP
+.B \-f, \-\-format \fIFMT\fR
+Output with strftime format
+.TP
+.B \-u, \-\-utc
+Display UTC time
+.TP
+.B \-d, \-\-date \fIDT\fR
+Parse and display date
+.TP
+.B \-s, \-\-set \fIDT\fR
+Set system time
+.TP
+.B \-\-uptime
+Display system uptime
+.TP
+.B \-\-hwclock
+Read RTC time
+.TP
+.B \-\-timers
+Display active kernel timer count
+.SH SEE ALSO
+.BR cal (1),
+.BR uname (1)

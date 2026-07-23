@@ -1,0 +1,63 @@
+.\" M4KK1 4P1 - m4sh.1
+.TH M4SH 1 "2026-07-22" "M4KK1 1.0" "M4KK1 User Commands"
+.SH NAME
+m4sh \- M4KK1 Shell, interactive command-line interpreter
+.SH SYNOPSIS
+.B m4sh
+.SH DESCRIPTION
+M4SH is the init process (PID 1) of M4KK1, providing an interactive command-line environment with command execution, pipelines, redirection, environment variables, command history, and Tab completion.
+.SH LINE EDITING
+.TP
+.B Character keys
+Append to command buffer
+.TP
+.B Backspace / 0x7F
+Delete last character
+.TP
+.B Enter / 0x0D
+Execute command
+.TP
+.B Tab
+Command name completion
+.TP
+.B Up / Esc [ A
+Previous history entry
+.TP
+.B Down / Esc [ B
+Next history entry
+.TP
+.B Ctrl+C
+Cancel current line
+.TP
+.B Ctrl+D
+Exit shell on empty line
+.SH OPERATORS
+.TP
+.B \;
+Sequential execution
+.TP
+.B &&
+Execute next on success
+.TP
+.B \|\|
+Execute next on failure
+.TP
+.B \|
+Pipeline
+.SH QUOTING
+.TP
+.B \'...\'
+Literal, no variable expansion
+.TP
+.B \"...\"
+Reserved, supports \e" \e\e \e$ escapes
+.TP
+.B \e
+Escape next character
+.SH ENVIRONMENT
+Up to 16 variables, 128 bytes each. Export: export VAR=value. Expand: $VAR or ${VAR}.
+.SH SEE ALSO
+.BR ls (1),
+.BR cat (1),
+.BR grep (1),
+.BR echo (1)

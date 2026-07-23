@@ -1,0 +1,16 @@
+.\" M4KK1 4P1 - m4k_register_session.2
+.TH M4K_REGISTER_SESSION 2 "2026-07-22" "M4KK1 1.0" "M4KK1 System Calls"
+.SH NAME
+m4k_register_session \- register a login session
+.SH SYNOPSIS
+.nf
+#include <m4k/syscall.h>
+int m4k_register_session(const char *tty, uid_t uid, const char *username);
+.fi
+.SH DESCRIPTION
+Register a new login session in /sys/sessions/, used by who and userlog.
+.SH RETURN VALUE
+Returns 0 on success, or a negative M4K_E* error code on failure.
+.SH SEE ALSO
+.BR m4k_get_session_list (2),
+.BR who (1)

@@ -1,0 +1,32 @@
+.\" M4KK1 4P1 - hier.7
+.TH HIER 7 "2026-07-22" "M4KK1 1.0" "M4KK1 文件系统层次"
+.SH 名称
+hier \- M4KK1 文件系统层次结构
+.SH 描述
+M4KK1 标准文件系统层次:
+.TP
+.B /
+根文件系统
+.TP
+.B /bin/
+可执行文件 (login, m4sh)
+.TP
+.B /dev/
+设备文件 (console, null, zero)
+.TP
+.B /export/cfg/
+配置文件 (passwd.db, groups.db)
+.TP
+.B /export/home/
+用户家目录
+.TP
+.B /sys/proc/
+进程信息伪文件系统
+.TP
+.B /sys/sessions/
+登录会话
+.TP
+.B /tmp/
+临时文件
+.SH 参见
+.BR m4k_std (7)

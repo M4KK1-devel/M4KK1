@@ -1,0 +1,31 @@
+.\" M4KK1 4P1 - login.conf.5
+.TH LOGIN.CONF 5 "2026-07-22" "M4KK1 1.0" "M4KK1 Configuration Files"
+.SH NAME
+login.conf \- M4KK1 login class resource limits
+.SH DESCRIPTION
+/export/login.conf defines BSD-style login classes and resource limits.
+.SH FILE FORMAT
+.nf
+<class_name>:\e
+    :<key>=<value>:\e
+    :<key>=<value>:
+.fi
+.SH RESOURCE KEYS
+.TP
+.B cputime
+CPU time in seconds
+.TP
+.B datasize
+Data segment + heap size
+.TP
+.B stacksize
+Stack size
+.TP
+.B maxproc
+Maximum number of processes
+.TP
+.B openfiles
+Maximum open files
+.SH SEE ALSO
+.BR passwd.db (5),
+.BR groups.db (5)

@@ -53,7 +53,7 @@ SECTIONS {
     /* 内核堆空间 */
     .kernel_heap ALIGN(4096) : {
         __heap_start = .;
-        . += 0x100000;  /* 1MB堆 */
+        . += 0x400000;  /* 4MB堆 */
         __heap_end = .;
     }
 

@@ -1,0 +1,20 @@
+.\" M4KK1 4P1 - m4k_setgid.2
+.TH M4K_SETGID 2 "2026-07-22" "M4KK1 1.0" "M4KK1 System Calls"
+.SH NAME
+m4k_setgid \- set group ID
+.SH SYNOPSIS
+.nf
+#include <m4k/syscall.h>
+int m4k_setgid(gid_t gid);
+.fi
+.SH DESCRIPTION
+Set the real GID and effective GID of the calling process.
+.SH RETURN VALUE
+Returns 0 on success, or a negative M4K_E* error code on failure.
+.SH ERRORS
+.TP
+.B M4K_EPERM
+Caller lacks privilege
+.SH SEE ALSO
+.BR m4k_setuid (2),
+.BR m4k_getgid (2)

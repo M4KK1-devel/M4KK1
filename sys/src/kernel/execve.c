@@ -16,8 +16,6 @@
 extern unsigned char init_init_elf[];
 extern unsigned int init_init_elf_len;
 
-static mkrn_process_t *idle_process = NULL;
-
 static void idle_loop(void)
 {
     while (1) {
@@ -25,8 +23,17 @@ static void idle_loop(void)
     }
 }
 
-int mkrn_execve(u8 *elf_data, u32 size)
+int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
 {
+    mkrn_process_t *init = mkrn_process_get_current();
+    if (!init) {
+        M4K_LOG_ERROR("execve: no current process");
+        return -1;
+    }
+
+    mkrn_strcpy(init->name, proc_name ? proc_name : "unknown");
+    mkrn_strcpy(init->cwd, "/");
+
     mkrn_elf32_ehdr_t *ehdr = (mkrn_elf32_ehdr_t *)elf_data;
     mkrn_elf32_phdr_t *phdr;
     u32 i;
@@ -100,18 +107,9 @@ int mkrn_execve(u8 *elf_data, u32 size)
         }
     }
 
-    M4K_LOG_INFO("execve: ELF loaded, entry=0x");
+    mkrn_console_write("[INFO] execve: ELF loaded, entry=0x");
     mkrn_console_write_hex(ehdr->e_entry);
     mkrn_console_write("\n");
-
-    mkrn_process_t *init = mkrn_process_get_current();
-    if (!init) {
-        M4K_LOG_ERROR("execve: no current process");
-        return -1;
-    }
-
-    mkrn_strcpy(init->name, "init");
-    mkrn_strcpy(init->cwd, "/");
 
     u32 *stack = (u32 *)mkrn_alloc(M4K_STACK_SIZE);
     if (!stack) {
@@ -131,7 +129,7 @@ int mkrn_execve(u8 *elf_data, u32 size)
     init->thread_esp = (u32)sp;
     init->state_tags = M4K_SCHED_READY;
 
-    M4K_LOG_INFO("execve: init process ready, stack at 0x");
+    mkrn_console_write("[INFO] execve: init process ready, stack at 0x");
     mkrn_console_write_hex((u32)stack);
     mkrn_console_write(" thread_esp=0x");
     mkrn_console_write_hex(init->thread_esp);
@@ -170,6 +168,10 @@ mkrn_process_t *mkrn_execve_create_idle(void)
     proc->priority = M4K_PRIO_LOW;
     mkrn_strcpy(proc->name, "idle");
     mkrn_strcpy(proc->cwd, "/");
+    proc->rlimits[M4K_RLIMIT_NPROC].rlim_cur = 256;
+    proc->rlimits[M4K_RLIMIT_NPROC].rlim_max = 256;
+    proc->rlimits[M4K_RLIMIT_NOFILE].rlim_cur = 128;
+    proc->rlimits[M4K_RLIMIT_NOFILE].rlim_max = 128;
 
     setup_idle_stack(proc);
     return proc;

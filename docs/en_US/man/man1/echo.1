@@ -1,0 +1,35 @@
+.\" M4KK1 4P1 - echo.1
+.TH ECHO 1 "2026-07-22" "M4KK1 1.0" "M4KK1 User Commands"
+.SH NAME
+echo \- output text
+.SH SYNOPSIS
+.B echo
+[\fB\-e\fR] [\fB\-E\fR] [\fB\-n\fR] \fIargs\fR...
+.SH DESCRIPTION
+Write arguments to stdout. Appends a newline by default.
+.SH OPTIONS
+.TP
+.B \-e
+Enable escape sequence interpretation
+.TP
+.B \-E
+Disable escape sequences (default)
+.TP
+.B \-n
+Suppress trailing newline
+.SH ESCAPE SEQUENCES
+.TP
+.B \en
+Newline
+.TP
+.B \et
+Tab
+.TP
+.B \e\e
+Backslash
+.TP
+.B \e0NNN
+Octal character
+.SH SEE ALSO
+.BR grep (1),
+.BR cat (1)

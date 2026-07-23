@@ -18,6 +18,7 @@
 #include <vfs.h>
 #include <memory.h>
 #include <yafs.h>
+#include <timer.h>
 
 extern uint64_t root_yafs_tree;
 
@@ -317,6 +318,24 @@ static const char *mkrn_syscall_get_name(u32 uNum)
         case M4K_SC_MOUNT: return "mount";
         case M4K_SC_UMOUNT: return "umount";
         case M4K_SC_MOUNTINFO: return "mountinfo";
+        case M4K_SC_GETUID: return "getuid";
+        case M4K_SC_GETGID: return "getgid";
+        case M4K_SC_SETUID: return "setuid";
+        case M4K_SC_SETGID: return "setgid";
+        case M4K_SC_GETEUID: return "geteuid";
+        case M4K_SC_SETTIMEOFDAY: return "settimeofday";
+        case M4K_SC_UPTIME: return "uptime";
+        case M4K_SC_RTCREAD: return "rtcread";
+        case M4K_SC_RTCWRITE: return "rtcwrite";
+        case M4K_SC_TIMER_LIST: return "timerlist";
+        case M4K_SC_GETEGID: return "getegid";
+        case M4K_SC_SETEUID: return "seteuid";
+        case M4K_SC_SETEGID: return "setegid";
+        case M4K_SC_CHMOD: return "chmod";
+        case M4K_SC_CHOWN: return "chown";
+        case M4K_SC_ACCESS: return "access";
+        case M4K_SC_GETGROUPS: return "getgroups";
+        case M4K_SC_SETGROUPS: return "setgroups";
         default: return "unknown";
     }
 }
@@ -485,17 +504,28 @@ static u32 mkrn_syscall_chmod_impl(u32 uArg1, u32 uArg2,
     u32 uArg3, u32 uArg4, u32 uArg5)
 {
     (void)uArg3; (void)uArg4; (void)uArg5;
-    /* FIXME: implement actual chmod on YAFS inode */
-    (void)uArg1; (void)uArg2;
-    return M4K_SC_ERROR;
+    const char *path = (const char *)uArg1;
+    uint32_t mode = uArg2;
+    return (mkrn_vfs_chmod(path, mode) == 0) ? M4K_SC_SUCCESS : M4K_SC_ERROR;
 }
 
 static u32 mkrn_syscall_chown_impl(u32 uArg1, u32 uArg2,
     u32 uArg3, u32 uArg4, u32 uArg5)
 {
     (void)uArg4; (void)uArg5;
-    (void)uArg1; (void)uArg2; (void)uArg3;
-    return M4K_SC_ERROR;
+    const char *path = (const char *)uArg1;
+    uint32_t uid = uArg2;
+    uint32_t gid = uArg3;
+    return (mkrn_vfs_chown(path, uid, gid) == 0) ? M4K_SC_SUCCESS : M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_access_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg3; (void)uArg4; (void)uArg5;
+    const char *path = (const char *)uArg1;
+    int mode = (int)uArg2;
+    return (mkrn_vfs_access(path, mode) == 0) ? M4K_SC_SUCCESS : M4K_SC_ERROR;
 }
 
 static u32 mkrn_syscall_getgid_impl(u32 uArg1, u32 uArg2,
@@ -517,6 +547,26 @@ static u32 mkrn_syscall_setgid_impl(u32 uArg1, u32 uArg2,
 {
     (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
     int ret = mkrn_process_set_gid(uArg1);
+    return (ret == 0) ? M4K_SC_SUCCESS : M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_getgroups_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg3; (void)uArg4; (void)uArg5;
+    int size = (int)uArg1;
+    uint32_t *list = (uint32_t *)uArg2;
+    int ret = mkrn_process_get_groups(list, size);
+    return (ret >= 0) ? (u32)ret : M4K_SC_ERROR;
+}
+
+static u32 mkrn_syscall_setgroups_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg3; (void)uArg4; (void)uArg5;
+    int size = (int)uArg1;
+    const uint32_t *list = (const uint32_t *)uArg2;
+    int ret = mkrn_process_set_groups(size, list);
     return (ret == 0) ? M4K_SC_SUCCESS : M4K_SC_ERROR;
 }
 
@@ -852,20 +902,153 @@ static u32 mkrn_syscall_dup2_impl(u32 uArg1, u32 uArg2,
     return (iR >= 0) ? (u32)iR : M4K_SC_ERROR;
 }
 
+static int sc_is_leap(int y)
+{
+    return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+}
+
+static int sc_month_days(int y, int m)
+{
+    static const int dim[] = {
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+    };
+    if (m < 1 || m > 12)
+        return 0;
+    int d = dim[m - 1];
+    if (m == 2 && sc_is_leap(y))
+        d++;
+    return d;
+}
+
+static u32 rtc_to_epoch(mkrn_time_t *t)
+{
+    u32 days = 0;
+    for (int yr = 1970; yr < (int)t->year; yr++)
+        days += sc_is_leap(yr) ? 366 : 365;
+    for (int mo = 1; mo < t->month; mo++)
+        days += sc_month_days((int)t->year, mo);
+    days += t->day - 1;
+    return days * 86400 + t->hour * 3600
+           + t->minute * 60 + t->second;
+}
+
+static void epoch_to_rtc(u32 epoch, mkrn_time_t *t)
+{
+    t->second = epoch % 60;
+    epoch /= 60;
+    t->minute = epoch % 60;
+    epoch /= 60;
+    t->hour = epoch % 24;
+    u32 days = epoch / 24;
+    int yr = 1970;
+    while (1) {
+        int ld = sc_is_leap(yr) ? 366 : 365;
+        if (days < (u32)ld)
+            break;
+        days -= ld;
+        yr++;
+    }
+    t->year = yr;
+    int mo = 1;
+    while (mo <= 12) {
+        int md = sc_month_days(yr, mo);
+        if (days < (u32)md)
+            break;
+        days -= md;
+        mo++;
+    }
+    t->month = mo;
+    t->day = days + 1;
+}
+
 static u32 mkrn_syscall_time_impl(u32 uArg1, u32 uArg2,
     u32 uArg3, u32 uArg4, u32 uArg5)
 {
+    (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
     void *pTloc = (void *)uArg1;
 
-    M4K_LOG_DEBUG("Time system call\n");
+    mkrn_time_t rtc;
+    mkrn_timer_read_rtc(&rtc);
+    u32 uCurTime = rtc_to_epoch(&rtc);
 
-    u32 uCurTime = 1234567890;
-
-    if (pTloc) {
+    if (pTloc)
         *(u32 *)pTloc = uCurTime;
-    }
 
     return uCurTime;
+}
+
+static u32 mkrn_syscall_settimeofday_impl(u32 uArg1,
+    u32 uArg2, u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    u32 *pTv = (u32 *)uArg1;
+    if (!pTv)
+        return M4K_SC_ERROR;
+
+    mkrn_process_t *pCur = mkrn_process_get_current();
+    if (pCur && pCur->euid != 0)
+        return M4K_SC_ERROR;
+
+    u32 epoch = pTv[0];
+    mkrn_time_t rtc;
+    epoch_to_rtc(epoch, &rtc);
+    mkrn_timer_set_rtc(&rtc);
+    return 0;
+}
+
+static u32 mkrn_syscall_uptime_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg1; (void)uArg2; (void)uArg3;
+    (void)uArg4; (void)uArg5;
+    return mkrn_timer_get_uptime();
+}
+
+static u32 mkrn_syscall_rtcread_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    u32 *pBuf = (u32 *)uArg1;
+    if (!pBuf)
+        return M4K_SC_ERROR;
+    mkrn_time_t rtc;
+    mkrn_timer_read_rtc(&rtc);
+    pBuf[0] = rtc.year;
+    pBuf[1] = rtc.month;
+    pBuf[2] = rtc.day;
+    pBuf[3] = rtc.hour;
+    pBuf[4] = rtc.minute;
+    pBuf[5] = rtc.second;
+    return 0;
+}
+
+static u32 mkrn_syscall_rtcwrite_impl(u32 uArg1, u32 uArg2,
+    u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    u32 *pBuf = (u32 *)uArg1;
+    if (!pBuf)
+        return M4K_SC_ERROR;
+    mkrn_process_t *pCur = mkrn_process_get_current();
+    if (pCur && pCur->euid != 0)
+        return M4K_SC_ERROR;
+    mkrn_time_t rtc;
+    rtc.year = pBuf[0];
+    rtc.month = pBuf[1];
+    rtc.day = pBuf[2];
+    rtc.hour = pBuf[3];
+    rtc.minute = pBuf[4];
+    rtc.second = pBuf[5];
+    mkrn_timer_set_rtc(&rtc);
+    return 0;
+}
+
+static u32 mkrn_syscall_timerlist_impl(u32 uArg1,
+    u32 uArg2, u32 uArg3, u32 uArg4, u32 uArg5)
+{
+    (void)uArg1; (void)uArg2; (void)uArg3;
+    (void)uArg4; (void)uArg5;
+    return mkrn_timer_get_active_count();
 }
 
 struct mkrn_utsname {
@@ -1098,6 +1281,22 @@ static void mkrn_syscall_init_handlers(void)
         M4K_SC_CHMOD, mkrn_syscall_chmod_impl);
     mkrn_syscall_register(
         M4K_SC_CHOWN, mkrn_syscall_chown_impl);
+    mkrn_syscall_register(
+        M4K_SC_ACCESS, mkrn_syscall_access_impl);
+    mkrn_syscall_register(
+        M4K_SC_GETGROUPS, mkrn_syscall_getgroups_impl);
+    mkrn_syscall_register(
+        M4K_SC_SETGROUPS, mkrn_syscall_setgroups_impl);
+    mkrn_syscall_register(
+        M4K_SC_SETTIMEOFDAY, mkrn_syscall_settimeofday_impl);
+    mkrn_syscall_register(
+        M4K_SC_UPTIME, mkrn_syscall_uptime_impl);
+    mkrn_syscall_register(
+        M4K_SC_RTCREAD, mkrn_syscall_rtcread_impl);
+    mkrn_syscall_register(
+        M4K_SC_RTCWRITE, mkrn_syscall_rtcwrite_impl);
+    mkrn_syscall_register(
+        M4K_SC_TIMER_LIST, mkrn_syscall_timerlist_impl);
 
     M4K_LOG_INFO("System call handlers registered");
 }

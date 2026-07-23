@@ -1,0 +1,18 @@
+# /export/login.conf
+# BSD 风格登录类别资源限制
+default:\
+    :cputime=infinity:\
+    :datasize=256M:\
+    :stacksize=8M:\
+    :maxproc=100:\
+    :openfiles=64:
+staff:\
+    :cputime=infinity:\
+    :datasize=1G:\
+    :maxproc=512:\
+    :openfiles=1024:
+daemon:\
+    :cputime=600:\
+    :datasize=64M:\
+    :maxproc=20:\
+    :openfiles=32:

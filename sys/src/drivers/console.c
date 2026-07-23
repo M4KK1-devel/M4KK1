@@ -370,7 +370,6 @@ mkrn_console_write_hex(uint32_t u32Value)
     if (!console_state.initialized)
         return;
 
-    mkrn_console_write("0x");
 
     char buffer[8];
     int i = 0;

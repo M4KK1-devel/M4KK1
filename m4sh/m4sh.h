@@ -50,6 +50,20 @@ static int musr_strcmp(const char *a, const char *b)
     }
     return (unsigned char)*a - (unsigned char)*b;
 }
+static void musr_strcat(char *d, const char *s)
+{
+    d += musr_strlen(d);
+    while ((*d++ = *s++))
+        ;
+}
+static int musr_strncmp(const char *a, const char *b, int n)
+{
+    for (int i = 0; i < n; i++) {
+        if (a[i] != b[i]) return (unsigned char)a[i] - (unsigned char)b[i];
+        if (a[i] == '\0') return 0;
+    }
+    return 0;
+}
 static int musr_strpref(const char *s, const char *p)
 {
     while (*p)
@@ -83,6 +97,11 @@ static int musr_strchr(const char *s, int c)
 #define S_DUP2      0x2A
 #define S_GETPID    0x09
 #define S_TIME      0x1E
+#define S_SETTIME   0x5D
+#define S_UPTIME    0x8C
+#define S_RTCREAD   0x8D
+#define S_RTCWRITE  0x8E
+#define S_TIMERLIST 0x8F
 #define S_BRK       0x0B
 #define S_UNAME     0x73
 #define S_SYSINFO   0x84
@@ -97,8 +116,11 @@ static int musr_strchr(const char *s, int c)
 #define S_GETPPID   0x0A
 #define S_KILL      0x64
 #define S_GETUID    0x20
-#define S_GETEUID   0x24
+#define S_GETGID    0x21
 #define S_SETUID    0x22
+#define S_SETGID    0x23
+#define S_GETEUID   0x24
+#define S_GETEGID   0x25
 #define S_CHMOD     0x1B
 #define S_CHOWN     0x1C
 #define O_RDONLY    0x00000001
@@ -263,9 +285,46 @@ static int musr_sc_setuid(uint32_t uid)
 {
     return (int)musr_sc1(S_SETUID, uid);
 }
+static uint32_t musr_sc_getgid(void)
+{
+    return musr_sc0(S_GETGID);
+}
+static uint32_t musr_sc_getegid(void)
+{
+    return musr_sc0(S_GETEGID);
+}
+static int musr_sc_setgid(uint32_t gid)
+{
+    return (int)musr_sc1(S_SETGID, gid);
+}
+#define S_GETGROUPS 0x8A
+static int musr_sc_getgroups(int size, uint32_t *list)
+{
+    return (int)musr_sc2(S_GETGROUPS, (uint32_t)size, (uint32_t)list);
+}
 static int musr_sc_time(void)
 {
     return (int)musr_sc0(S_TIME);
+}
+static int musr_sc_settime(uint32_t epoch)
+{
+    return (int)musr_sc1(S_SETTIME, epoch);
+}
+static uint32_t musr_sc_uptime(void)
+{
+    return musr_sc0(S_UPTIME);
+}
+static int musr_sc_rtcread(uint32_t *buf)
+{
+    return (int)musr_sc1(S_RTCREAD, (uint32_t)buf);
+}
+static int musr_sc_rtcwrite(uint32_t *buf)
+{
+    return (int)musr_sc1(S_RTCWRITE, (uint32_t)buf);
+}
+static uint32_t musr_sc_timerlist(void)
+{
+    return musr_sc0(S_TIMERLIST);
 }
 static int musr_sc_sysinfo(struct sysinfo *i)
 {
@@ -291,6 +350,145 @@ static int musr_sc_umount(const char *tgt)
 static int musr_sc_mountinfo(void *buf, int max)
 {
     return (int)musr_sc2(S_MOUNTINFO, (uint32_t)buf, (uint32_t)max);
+}
+
+/* ── musr_* library aliases (§5.1) ── */
+
+static int musr_atoi(const char *s)
+{
+    int v = 0, sign = 1;
+    while (*s == ' ') s++;
+    if (*s == '-') { sign = -1; s++; }
+    else if (*s == '+') s++;
+    while (*s >= '0' && *s <= '9')
+        v = v * 10 + (*s++ - '0');
+    return v * sign;
+}
+#define musr_printf out_puts
+#define musr_getchar ser_getc
+#define musr_putchar ser_putc
+#define musr_memcpy memcpy
+
+/* ── m4k_* ABI wrappers (§4.7, §6.12) — native int 0x4D ABI ── */
+
+static inline uint32_t m4k_sc0(uint32_t n)
+{
+    uint32_t r;
+    __asm__ volatile("int $0x4D" : "=a"(r) : "a"(n) : "memory");
+    return r;
+}
+static inline uint32_t m4k_sc1(uint32_t n, uint32_t a)
+{
+    uint32_t r;
+    __asm__ volatile("int $0x4D" : "=a"(r) : "a"(n), "b"(a) : "memory");
+    return r;
+}
+static inline uint32_t m4k_sc2(uint32_t n, uint32_t a, uint32_t b)
+{
+    uint32_t r;
+    __asm__ volatile("int $0x4D" : "=a"(r) : "a"(n), "b"(a), "c"(b) : "memory");
+    return r;
+}
+static inline uint32_t m4k_sc3(uint32_t n, uint32_t a, uint32_t b, uint32_t c)
+{
+    uint32_t r;
+    __asm__ volatile("int $0x4D" : "=a"(r) : "a"(n), "b"(a), "c"(b), "d"(c) : "memory");
+    return r;
+}
+static inline uint32_t m4k_sc4(uint32_t n, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
+{
+    uint32_t r;
+    __asm__ volatile("int $0x4D" : "=a"(r) : "a"(n), "b"(a), "c"(b), "d"(c), "S"(d) : "memory");
+    return r;
+}
+
+/* ── struct m4k_rlimit (needed by m4k_setrlimit/m4k_getrlimit) ── */
+
+struct m4k_rlimit {
+    uint64_t rlim_cur;
+    uint64_t rlim_max;
+};
+
+#define M4K_RLIMIT_CPU        0
+#define M4K_RLIMIT_DATA       1
+#define M4K_RLIMIT_STACK      2
+#define M4K_RLIMIT_NPROC      3
+#define M4K_RLIMIT_NOFILE     4
+#define M4K_RLIMIT_MEMLOCK    5
+#define M4K_RLIMIT_NLIMITS    6
+
+#define M4K_RLIM_INFINITY    (~0ULL)
+
+/* ── M4KK1 native syscall numbers (§4.7.2, §6.12) ── */
+
+#define M4K_SYS_EXIT        0x4D000001
+#define M4K_SYS_SPAWN       0x4D000002
+#define M4K_SYS_WAIT        0x4D000003
+#define M4K_SYS_GETPID      0x4D000004
+#define M4K_SYS_KILL        0x4D000005
+#define M4K_SYS_GETPPID     0x4D000006
+#define M4K_SYS_FORK_ST     0x4D000007
+#define M4K_SYS_SETNS       0x4D000008
+#define M4K_SYS_GETUID      0x4D000020
+#define M4K_SYS_GETEUID     0x4D000021
+#define M4K_SYS_GETGID      0x4D000022
+#define M4K_SYS_GETEGID     0x4D000023
+#define M4K_SYS_SETUID      0x4D000024
+#define M4K_SYS_SETGID      0x4D000025
+#define M4K_SYS_GETGROUPS   0x4D000026
+#define M4K_SYS_SETGROUPS   0x4D000027
+#define M4K_SYS_CHMOD       0x4D000028
+#define M4K_SYS_CHOWN       0x4D000029
+#define M4K_SYS_ACCESS      0x4D00002A
+#define M4K_SYS_SETRLIMIT   0x4D000030
+#define M4K_SYS_GETRLIMIT   0x4D000031
+#define M4K_SYS_BRK         0x4D000040
+#define M4K_SYS_REGISTER_SESSION   0x4D000041
+#define M4K_SYS_GET_SESSION_LIST   0x4D000042
+#define M4K_SYS_MMAP        0x4D00000E
+#define M4K_SYS_MUNMAP      0x4D00000F
+#define M4K_SYS_MEMINFO     0x4D000010
+
+static inline int m4k_getpid(void)    { return (int)m4k_sc0(M4K_SYS_GETPID); }
+static inline int m4k_getppid(void)   { return (int)m4k_sc0(M4K_SYS_GETPPID); }
+static inline int m4k_getuid(void)    { return (int)m4k_sc0(M4K_SYS_GETUID); }
+static inline int m4k_geteuid(void)   { return (int)m4k_sc0(M4K_SYS_GETEUID); }
+static inline int m4k_getgid(void)    { return (int)m4k_sc0(M4K_SYS_GETGID); }
+static inline int m4k_getegid(void)   { return (int)m4k_sc0(M4K_SYS_GETEGID); }
+static inline int m4k_setuid(uint32_t u) { return (int)m4k_sc1(M4K_SYS_SETUID, u); }
+static inline int m4k_setgid(uint32_t g) { return (int)m4k_sc1(M4K_SYS_SETGID, g); }
+static inline int m4k_getgroups(int s, uint32_t *l) { return (int)m4k_sc2(M4K_SYS_GETGROUPS, (uint32_t)s, (uint32_t)l); }
+static inline int m4k_setgroups(int s, uint32_t *l) { return (int)m4k_sc2(M4K_SYS_SETGROUPS, (uint32_t)s, (uint32_t)l); }
+static inline int m4k_chmod(const char *p, int m) { return (int)m4k_sc2(M4K_SYS_CHMOD, (uint32_t)p, (uint32_t)m); }
+static inline int m4k_chown(const char *p, uint32_t u, uint32_t g) { return (int)m4k_sc3(M4K_SYS_CHOWN, (uint32_t)p, u, g); }
+static inline int m4k_access(const char *p, int m) { return (int)m4k_sc2(M4K_SYS_ACCESS, (uint32_t)p, (uint32_t)m); }
+static inline int m4k_kill(int pid, int s) { return (int)m4k_sc2(M4K_SYS_KILL, (uint32_t)pid, (uint32_t)s); }
+static inline int m4k_waitpid(int p, int *s, int o) { return (int)m4k_sc3(M4K_SYS_WAIT, (uint32_t)p, (uint32_t)s, (uint32_t)o); }
+static inline int m4k_spawn(const char *path, uint32_t flags) { return (int)m4k_sc1(M4K_SYS_SPAWN, (uint32_t)path); }
+static inline int m4k_setns(const char *p, const char *t, uint32_t f) { return (int)m4k_sc3(M4K_SYS_SETNS, (uint32_t)p, (uint32_t)t, f); }
+static inline int m4k_get_memory_usage(uint32_t *t, uint32_t *u, uint32_t *f) { return (int)m4k_sc3(M4K_SYS_MEMINFO, (uint32_t)t, (uint32_t)u, (uint32_t)f); }
+static inline int m4k_setrlimit(int r, const struct m4k_rlimit *l) { return (int)m4k_sc2(M4K_SYS_SETRLIMIT, (uint32_t)r, (uint32_t)l); }
+static inline int m4k_getrlimit(int r, struct m4k_rlimit *l) { return (int)m4k_sc2(M4K_SYS_GETRLIMIT, (uint32_t)r, (uint32_t)l); }
+
+#define M4K_SESSION_MAX 16
+struct m4k_session_info {
+    char tty[32];
+    uint32_t uid;
+    uint32_t pid;
+    uint32_t login_time;
+    char username[64];
+    int active;
+};
+
+static inline int m4k_register_session(const char *tty, uint32_t pid, const char *username) {
+    return (int)m4k_sc3(M4K_SYS_REGISTER_SESSION, (uint32_t)tty, pid, (uint32_t)username);
+}
+static inline int m4k_get_session_list(struct m4k_session_info *buf, int max) {
+    return (int)m4k_sc2(M4K_SYS_GET_SESSION_LIST, (uint32_t)buf, (uint32_t)max);
+}
+
+static inline int m4k_chdir(const char *p) {
+    return musr_sc_chdir(p);
 }
 
 /* Serial I/O */
@@ -481,6 +679,50 @@ static void print_pad_u32(uint32_t v, int w)
     print_u32(v);
 }
 
+/* ── Password & identity library (pwd.c) ── */
+
+typedef struct {
+    char username[64];
+    uint32_t uid;
+    uint32_t gid;
+    char home[128];
+    char shell[64];
+    char gecos[128];
+    char password_hash[256];
+} passwd_entry_t;
+
+typedef struct {
+    char class_name[32];
+    uint64_t cputime;
+    uint64_t datasize;
+    uint64_t stacksize;
+    uint32_t maxproc;
+    uint32_t openfiles;
+} login_class_t;
+
+void musr_hash_password(const char *password, const uint8_t *salt, char *hash_out);
+int musr_verify_password(const char *password, const char *stored_hash);
+void musr_make_password_hash(const char *password, char *hash_out);
+int musr_read_passwd_db(passwd_entry_t *entries, int max);
+int musr_getpwnam(const char *name, passwd_entry_t *out);
+int musr_getpwuid(uint32_t uid, passwd_entry_t *out);
+int musr_update_passwd_db(const passwd_entry_t *entries, int count);
+int musr_parse_login_conf(const char *username, login_class_t *out);
+
+/* ── Group database (grp.c, §6.6) ── */
+
+typedef struct {
+    char groupname[64];
+    uint32_t gid;
+    char members[256];
+} group_entry_t;
+
+int musr_read_groups_db(group_entry_t *entries, int max);
+int musr_getgrnam(const char *name, group_entry_t *out);
+int musr_getgrgid(uint32_t gid, group_entry_t *out);
+int musr_in_group(const char *username, const char *groupname);
+int musr_update_groups_db(const group_entry_t *entries, int count);
+
 /* Forward declarations for all command functions */
 void musr_cmd_help(int, char **);
 void musr_cmd_cd(int, char **);
@@ -519,4 +761,14 @@ void musr_cmd_diff(int, char **);
 void musr_cmd_sead(int, char **);
 void musr_cmd_id(int, char **);
 void musr_cmd_login(int, char **);
+void musr_cmd_quell(int, char **);
+void musr_cmd_passwd(int, char **);
+void musr_cmd_who(int, char **);
+void musr_cmd_usermod(int, char **);
+void musr_cmd_groupmod(int, char **);
+void musr_cmd_cu(int, char **);
+void musr_cmd_userlog(int, char **);
+void musr_boot_setup(void);
+void musr_setup_env(void);
+extern int musr_login_ok;
 void musr_at_check_jobs(void);

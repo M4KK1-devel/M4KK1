@@ -7,6 +7,7 @@
  */
 
 #include <m4k_syscall.h>
+#include <vfs.h>
 #include <console.h>
 #include <idt.h>
 #include <kernel.h>
@@ -16,6 +17,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <elf.h>
+
+extern uint32_t m4k_syscall_register_session_impl(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+extern uint32_t m4k_syscall_get_session_list_impl(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
 
 typedef uint32_t (*m4k_syscall_handler_t)(uint32_t arg1, uint32_t arg2, uint32_t arg3,
                                           uint32_t arg4, uint32_t arg5);
@@ -58,18 +63,20 @@ static bool m4k_syscall_check_permission(uint32_t syscall_num, uint32_t current_
     return (current_permission & m4k_syscall_table[syscall_num].permission_mask) != 0;
 }
 
-void m4k_syscall_handler(void)
+void m4k_syscall_handler(u32 syscall_num, u32 *saved_regs)
 {
-    uint32_t syscall_num;
     uint32_t idx;
     uint32_t result = 0x4D000000;
-    uint32_t saved_registers[6];
+    uint32_t arg1, arg2, arg3, arg4, arg5;
 
-    __asm__ volatile ("movl %%eax, %0" : "=r"(syscall_num));
+    arg1 = saved_regs[0];
+    arg2 = saved_regs[1];
+    arg3 = saved_regs[2];
+    arg4 = saved_regs[3];
+    arg5 = saved_regs[4];
 
     m4k_syscall_stats.total_calls++;
 
-    /* Use low byte as table index (M4K_SYS_xxx = 0x4D0000LL) */
     idx = syscall_num & 0xFF;
 
     if (idx >= 256 || !m4k_syscall_table[idx].registered) {
@@ -88,28 +95,8 @@ void m4k_syscall_handler(void)
         goto m4k_syscall_return;
     }
 
-    __asm__ volatile (
-        "movl %%ebx, 0(%0)\n"
-        "movl %%ecx, 4(%0)\n"
-        "movl %%edx, 8(%0)\n"
-        "movl %%esi, 12(%0)\n"
-        "movl %%edi, 16(%0)\n"
-        "movl %%ebp, 20(%0)\n"
-        : : "r"(saved_registers) : "memory"
-    );
-
     m4k_syscall_handler_t handler = m4k_syscall_table[idx].handler;
     if (handler != NULL) {
-        uint32_t arg1, arg2, arg3, arg4, arg5;
-        __asm__ volatile (
-            "movl %%ebx, %0\n"
-            "movl %%ecx, %1\n"
-            "movl %%edx, %2\n"
-            "movl %%esi, %3\n"
-            "movl %%edi, %4\n"
-            : "=r"(arg1), "=r"(arg2), "=r"(arg3), "=r"(arg4), "=r"(arg5)
-        );
-
         result = handler(arg1, arg2, arg3, arg4, arg5);
     } else {
         m4k_syscall_stats.failed_calls++;
@@ -118,21 +105,17 @@ void m4k_syscall_handler(void)
 
 m4k_syscall_return:
     __asm__ volatile ("movl %0, %%eax" : : "r"(result));
-    __asm__ volatile (
-        "movl 0(%0), %%ebx\n"
-        "movl 4(%0), %%ecx\n"
-        "movl 8(%0), %%edx\n"
-        "movl 12(%0), %%esi\n"
-        "movl 16(%0), %%edi\n"
-        "movl 20(%0), %%ebp\n"
-        : : "r"(saved_registers) : "memory"
-    );
+    /* saved_regs values remain unmodified on stack;
+       assembly stub will pop them for iret */
 }
+
+extern void isr_m4k_syscall(void);
 
 void m4k_syscall_init(void)
 {
     m4k_syscall_table_init();
-    mkrn_idt_register_handler(0x4D, m4k_syscall_handler);
+    mkrn_idt_set_gate(0x4D, (uint32_t)isr_m4k_syscall, 0x08,
+        M4K_IDT_PRESENT | M4K_IDT_DPL_3 | M4K_IDT_INTERRUPT_GATE_32);
     m4k_syscall_init_handlers();
     M4K_LOG_INFO("M4KK1 system call system initialized");
 }
@@ -192,6 +175,9 @@ const char *m4k_syscall_get_name(uint32_t num)
         case M4K_SYS_ACCESS: return "m4k_access";
         case M4K_SYS_SETRLIMIT: return "m4k_setrlimit";
         case M4K_SYS_GETRLIMIT: return "m4k_getrlimit";
+        case M4K_SYS_BRK: return "m4k_brk";
+        case M4K_SYS_REGISTER_SESSION: return "m4k_register_session";
+        case M4K_SYS_GET_SESSION_LIST: return "m4k_get_session_list";
         default: return "unknown";
     }
 }
@@ -302,6 +288,14 @@ static uint32_t m4k_syscall_getprocs_impl(uint32_t arg1, uint32_t arg2, uint32_t
     return (uint32_t)mkrn_process_fill_info(buf, max);
 }
 
+static uint32_t m4k_syscall_brk_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                      uint32_t arg4, uint32_t arg5)
+{
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    /* FIXME: implement brk */
+    return (uint32_t)-1;
+}
+
 static uint32_t m4k_syscall_getuid_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
                                          uint32_t arg4, uint32_t arg5)
 {
@@ -328,16 +322,19 @@ static uint32_t m4k_syscall_chmod_impl(uint32_t arg1, uint32_t arg2, uint32_t ar
                                         uint32_t arg4, uint32_t arg5)
 {
     (void)arg3; (void)arg4; (void)arg5;
-    (void)arg1; (void)arg2;
-    return (uint32_t)-1;
+    const char *path = (const char *)arg1;
+    uint32_t mode = arg2;
+    return (uint32_t)(int32_t)mkrn_vfs_chmod(path, mode);
 }
 
 static uint32_t m4k_syscall_chown_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
                                         uint32_t arg4, uint32_t arg5)
 {
     (void)arg4; (void)arg5;
-    (void)arg1; (void)arg2; (void)arg3;
-    return (uint32_t)-1;
+    const char *path = (const char *)arg1;
+    uint32_t uid = arg2;
+    uint32_t gid = arg3;
+    return (uint32_t)(int32_t)mkrn_vfs_chown(path, uid, gid);
 }
 
 static uint32_t m4k_syscall_getgid_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
@@ -383,28 +380,117 @@ static uint32_t m4k_syscall_access_impl(uint32_t arg1, uint32_t arg2, uint32_t a
                                          uint32_t arg4, uint32_t arg5)
 {
     (void)arg3; (void)arg4; (void)arg5;
-    (void)arg1; (void)arg2;
-    return (uint32_t)-M4K_EINVAL;
+    const char *path = (const char *)arg1;
+    int mode = (int)arg2;
+    return (uint32_t)(int32_t)mkrn_vfs_access(path, mode);
 }
 
 static uint32_t m4k_syscall_setrlimit_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
                                             uint32_t arg4, uint32_t arg5)
 {
     (void)arg3; (void)arg4; (void)arg5;
-    (void)arg1; (void)arg2;
-    return (uint32_t)-M4K_EINVAL;
+    int resource = (int)arg1;
+    struct m4k_rlimit *rlp = (struct m4k_rlimit *)arg2;
+    if (!rlp) return (uint32_t)-M4K_EINVAL;
+    return (uint32_t)(int32_t)mkrn_process_set_rlimit(resource, rlp);
 }
 
 static uint32_t m4k_syscall_getrlimit_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
                                             uint32_t arg4, uint32_t arg5)
 {
     (void)arg3; (void)arg4; (void)arg5;
-    (void)arg1; (void)arg2;
-    return (uint32_t)-M4K_EINVAL;
+    int resource = (int)arg1;
+    struct m4k_rlimit *rlp = (struct m4k_rlimit *)arg2;
+    if (!rlp) return (uint32_t)-M4K_EINVAL;
+    return (uint32_t)(int32_t)mkrn_process_get_rlimit(resource, rlp);
+}
+
+static uint32_t m4k_syscall_spawn_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                       uint32_t arg4, uint32_t arg5)
+{
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    const char *path = (const char *)arg1;
+    if (!path)
+        return (uint32_t)-1;
+
+    mkrn_console_write("spawn: opening ");
+    mkrn_console_write(path);
+    mkrn_console_write("\n");
+    int fd = mkrn_vfs_open(path, M4K_O_RDONLY);
+    if (fd < 0) {
+        mkrn_console_write("spawn: open failed\n");
+        return (uint32_t)-1;
+    }
+
+    uint8_t *elf_buf = NULL;
+    uint32_t total = 0;
+    uint32_t cap = 4096;
+    int ret = -1;
+
+    elf_buf = (uint8_t *)mkrn_alloc(cap);
+    if (!elf_buf) {
+        mkrn_vfs_close(fd);
+        return (uint32_t)-1;
+    }
+
+    for (;;) {
+        int n = mkrn_vfs_read(fd, elf_buf + total, cap - total);
+        if (n < 0)
+            goto out;
+        if (n == 0)
+            break;
+        total += (uint32_t)n;
+        if (total + 256 >= cap) {
+            uint32_t new_cap = cap * 2;
+            uint8_t *tmp = (uint8_t *)mkrn_alloc(new_cap);
+            if (!tmp)
+                goto out;
+            mkrn_memcpy(tmp, elf_buf, total);
+            mkrn_free(elf_buf);
+            elf_buf = tmp;
+            cap = new_cap;
+        }
+    }
+
+    if (total == 0)
+        goto out;
+    mkrn_console_write("spawn: loaded ");
+    mkrn_console_write_dec(total);
+    mkrn_console_write(" bytes\n");
+
+    const char *slash = path;
+    const char *last_slash = path;
+    while (*slash) {
+        if (*slash == '/')
+            last_slash = slash + 1;
+        slash++;
+    }
+    ret = mkrn_execve(elf_buf, total, last_slash);
+
+out:
+    if (elf_buf)
+        mkrn_free(elf_buf);
+    mkrn_vfs_close(fd);
+    if (ret != 0)
+        return (uint32_t)-1;
+
+    mkrn_process_t *pCur = mkrn_process_get_current();
+    pCur->state_tags = M4K_SCHED_RUNNING;
+    __asm__ volatile(
+        "movl %0, %%esp\n"
+        "popl %%ebx\n"
+        "popl %%esi\n"
+        "popl %%edi\n"
+        "popl %%ebp\n"
+        "ret\n"
+        : : "r"(pCur->thread_esp) : "memory"
+    );
+    __builtin_unreachable();
 }
 
 void m4k_syscall_init_handlers(void)
 {
+    m4k_syscall_register(M4K_SYS_SPAWN, m4k_syscall_spawn_impl);
     m4k_syscall_register(M4K_SYS_EXIT, m4k_syscall_exit_impl);
     m4k_syscall_register(M4K_SYS_READ, m4k_syscall_read_impl);
     m4k_syscall_register(M4K_SYS_WRITE, m4k_syscall_write_impl);
@@ -428,6 +514,9 @@ void m4k_syscall_init_handlers(void)
     m4k_syscall_register(M4K_SYS_ACCESS, m4k_syscall_access_impl);
     m4k_syscall_register(M4K_SYS_SETRLIMIT, m4k_syscall_setrlimit_impl);
     m4k_syscall_register(M4K_SYS_GETRLIMIT, m4k_syscall_getrlimit_impl);
+    m4k_syscall_register(M4K_SYS_BRK, m4k_syscall_brk_impl);
+    m4k_syscall_register(M4K_SYS_REGISTER_SESSION, m4k_syscall_register_session_impl);
+    m4k_syscall_register(M4K_SYS_GET_SESSION_LIST, m4k_syscall_get_session_list_impl);
 
     M4K_LOG_INFO("M4KK1 system call handlers registered");
 }

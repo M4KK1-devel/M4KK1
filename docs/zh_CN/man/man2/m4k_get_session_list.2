@@ -1,0 +1,16 @@
+.\" M4KK1 4P1 - m4k_get_session_list.2
+.TH M4K_GET_SESSION_LIST 2 "2026-07-22" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_get_session_list \- 获取会话列表
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_get_session_list(void *buf, int max);
+.fi
+.SH 描述
+获取当前所有活跃登录会话的列表。每个会话包含 TTY、UID、登录时间和用户名。
+.SH 返回值
+成功返回会话数量，失败返回负的 M4K_E* 错误码。
+.SH 参见
+.BR m4k_register_session (2),
+.BR who (1)

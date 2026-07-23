@@ -1,0 +1,16 @@
+.\" M4KK1 4P1 - musr_getpwnam.3
+.TH MUSR_GETPWNAM 3 "2026-07-22" "M4KK1 1.0" "M4KK1 Library Functions"
+.SH NAME
+musr_getpwnam \- look up user database entry by name
+.SH SYNOPSIS
+.nf
+#include <m4k/pwd.h>
+int musr_getpwnam(const char *name, passwd_entry_t *out);
+.fi
+.SH DESCRIPTION
+Search /export/cfg/passwd.db for an entry matching the given username.
+.SH RETURN VALUE
+Returns 0 on success, or negative M4K_ENOENT if not found.
+.SH SEE ALSO
+.BR musr_getpwuid (3),
+.BR musr_getgrnam (3)

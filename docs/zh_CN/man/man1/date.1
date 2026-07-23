@@ -1,0 +1,34 @@
+.\" M4KK1 4P1 - date.1
+.TH DATE 1 "2026-07-22" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+date \- 显示或设置系统日期和时间
+.SH 概要
+.B date
+[\fI选项\fR]
+.SH 描述
+显示当前系统日期和时间，或设置系统时间。
+.SH 选项
+.TP
+.B \-f, \-\-format \fIFMT\fR
+strftime 格式输出
+.TP
+.B \-u, \-\-utc
+以 UTC 显示时间
+.TP
+.B \-d, \-\-date \fIDT\fR
+解析并显示日期
+.TP
+.B \-s, \-\-set \fIDT\fR
+设置系统时间
+.TP
+.B \-\-uptime
+显示系统运行时间
+.TP
+.B \-\-hwclock
+读取 RTC 时间
+.TP
+.B \-\-timers
+显示活跃内核定时器数
+.SH 参见
+.BR cal (1),
+.BR uname (1)

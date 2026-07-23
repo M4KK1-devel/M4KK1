@@ -76,7 +76,7 @@ mkrn_timer_read_rtc(mkrn_time_t *pTime)
     pTime->hour = cmos_read(M4K_RTC_HOURS);
     pTime->day = cmos_read(M4K_RTC_DAY);
     pTime->month = cmos_read(M4K_RTC_MONTH);
-    pTime->year = cmos_read(M4K_RTC_YEAR) + 2000;
+    pTime->year = cmos_read(M4K_RTC_YEAR);
 
     if (!(u8StatusB & M4K_RTC_BINARY_MODE)) {
         pTime->second =
@@ -96,8 +96,9 @@ mkrn_timer_read_rtc(mkrn_time_t *pTime)
             + (pTime->month & 0x0F);
         pTime->year =
             (pTime->year >> 4) * 10
-            + (pTime->year & 0x0F) + 2000;
+            + (pTime->year & 0x0F);
     }
+    pTime->year += 2000;
 }
 
 /**
@@ -129,8 +130,10 @@ mkrn_timer_set_rtc(mkrn_time_t *pTime)
             ((pTime->month / 10) << 4)
             | (pTime->month % 10);
         pTime->year =
-            ((pTime->year / 10) << 4)
+            (((pTime->year % 100) / 10) << 4)
             | (pTime->year % 10);
+    } else {
+        pTime->year %= 100;
     }
 
     cmos_write(M4K_RTC_SECONDS, pTime->second);
@@ -446,6 +449,15 @@ mkrn_timer_destroy_alarm(uint32_t u32AlarmId)
     mkrn_console_write("\n");
 
     return -1;
+}
+
+/**
+ * @brief  Get the number of active alarms.
+ */
+uint32_t
+mkrn_timer_get_active_count(void)
+{
+    return u32ActiveAlarms;
 }
 
 /**

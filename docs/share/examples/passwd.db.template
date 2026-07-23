@@ -1,0 +1,6 @@
+# /export/cfg/passwd.db
+# 格式: username:uid:gid:home:shell:gecos:password_hash
+root:0:0:/root:/bin/m4sh:System Administrator:$SHA$salt$hash
+testuser:1001:1001:/home/testuser:/bin/m4sh:Test User:$SHA$salt$hash
+nobody:65534:65534:/export/srv/nobody:/sbin/nologin:Unprivileged:$SHA$salt$hash
+daemon:1:1:/export/srv/daemon:/sbin/nologin:System Daemon:$SHA$salt$hash

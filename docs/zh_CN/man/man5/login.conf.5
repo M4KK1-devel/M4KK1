@@ -1,0 +1,31 @@
+.\" M4KK1 4P1 - login.conf.5
+.TH LOGIN.CONF 5 "2026-07-22" "M4KK1 1.0" "M4KK1 配置文件"
+.SH 名称
+login.conf \- M4KK1 登录类别资源限制配置
+.SH 描述
+/export/login.conf 定义 BSD 风格的登录类别和资源限制。
+.SH 文件格式
+.nf
+<类名>:\\
+    :<键>=<值>:\\
+    :<键>=<值>:
+.fi
+.SH 资源键
+.TP
+.B cputime
+CPU 时间（秒）
+.TP
+.B datasize
+数据段 + 堆大小
+.TP
+.B stacksize
+栈大小
+.TP
+.B maxproc
+最大进程数
+.TP
+.B openfiles
+最大打开文件数
+.SH 参见
+.BR passwd.db (5),
+.BR groups.db (5)

@@ -18,6 +18,8 @@
 #include "syscall.h"
 #include "ldso.h"
 #include "elf.h"
+#include "sessions.h"
+#include "device_tree.h"
 #include "vfs.h"
 #include <yafs.h>
 #include <stdint.h>
@@ -32,6 +34,10 @@ void mkrn_shell_main(void);
 
 extern unsigned char init_init_elf[];
 extern unsigned int init_init_elf_len;
+extern unsigned char login_init_elf[];
+extern unsigned int login_init_elf_len;
+extern unsigned char m4sh_init_elf[];
+extern unsigned int m4sh_init_elf_len;
 
 void mkrn_yafs_test(void);
 int mkrn_yafs_create_fhs(u64 *root_lba);
@@ -128,6 +134,8 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
     m4k_syscall_init();
     mkrn_vfs_init();
     mkrn_procfs_init();
+    mkrn_sessions_init();
+    mkrn_device_tree_init();
     mkrn_console_write(
         "   Standard and M4KK1 system calls initialized.\n");
 
@@ -212,12 +220,85 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
             "ramfs fallback.\n");
     }
 
-    mkrn_console_write("9. Loading M4SH...\n");
+    mkrn_console_write("9. Writing userspace ELFs and user DB to YAFS...\n");
+    {
+        int fd = mkrn_vfs_open("/bin/login",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, login_init_elf,
+                login_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/login written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/login\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/m4sh",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, m4sh_init_elf,
+                m4sh_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/m4sh written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/m4sh\n");
+        }
+    }
+    {
+        mkrn_vfs_create_file_yafs("/export/home/testuser");
+    }
+    {
+        static const char pw_root[]   = "root:0:0:/export/root:/bin/m4sh:System Administrator:\n";
+        static const char pw_test[]   = "testuser:1001:1001:/home/testuser:/bin/m4sh:Test User:\n";
+        static const char pw_nobody[] = "nobody:65534:65534:/export/srv/nobody:/sbin/nologin:Unprivileged:\n";
+        int fd = mkrn_vfs_open("/export/cfg/passwd.db",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            mkrn_vfs_write(fd, pw_root, sizeof(pw_root) - 1);
+            mkrn_vfs_write(fd, pw_test, sizeof(pw_test) - 1);
+            mkrn_vfs_write(fd, pw_nobody, sizeof(pw_nobody) - 1);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /export/cfg/passwd.db created\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create passwd.db\n");
+        }
+    }
+    {
+        static const char gr_prime[] = "prime:1001:testuser,root\n";
+        int fd = mkrn_vfs_open("/export/cfg/groups.db",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            mkrn_vfs_write(fd, gr_prime, sizeof(gr_prime) - 1);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /export/cfg/groups.db created\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create groups.db\n");
+        }
+    }
+    {
+        static const char tz_default[] = "+0000\n";
+        int fd = mkrn_vfs_open("/export/cfg/timezone",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            mkrn_vfs_write(fd, tz_default, sizeof(tz_default) - 1);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /export/cfg/timezone created\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create timezone\n");
+        }
+    }
+
+    mkrn_console_write("10. Loading init...\n");
     int exec_ret = mkrn_execve(
-        init_init_elf, init_init_elf_len);
+        init_init_elf, init_init_elf_len, "init");
     if (exec_ret != 0) {
         mkrn_console_write(
-            "   ERROR: Failed to load M4SH (err=");
+            "   ERROR: Failed to load init (err=");
         mkrn_console_write_dec((u32)(-exec_ret));
         mkrn_console_write(")\n");
         mkrn_console_write(
@@ -229,7 +310,7 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
         __builtin_unreachable();
     }
 
-    mkrn_console_write("   M4SH loaded.\n");
+    mkrn_console_write("   Init loaded.\n");
     mkrn_console_write("=====================================\n");
     mkrn_console_write("Starting Scheduler...\n");
     mkrn_console_write("=====================================\n");

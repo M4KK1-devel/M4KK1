@@ -354,6 +354,38 @@ isr_syscall:
     pop ebx
     iret
 
+; M4KK1 系统调用中断处理函数 (int 0x4D)
+GLOBAL isr_m4k_syscall
+isr_m4k_syscall:
+    push eax                ; [esp+24] = saved EAX (syscall number)
+    push ebx                ; [esp+20] = EBX (arg1)
+    push ecx                ; [esp+16] = ECX (arg2)
+    push edx                ; [esp+12] = EDX (arg3)
+    push esi                ; [esp+8]  = ESI (arg4)
+    push edi                ; [esp+4]  = EDI (arg5)
+    push ebp                ; [esp+0]  = EBP
+
+    lea eax, [esp+20]       ; pointer to EBX in saved regs
+    push eax                ; 2nd arg: saved_regs (points to EBX)
+    push dword [esp+28]     ; 1st arg: syscall_num (skip 24 + 4 for pushed pointer = 28)
+
+    call m4k_syscall_handler
+    add esp, 8              ; pop two args
+
+    pop ebp
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    add esp, 4              ; pop saved EAX (we keep return value in EAX)
+    iret
+    pop edx
+    pop ecx
+    pop ebx
+    add esp, 4              ; pop saved EAX
+    iret
+
 ; 屏蔽IRQ
 GLOBAL pic_mask_irq
 pic_mask_irq:
@@ -433,6 +465,7 @@ extern print_string
 extern print_hex
 extern mkrn_timer_handler
 extern mkrn_syscall_handler
+extern m4k_syscall_handler
 
 
 ; 获取IDT信息

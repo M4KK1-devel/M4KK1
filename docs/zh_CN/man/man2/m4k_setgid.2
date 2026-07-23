@@ -1,0 +1,20 @@
+.\" M4KK1 4P1 - m4k_setgid.2
+.TH M4K_SETGID 2 "2026-07-22" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_setgid \- 设置组 ID
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_setgid(gid_t gid);
+.fi
+.SH 描述
+设置调用进程的实际 GID 和有效 GID。
+.SH 返回值
+成功返回 0，失败返回负的 M4K_E* 错误码。
+.SH 错误
+.TP
+.B M4K_EPERM
+调用者无权限
+.SH 参见
+.BR m4k_setuid (2),
+.BR m4k_getgid (2)

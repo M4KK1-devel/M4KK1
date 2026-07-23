@@ -6,6 +6,10 @@
 
 **License:** GPL-3.0
 
+**Documentation:**
+- **[中文 (zh-CN)](docs/README.md)** — 完整的系统文档（25 个文件）
+- **[English (en)](docs/en/README.md)** — 英文翻译文档（10 个文件）
+
 M4KK1 is an operating system for i386, developed from scratch in freestanding C
 and NASM assembly. It is an early-stage, experimental project — many things are
 aspirational rather than implemented. This README describes what **actually** exists.
@@ -112,7 +116,13 @@ M4KK1/
 ├── init/                     # Generated init_elf.c (embedded M4SH binary)
 ├── tools/build/              # Build scripts
 ├── iso/                      # GRUB ISO staging directory
-├── docs/                     # Design notes (4P1, API, style)
+├── docs/                     # Design notes & full documentation (中文, 22 files)
+│   ├── architecture.md       # 系统架构
+│   ├── kernel/               # 内核子系统文档 (7 files)
+│   ├── userspace/            # 用户空间文档 (5 files)
+│   ├── fs/                   # 文件系统文档 (3 files)
+│   ├── dev/                  # 开发指南文档 (4 files)
+│   └── plan/roadmap.md       # 开发路线图
 ├── arch/                     # Architecture stubs (arm, arm64, powerpc,
 │                             #   riscv, x86_64, x86)
 ├── usr/                      # (empty — future user programs)

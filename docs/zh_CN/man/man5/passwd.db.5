@@ -1,0 +1,30 @@
+.\" M4KK1 4P1 - passwd.db.5
+.TH PASSWD.DB 5 "2026-07-22" "M4KK1 1.0" "M4KK1 配置文件"
+.SH 名称
+passwd.db \- M4KK1 用户数据库
+.SH 描述
+/etc/passwd.db（实际位于 /export/cfg/passwd.db）包含每个用户的账户信息。每一行包含由冒号分隔的 7 个字段:
+.TP
+.B username
+用户名
+.TP
+.B uid
+用户 ID
+.TP
+.B gid
+主组 ID
+.TP
+.B home
+家目录路径
+.TP
+.B shell
+登录 Shell
+.TP
+.B gecos
+用户全名/描述
+.TP
+.B password_hash
+密码哈希（$SHA$salt$hash 格式）
+.SH 参见
+.BR groups.db (5),
+.BR login.conf (5)

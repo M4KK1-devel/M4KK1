@@ -1,0 +1,22 @@
+.\" M4KK1 4P1 - groups.db.5
+.TH GROUPS.DB 5 "2026-07-22" "M4KK1 1.0" "M4KK1 配置文件"
+.SH 名称
+groups.db \- M4KK1 组数据库
+.SH 描述
+/etc/groups.db（实际位于 /export/cfg/groups.db）包含系统组信息。每一行包含由冒号分隔的字段:
+.TP
+.B groupname
+组名
+.TP
+.B gid
+组 ID
+.TP
+.B members
+逗号分隔的成员列表
+.SH 示例
+.nf
+prime:1001:root,testuser
+.fi
+.SH 参见
+.BR passwd.db (5),
+.BR login.conf (5)

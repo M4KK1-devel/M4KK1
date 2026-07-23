@@ -1,0 +1,20 @@
+.\" M4KK1 4P1 - quell.8
+.TH QUELL 8 "2026-07-22" "M4KK1 1.0" "M4KK1 System Administration"
+.SH NAME
+quell \- execute a command with prime group privileges
+.SH SYNOPSIS
+.B quell
+\fIcommand\fR [\fIargs\fR...]
+.SH DESCRIPTION
+Execute a command with root privileges (euid=0). The caller must be a member of the prime group (GID 1001). This is the M4KK1 alternative to sudo.
+.SH EXAMPLE
+.TP
+.B quell mount /dev/yafs0 /mnt
+Mount a filesystem
+.TP
+.B quell usermod -a --group prime alice
+Add alice to the prime group
+.SH SEE ALSO
+.BR usermod (8),
+.BR groupmod (8),
+.BR passwd (8)

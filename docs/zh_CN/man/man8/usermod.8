@@ -1,0 +1,32 @@
+.\" M4KK1 4P1 - usermod.8
+.TH USERMOD 8 "2026-07-22" "M4KK1 1.0" "M4KK1 系统管理"
+.SH 名称
+usermod \- 修改用户账户
+.SH 概要
+.B usermod
+[\fI选项\fR] \fI用户名\fR
+.SH 描述
+修改 /export/cfg/passwd.db 中的用户账户信息。需要 prime 组成员权限。
+.SH 选项
+.TP
+.B \-a, \-\-add \fI组\fR
+添加用户到附加组
+.TP
+.B \-d, \-\-del \fI组\fR
+从组中移除用户
+.TP
+.B \-s, \-\-shell \fI路径\fR
+更改登录 Shell
+.TP
+.B \-g, \-\-group \fI组\fR
+设置主组
+.TP
+.B \-L, \-\-lock
+锁定账户
+.TP
+.B \-U, \-\-unlock
+解锁账户
+.SH 参见
+.BR groupmod (8),
+.BR passwd (8),
+.BR quell (8)

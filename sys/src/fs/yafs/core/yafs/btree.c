@@ -10,6 +10,7 @@
 #include <yafs_btree.h>
 #include <stdint.h>
 #include <string.h>
+#include <console.h>
 
 extern int      mkrn_yafs_dev_read(uint64_t u64Lba,
                                    void *pBuf);
@@ -302,7 +303,7 @@ mkrn_yafs_btree_lookup(uint64_t u64RootLba,
                        uint64_t u64Key,
                        yafs_entry_t *pValueOut)
 {
-    yafs_node_t node;
+    static yafs_node_t node;
     uint64_t u64Current = u64RootLba;
 
     if (u64RootLba == 0)
