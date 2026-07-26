@@ -137,10 +137,11 @@ void musr_cmd_login(int ac, char **av) {
             m4k_register_session("ttyS0", musr_sc_getpid(), entry.username);
 
             // 记录登录日志
+            musr_sc_mkdir("/var");
             musr_sc_mkdir("/var/log");
             {
                 int lfd = musr_sc_open("/var/log/userlog",
-                    O_WRONLY | O_CREAT | 0x00002000);
+                    O_WRONLY | O_CREAT);
                 if (lfd >= 0) {
                     char lbuf[256];
                     uint32_t now = (uint32_t)musr_sc_time();

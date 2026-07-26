@@ -402,6 +402,13 @@ static inline uint32_t m4k_sc4(uint32_t n, uint32_t a, uint32_t b, uint32_t c, u
     return r;
 }
 
+static inline uint32_t m4k_sc5(uint32_t n, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e)
+{
+    uint32_t r;
+    __asm__ volatile("int $0x4D" : "=a"(r) : "a"(n), "b"(a), "c"(b), "d"(c), "S"(d), "D"(e) : "memory");
+    return r;
+}
+
 /* ── struct m4k_rlimit (needed by m4k_setrlimit/m4k_getrlimit) ── */
 
 struct m4k_rlimit {
@@ -469,6 +476,57 @@ static inline int m4k_setns(const char *p, const char *t, uint32_t f) { return (
 static inline int m4k_get_memory_usage(uint32_t *t, uint32_t *u, uint32_t *f) { return (int)m4k_sc3(M4K_SYS_MEMINFO, (uint32_t)t, (uint32_t)u, (uint32_t)f); }
 static inline int m4k_setrlimit(int r, const struct m4k_rlimit *l) { return (int)m4k_sc2(M4K_SYS_SETRLIMIT, (uint32_t)r, (uint32_t)l); }
 static inline int m4k_getrlimit(int r, struct m4k_rlimit *l) { return (int)m4k_sc2(M4K_SYS_GETRLIMIT, (uint32_t)r, (uint32_t)l); }
+
+/* ── Framebuffer / video ── */
+#define M4K_SYS_GET_FRAMEBUFFER_INFO 0x4D000050
+#define M4K_SYS_DRAW_TEST_PATTERN    0x4D000051
+#define M4K_SYS_GET_MOUSE_EVENT      0x4D000052
+#define M4K_SYS_FLIP                 0x4D000053
+#define M4K_SYS_DRAW_RECT            0x4D000054
+#define M4K_SYS_DRAW_TEXT            0x4D000055
+#define M4K_SYS_GET_KEYBOARD_EVENT   0x4D000056
+struct m4k_framebuffer_info {
+    uint32_t phys_addr;
+    uint32_t width;
+    uint32_t height;
+    uint32_t bpp;
+    uint32_t pitch;
+};
+struct m4k_mouse_event {
+    int16_t dx;
+    int16_t dy;
+    uint8_t buttons;
+    uint8_t reserved;
+};
+
+struct m4k_keyboard_event {
+    uint8_t ascii_char;
+    uint8_t keycode;
+    uint8_t modifiers;
+    uint8_t reserved;
+};
+
+static inline int m4k_get_framebuffer_info(struct m4k_framebuffer_info *fb) {
+    return (int)m4k_sc1(M4K_SYS_GET_FRAMEBUFFER_INFO, (uint32_t)fb);
+}
+static inline int m4k_draw_test_pattern(void) {
+    return (int)m4k_sc0(M4K_SYS_DRAW_TEST_PATTERN);
+}
+static inline int m4k_get_mouse_event(struct m4k_mouse_event *ev) {
+    return (int)m4k_sc1(M4K_SYS_GET_MOUSE_EVENT, (uint32_t)ev);
+}
+static inline int m4k_flip(void) {
+    return (int)m4k_sc0(M4K_SYS_FLIP);
+}
+static inline int m4k_draw_rect(int x, int y, int w, int h, uint32_t color) {
+    return (int)m4k_sc5(M4K_SYS_DRAW_RECT, (uint32_t)x, (uint32_t)y, (uint32_t)w, (uint32_t)h, color);
+}
+static inline int m4k_draw_text(int x, int y, const char *str, uint32_t fg, uint32_t bg) {
+    return (int)m4k_sc5(M4K_SYS_DRAW_TEXT, (uint32_t)x, (uint32_t)y, (uint32_t)str, fg, bg);
+}
+static inline int m4k_get_keyboard_event(struct m4k_keyboard_event *ev) {
+    return (int)m4k_sc1(M4K_SYS_GET_KEYBOARD_EVENT, (uint32_t)ev);
+}
 
 #define M4K_SESSION_MAX 16
 struct m4k_session_info {
@@ -768,6 +826,7 @@ void musr_cmd_usermod(int, char **);
 void musr_cmd_groupmod(int, char **);
 void musr_cmd_cu(int, char **);
 void musr_cmd_userlog(int, char **);
+void musr_cmd_gfx_test(int, char **);
 void musr_boot_setup(void);
 void musr_setup_env(void);
 extern int musr_login_ok;

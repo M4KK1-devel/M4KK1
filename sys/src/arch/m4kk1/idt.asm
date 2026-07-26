@@ -355,35 +355,32 @@ isr_syscall:
     iret
 
 ; M4KK1 系统调用中断处理函数 (int 0x4D)
+; Push order: reversed so saved_regs[0..4] = {EBX, ECX, EDX, ESI, EDI}
+; Stack layout (low→high): EAX, EBX, ECX, EDX, ESI, EDI, EBP
 GLOBAL isr_m4k_syscall
 isr_m4k_syscall:
-    push eax                ; [esp+24] = saved EAX (syscall number)
-    push ebx                ; [esp+20] = EBX (arg1)
-    push ecx                ; [esp+16] = ECX (arg2)
-    push edx                ; [esp+12] = EDX (arg3)
-    push esi                ; [esp+8]  = ESI (arg4)
-    push edi                ; [esp+4]  = EDI (arg5)
-    push ebp                ; [esp+0]  = EBP
+    push ebp
+    push edi
+    push esi
+    push edx
+    push ecx
+    push ebx
+    push eax                ; top of saved regs = EAX (syscall number)
 
-    lea eax, [esp+20]       ; pointer to EBX in saved regs
-    push eax                ; 2nd arg: saved_regs (points to EBX)
-    push dword [esp+28]     ; 1st arg: syscall_num (skip 24 + 4 for pushed pointer = 28)
+    lea eax, [esp+4]        ; pointer to EBX (2nd from top)
+    push eax                ; 2nd arg: saved_regs points to EBX
+    push dword [esp+4]      ; 1st arg: syscall_num = EAX (top of saved regs)
 
     call m4k_syscall_handler
     add esp, 8              ; pop two args
 
-    pop ebp
-    pop edi
+    add esp, 4              ; skip saved EAX (return value is already in EAX)
+    pop ebx
+    pop ecx
+    pop edx
     pop esi
-    pop edx
-    pop ecx
-    pop ebx
-    add esp, 4              ; pop saved EAX (we keep return value in EAX)
-    iret
-    pop edx
-    pop ecx
-    pop ebx
-    add esp, 4              ; pop saved EAX
+    pop edi
+    pop ebp
     iret
 
 ; 屏蔽IRQ

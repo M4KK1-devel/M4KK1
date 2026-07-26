@@ -66,12 +66,14 @@ CC=gcc
 AS=nasm
 LD=ld
 CFLAGS="-Wall -Wextra -O2 -g -ffreestanding -nostdlib -nostdinc -m32 -mno-sse -mno-sse2 -mno-mmx -std=gnu99 -fno-stack-protector -fno-pic -fno-pie"
-CFLAGS="$CFLAGS -I$PWD/sys/src/include -I$PWD/include -I$PWD/sys/src/arch/m4kk1/include -I$PWD/sys/src/fs/yafs/include"
+CFLAGS="$CFLAGS -I$PWD/sys/src/include -I$PWD/include -I$PWD/sys/src/arch/m4kk1/include -I$PWD/sys/src/fs/yafs/include -I$PWD/sys/src/drivers/mouse -I$PWD/sys/src/drivers/keyboard"
 ASFLAGS="-f elf32"
 LDFLAGS="-T $PWD/sys/src/init/linker.ld -nostdlib -z max-page-size=0x1000 -m elf_i386 -g -no-pie"
 
 OBJDIR=build_objs
 mkdir -p $OBJDIR
+mkdir -p output
+rm -f output/*.krn output/*.iso
 
 # === Clean ./usr/bin/ before build ===
 if [ -d ./usr/bin ]; then
@@ -82,6 +84,7 @@ fi
 echo "   ./usr/bin/ cleaned"
 
 echo "=== Compiling kernel C files ==="
+$CC $CFLAGS -c sys/src/kernel/video/vesa.c -o $OBJDIR/vesa.o
 $CC $CFLAGS -c sys/src/kernel/kmain.c -o $OBJDIR/kmain.o
 $CC $CFLAGS -c sys/src/kernel/process.c -o $OBJDIR/process.o
 $CC $CFLAGS -c sys/src/kernel/execve.c -o $OBJDIR/execve.o
@@ -105,6 +108,8 @@ $CC $CFLAGS -c sys/src/kernel/shell.c -o $OBJDIR/shell.o
 
 echo "=== Compiling driver files ==="
 $CC $CFLAGS -c sys/src/drivers/console.c -o $OBJDIR/console.o
+$CC $CFLAGS -c sys/src/drivers/mouse/mouse.c -o $OBJDIR/mouse.o
+$CC $CFLAGS -c sys/src/drivers/keyboard/keyboard.c -o $OBJDIR/keyboard.o
 
 echo "=== Compiling MM files ==="
 $CC $CFLAGS -c sys/src/mm/memory.c -o $OBJDIR/memory.o
@@ -125,7 +130,7 @@ echo "=== Building M4SH userspace shell ==="
 M4SH_CFLAGS="-ffreestanding -nostdlib -nostdinc -m32 -mno-sse -std=gnu99 -fno-stack-protector -fno-pic -fno-pie -Isys/src/include"
 M4SH_CFLAGS="$M4SH_CFLAGS -I$PWD/sys/src/include -I$PWD/include -I$PWD/sys/src/arch/m4kk1/include -I$PWD/m4sh -Isys/src/include"
 OBJS=""
-for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' | sort); do
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/lib/*' | sort); do
     o="${f%.c}.o"
     $CC $M4SH_CFLAGS -c "$f" -o "$o"
     OBJS="$OBJS $o"
@@ -137,6 +142,22 @@ echo "=== Building standalone login ELF ==="
 $CC $M4SH_CFLAGS -c m4sh/login/login_standalone.c -o m4sh/login/login_standalone.o
 $LD -m elf_i386 -T m4sh/m4sh.ld -nostdlib -z max-page-size=0x1000 -o m4sh/login/login.elf m4sh/login/login_standalone.o
 echo "   Login ELF: m4sh/login/login.elf ($(stat -c%s m4sh/login/login.elf) bytes)"
+
+echo "=== Building MDM (Display Manager) ELF ==="
+$CC $M4SH_CFLAGS -c usr/src/lib/libgui.c -o usr/src/lib/libgui.o
+$CC $M4SH_CFLAGS -c usr/src/cmd/mdm.c -o usr/src/cmd/mdm.o
+$LD -m elf_i386 -T m4sh/m4sh.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/mdm.elf usr/src/cmd/mdm.o usr/src/lib/libgui.o
+echo "   MDM ELF: usr/src/cmd/mdm.elf ($(stat -c%s usr/src/cmd/mdm.elf) bytes)"
+
+echo "=== Building MDM Mini (Test) ELF ==="
+$CC $M4SH_CFLAGS -c usr/src/cmd/mdm_mini.c -o usr/src/cmd/mdm_mini.o
+$LD -m elf_i386 -T m4sh/m4sh.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/mdm_mini.elf usr/src/cmd/mdm_mini.o usr/src/lib/libgui.o
+echo "   MDM Mini ELF: usr/src/cmd/mdm_mini.elf ($(stat -c%s usr/src/cmd/mdm_mini.elf) bytes)"
+
+echo "=== Building Flip Test ELF ==="
+$CC $M4SH_CFLAGS -c usr/src/cmd/flip_test.c -o usr/src/cmd/flip_test.o
+$LD -m elf_i386 -T m4sh/m4sh.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/flip_test.elf usr/src/cmd/flip_test.o
+echo "   Flip Test ELF: usr/src/cmd/flip_test.elf ($(stat -c%s usr/src/cmd/flip_test.elf) bytes)"
 
 echo "=== Building init ELF ==="
 $CC $M4SH_CFLAGS -c init/init.c -o init/init.o
@@ -154,12 +175,29 @@ sed 's/m4sh_login_login_elf/login_init_elf/g; s/m4sh_login_login_elf_len/login_i
 rm -f init/login_elf_.c
 echo "   Generated init/login_elf.c"
 
+xxd -i usr/src/cmd/mdm.elf > init/mdm_elf_.c
+sed 's/usr_src_cmd_mdm_elf/mdm_init_elf/g; s/usr_src_cmd_mdm_elf_len/mdm_init_elf_len/g' init/mdm_elf_.c > init/mdm_elf.c
+rm -f init/mdm_elf_.c
+echo "   Generated init/mdm_elf.c"
+
+xxd -i usr/src/cmd/mdm_mini.elf > init/mdm_mini_elf_.c
+sed 's/usr_src_cmd_mdm_mini_elf/mdm_mini_init_elf/g; s/usr_src_cmd_mdm_mini_elf_len/mdm_mini_init_elf_len/g' init/mdm_mini_elf_.c > init/mdm_mini_elf.c
+rm -f init/mdm_mini_elf_.c
+echo "   Generated init/mdm_mini_elf.c"
+
+xxd -i usr/src/cmd/flip_test.elf > init/flip_test_elf_.c
+sed 's/usr_src_cmd_flip_test_elf/flip_test_init_elf/g; s/usr_src_cmd_flip_test_elf_len/flip_test_init_elf_len/g' init/flip_test_elf_.c > init/flip_test_elf.c
+rm -f init/flip_test_elf_.c
+echo "   Generated init/flip_test_elf.c"
+
 xxd -i init/init.elf > init/init_elf.c
 echo "   Generated init/init_elf.c"
 
 echo "=== Copying ELFs to ./usr/bin/ ==="
 cp -f m4sh/m4sh.elf ./usr/bin/m4sh
 cp -f m4sh/login/login.elf ./usr/bin/login
+cp -f usr/src/cmd/mdm.elf ./usr/bin/mdm
+cp -f usr/src/cmd/flip_test.elf ./usr/bin/flip_test
 cp -f init/init.elf ./usr/bin/init
 for f in usr/src/cmd/*.elf; do
     [ -f "$f" ] && cp -f "$f" ./usr/bin/ || true
@@ -170,6 +208,9 @@ echo "=== Compiling ELF data arrays ==="
 $CC $CFLAGS -c init/init_elf.c -o $OBJDIR/init_elf.o
 $CC $CFLAGS -c init/m4sh_elf.c -o $OBJDIR/m4sh_elf.o
 $CC $CFLAGS -c init/login_elf.c -o $OBJDIR/login_elf.o
+$CC $CFLAGS -c init/mdm_elf.c -o $OBJDIR/mdm_elf.o
+$CC $CFLAGS -c init/mdm_mini_elf.c -o $OBJDIR/mdm_mini_elf.o
+$CC $CFLAGS -c init/flip_test_elf.c -o $OBJDIR/flip_test_elf.o
 
 echo "=== Compiling VFS ==="
 $CC $CFLAGS -c sys/src/fs/vfs.c -o $OBJDIR/vfs.o
@@ -185,12 +226,15 @@ $CC $CFLAGS -c sys/src/lib/string.c -o $OBJDIR/string.o
 $CC $CFLAGS -c sys/src/lib/debug.c -o $OBJDIR/debug.o
 
 echo "=== Linking kernel ==="
-$LD $LDFLAGS -o m4kk1.krn \
+ $LD $LDFLAGS -o output/m4kk1.krn \
     $OBJDIR/entry.o \
     $OBJDIR/kmain.o \
+    $OBJDIR/vesa.o \
     $OBJDIR/process.o \
     $OBJDIR/execve.o \
     $OBJDIR/console.o \
+    $OBJDIR/mouse.o \
+    $OBJDIR/keyboard.o \
     $OBJDIR/memory.o \
     $OBJDIR/timer.o \
     $OBJDIR/gdt_c.o \
@@ -204,6 +248,9 @@ $LD $LDFLAGS -o m4kk1.krn \
     $OBJDIR/init_elf.o \
     $OBJDIR/m4sh_elf.o \
     $OBJDIR/login_elf.o \
+    $OBJDIR/mdm_elf.o \
+    $OBJDIR/mdm_mini_elf.o \
+    $OBJDIR/flip_test_elf.o \
     $OBJDIR/btree.o \
     $OBJDIR/yafs_test.o \
     $OBJDIR/yafs_vfs.o \
@@ -220,12 +267,12 @@ $LD $LDFLAGS -o m4kk1.krn \
     $OBJDIR/string.o \
     $OBJDIR/debug.o
 
-echo "=== Kernel built: m4kk1.krn ($(stat -c%s m4kk1.krn) bytes) ==="
+ echo "=== Kernel built: output/m4kk1.krn ($(stat -c%s output/m4kk1.krn) bytes) ==="
 
 echo "=== Building ISO image ==="
 ISODIR=$(mktemp -d /tmp/m4kk1_isodir.XXXXXX)
 mkdir -p "$ISODIR/boot/grub" "$ISODIR/boot/kernel"
-cp m4kk1.krn "$ISODIR/boot/kernel/m4kk1.krn"
+cp output/m4kk1.krn "$ISODIR/boot/kernel/m4kk1.krn"
 cat > "$ISODIR/boot/grub/grub.cfg" << GRUB
 set timeout=0
 set default=0
@@ -234,8 +281,7 @@ menuentry "M4KK1" {
     boot
 }
 GRUB
-mkdir -p iso
-rm -f iso/"$ISO_NAME"
-grub-mkrescue -o iso/"$ISO_NAME" "$ISODIR"
+ rm -f output/"$ISO_NAME"
+ grub-mkrescue -o output/"$ISO_NAME" "$ISODIR"
 rm -rf "$ISODIR"
-echo "=== ISO built: iso/$ISO_NAME ($(stat -c%s "iso/$ISO_NAME") bytes) ==="
+ echo "=== ISO built: output/$ISO_NAME ($(stat -c%s \"output/$ISO_NAME\") bytes) ==="

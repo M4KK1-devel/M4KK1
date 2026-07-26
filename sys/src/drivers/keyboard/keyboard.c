@@ -354,7 +354,7 @@ mkrn_kbd_init(void)
 
     mkrn_idt_register_handler(
         0x21,
-        (interrupt_handler_t)
+        (mkrn_int_handler_t)
             mkrn_keyboard_handler);
 
     keyboard_state.initialized = true;

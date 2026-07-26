@@ -11,9 +11,19 @@
 #include "../../include/console.h"
 #include "../../include/kernel.h"
 #include "../../include/idt.h"
+#include "../../include/video.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include "../../include/string.h"
+
+extern void pic_unmask_irq(uint32_t irq_num);
+
+/* ── Mouse event ring buffer ── */
+#define MOUSE_EVENT_BUF_SIZE 128
+
+static struct m4k_mouse_event mouse_event_buf[MOUSE_EVENT_BUF_SIZE];
+static volatile uint32_t mouse_event_head = 0;
+static volatile uint32_t mouse_event_tail = 0;
 
 #define MOUSE_DATA_PORT         0x60
 #define MOUSE_STATUS_PORT       0x64
@@ -63,7 +73,7 @@ outb(uint16_t u16Port, uint8_t u8Value)
 {
     __asm__ volatile("outb %0, %1"
                      :
-                     : "a"(u8Value), "Nd"(u16Port));
+                     : "a"(u8Value), "d"((uint16_t)u16Port));
 }
 
 static inline uint8_t
@@ -72,7 +82,7 @@ inb(uint16_t u16Port)
     uint8_t u8Value;
     __asm__ volatile("inb %1, %0"
                      : "=a"(u8Value)
-                     : "Nd"(u16Port));
+                     : "d"((uint16_t)u16Port));
     return u8Value;
 }
 
@@ -156,6 +166,15 @@ mouse_process_packet(uint8_t *pPacket)
         mouse_state.x_position = 0;
     if (mouse_state.y_position < 0)
         mouse_state.y_position = 0;
+
+    uint32_t next_tail = (mouse_event_tail + 1) % MOUSE_EVENT_BUF_SIZE;
+    if (next_tail != mouse_event_head) {
+        mouse_event_buf[mouse_event_tail].dx = mouse_state.x_movement;
+        mouse_event_buf[mouse_event_tail].dy = mouse_state.y_movement;
+        mouse_event_buf[mouse_event_tail].buttons = mouse_state.buttons;
+        mouse_event_buf[mouse_event_tail].reserved = 0;
+        mouse_event_tail = next_tail;
+    }
 }
 
 void
@@ -180,58 +199,38 @@ mkrn_mouse_handler(void)
 void
 mkrn_mouse_init(void)
 {
-    M4K_LOG_INFO("Initializing mouse driver...");
-
+    M4K_LOG_INFO("Initializing PS/2 mouse...\n");
     mkrn_memset(&mouse_state, 0, sizeof(mouse_state));
-    mouse_state.packet_index = 0;
-    mouse_state.sample_rate = 100;
 
-    mouse_send_command(MOUSE_CMD_DISABLE);
+    mouse_wait_ready();
+    __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0xA8), "d"((uint16_t)0x64));
 
-    while (inb(MOUSE_STATUS_PORT)
-           & MOUSE_STATUS_OBF)
+    for (int _i = 0; _i < 1000 && (inb(MOUSE_STATUS_PORT) & MOUSE_STATUS_OBF); _i++)
         inb(MOUSE_DATA_PORT);
 
-    if (mouse_send_command(MOUSE_CMD_SELF_TEST)) {
-        uint8_t u8Resp = mouse_wait_response();
-        if (u8Resp != MOUSE_TEST_OK) {
-            M4K_LOG_WARN(
-                "Mouse self-test failed");
-            return;
-        }
-    }
+    /* PS/2 init must write cmd byte in two steps due to QEMU 11 quirk.
+       Step 1: disable mouse, configure device, then enable. */
+    mouse_wait_ready();
+    __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0x60), "d"((uint16_t)0x64));
+    mouse_wait_ready();
+    __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0x45), "d"((uint16_t)0x60));
 
-    if (mouse_send_command(MOUSE_CMD_ENABLE)) {
-        uint8_t u8Resp = mouse_wait_response();
-        if (u8Resp != MOUSE_ACK) {
-            M4K_LOG_WARN("Mouse enable failed");
-            return;
-        }
-    }
+    mouse_wait_ready();
+    __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0xD4), "d"((uint16_t)0x64));
+    mouse_wait_ready();
+    __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0xF4), "d"((uint16_t)0x60));
+    mouse_wait_response();
 
-    if (mouse_send_data(0xF3)) {
-        mouse_wait_response();
-        mouse_send_data(100);
-    }
+    mouse_wait_ready();
+    __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0x60), "d"((uint16_t)0x64));
+    mouse_wait_ready();
+    __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0x27), "d"((uint16_t)0x60));
 
-    if (mouse_send_data(0xF4)) {
-        uint8_t u8Resp = mouse_wait_response();
-        if (u8Resp == MOUSE_ACK)
-            mouse_state.has_wheel = true;
-    }
-
-    if (mouse_send_data(0xE8)) {
-        mouse_wait_response();
-        mouse_send_data(0x03);
-    }
-
-    mkrn_idt_register_handler(
-        0x2C,
-        (interrupt_handler_t)
-            mkrn_mouse_handler);
+    mkrn_idt_register_handler(0x2C, (mkrn_int_handler_t)mkrn_mouse_handler);
+    pic_unmask_irq(12);
 
     mouse_state.initialized = true;
-    M4K_LOG_INFO("Mouse driver initialized");
+    M4K_LOG_INFO("PS/2 mouse driver initialized\n");
 }
 
 bool
@@ -293,4 +292,21 @@ bool
 mkrn_mouse_has_wheel(void)
 {
     return mouse_state.has_wheel;
+}
+
+bool
+mkrn_mouse_has_event(void)
+{
+    return mouse_event_head != mouse_event_tail;
+}
+
+bool
+mkrn_mouse_get_event(struct m4k_mouse_event *ev)
+{
+    if (mouse_event_head == mouse_event_tail)
+        return false;
+
+    *ev = mouse_event_buf[mouse_event_head];
+    mouse_event_head = (mouse_event_head + 1) % MOUSE_EVENT_BUF_SIZE;
+    return true;
 }

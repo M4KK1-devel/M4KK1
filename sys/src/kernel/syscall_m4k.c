@@ -8,6 +8,8 @@
 
 #include <m4k_syscall.h>
 #include <vfs.h>
+#include <video.h>
+#include <mouse.h>
 #include <console.h>
 #include <idt.h>
 #include <kernel.h>
@@ -19,8 +21,12 @@
 #include <string.h>
 #include <elf.h>
 
+extern char mkrn_keyboard_get_char(void);
+extern bool mkrn_keyboard_has_char(void);
+
 extern uint32_t m4k_syscall_register_session_impl(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
 extern uint32_t m4k_syscall_get_session_list_impl(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+
 
 typedef uint32_t (*m4k_syscall_handler_t)(uint32_t arg1, uint32_t arg2, uint32_t arg3,
                                           uint32_t arg4, uint32_t arg5);
@@ -79,6 +85,13 @@ void m4k_syscall_handler(u32 syscall_num, u32 *saved_regs)
 
     idx = syscall_num & 0xFF;
 
+    if (syscall_num == 0x4D000002) {
+        mkrn_console_write("[handler] SPAWN syscall received! idx=");
+        mkrn_console_write_hex(idx);
+        mkrn_console_write(" registered=");
+        mkrn_console_write_hex(m4k_syscall_table[idx].registered);
+        mkrn_console_write("\n");
+    }
     if (idx >= 256 || !m4k_syscall_table[idx].registered) {
         M4K_LOG_WARN("Unregistered M4KK1 system call");
         m4k_syscall_stats.failed_calls++;
@@ -97,7 +110,17 @@ void m4k_syscall_handler(u32 syscall_num, u32 *saved_regs)
 
     m4k_syscall_handler_t handler = m4k_syscall_table[idx].handler;
     if (handler != NULL) {
+        if (syscall_num == 0x4D000002) {
+            mkrn_console_write("[handler] calling SPAWN handler at addr 0x");
+            mkrn_console_write_hex((uint32_t)(uintptr_t)handler);
+            mkrn_console_write("\n");
+        }
         result = handler(arg1, arg2, arg3, arg4, arg5);
+        if (syscall_num == 0x4D000002) {
+            mkrn_console_write("[handler] SPAWN handler returned, result=");
+            mkrn_console_write_hex(result);
+            mkrn_console_write("\n");
+        }
     } else {
         m4k_syscall_stats.failed_calls++;
         result = 0x4D000002;
@@ -178,11 +201,56 @@ const char *m4k_syscall_get_name(uint32_t num)
         case M4K_SYS_BRK: return "m4k_brk";
         case M4K_SYS_REGISTER_SESSION: return "m4k_register_session";
         case M4K_SYS_GET_SESSION_LIST: return "m4k_get_session_list";
+        case M4K_SYS_GET_FRAMEBUFFER_INFO: return "m4k_get_framebuffer_info";
+        case M4K_SYS_DRAW_TEST_PATTERN: return "m4k_draw_test_pattern";
+        case M4K_SYS_GET_MOUSE_EVENT: return "m4k_get_mouse_event";
+        case M4K_SYS_FLIP: return "m4k_flip";
+        case M4K_SYS_DRAW_RECT: return "m4k_draw_rect";
+        case M4K_SYS_DRAW_TEXT: return "m4k_draw_text";
+        case M4K_SYS_GET_KEYBOARD_EVENT: return "m4k_get_keyboard_event";
         default: return "unknown";
     }
 }
 
-/* ── Handler implementations ── */
+/* -- Syscall: get mouse event -- */
+static uint32_t m4k_syscall_mouse_event_impl(
+    uint32_t buf_ptr, uint32_t arg2, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5)
+{
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+
+    struct m4k_mouse_event *ev = (struct m4k_mouse_event *)buf_ptr;
+    if (!ev)
+        return (uint32_t)-1;
+
+    if (mkrn_mouse_get_event(ev))
+        return 1;
+    return 0;
+}
+
+/* -- Syscall: get keyboard event -- */
+static uint32_t m4k_syscall_keyboard_event_impl(
+    uint32_t buf_ptr, uint32_t arg2, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5)
+{
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+
+    struct m4k_keyboard_event *ev = (struct m4k_keyboard_event *)buf_ptr;
+    if (!ev)
+        return (uint32_t)-1;
+
+    if (mkrn_keyboard_has_char()) {
+        char ch = mkrn_keyboard_get_char();
+        ev->ascii_char = (uint8_t)ch;
+        ev->keycode = 0;
+        ev->modifiers = 0;
+        ev->reserved = 0;
+        return 1;
+    }
+    return 0;
+}
+
+/* -- Handler implementations -- */
 
 static uint32_t m4k_syscall_exit_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
                                       uint32_t arg4, uint32_t arg5)
@@ -517,6 +585,13 @@ void m4k_syscall_init_handlers(void)
     m4k_syscall_register(M4K_SYS_BRK, m4k_syscall_brk_impl);
     m4k_syscall_register(M4K_SYS_REGISTER_SESSION, m4k_syscall_register_session_impl);
     m4k_syscall_register(M4K_SYS_GET_SESSION_LIST, m4k_syscall_get_session_list_impl);
+    m4k_syscall_register(M4K_SYS_GET_FRAMEBUFFER_INFO, m4k_syscall_get_framebuffer_info_impl);
+    m4k_syscall_register(M4K_SYS_DRAW_TEST_PATTERN, m4k_syscall_draw_test_pattern_impl);
+    m4k_syscall_register(M4K_SYS_GET_MOUSE_EVENT, m4k_syscall_mouse_event_impl);
+    m4k_syscall_register(M4K_SYS_FLIP, m4k_syscall_flip_impl);
+    m4k_syscall_register(M4K_SYS_DRAW_RECT, m4k_syscall_draw_rect_impl);
+    m4k_syscall_register(M4K_SYS_DRAW_TEXT, m4k_syscall_draw_text_impl);
+    m4k_syscall_register(M4K_SYS_GET_KEYBOARD_EVENT, m4k_syscall_keyboard_event_impl);
 
     M4K_LOG_INFO("M4KK1 system call handlers registered");
 }

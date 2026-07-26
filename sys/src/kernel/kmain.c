@@ -21,6 +21,8 @@
 #include "sessions.h"
 #include "device_tree.h"
 #include "vfs.h"
+#include <video.h>
+#include <mouse.h>
 #include <yafs.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -38,6 +40,12 @@ extern unsigned char login_init_elf[];
 extern unsigned int login_init_elf_len;
 extern unsigned char m4sh_init_elf[];
 extern unsigned int m4sh_init_elf_len;
+extern unsigned char mdm_init_elf[];
+extern unsigned int mdm_init_elf_len;
+extern unsigned char mdm_mini_init_elf[];
+extern unsigned int mdm_mini_init_elf_len;
+extern unsigned char flip_test_init_elf[];
+extern unsigned int flip_test_init_elf_len;
 
 void mkrn_yafs_test(void);
 int mkrn_yafs_create_fhs(u64 *root_lba);
@@ -136,8 +144,28 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
     mkrn_procfs_init();
     mkrn_sessions_init();
     mkrn_device_tree_init();
+    mkrn_vesa_init();
+    /* Graphics test: draw a pattern on screen */
+    mkrn_vesa_clear(VESA_COLOR_BLACK);
+    mkrn_vesa_draw_rect(50, 50, 200, 150, VESA_COLOR_RED, 1);
+    mkrn_vesa_draw_rect(50, 50, 200, 150, VESA_COLOR_WHITE, 0);
+    mkrn_vesa_draw_rect(300, 50, 100, 100, VESA_COLOR_GREEN, 1);
+    mkrn_vesa_draw_rect(450, 50, 100, 100, VESA_COLOR_BLUE, 1);
+    mkrn_vesa_put_string(50, 250, "Hello M4KK1 GUI!", VESA_COLOR_WHITE, VESA_COLOR_BLACK);
+    mkrn_vesa_put_string(50, 270, "Framebuffer 800x600x32", VESA_COLOR_YELLOW, VESA_COLOR_BLACK);
+    mkrn_vesa_flip();
+
     mkrn_console_write(
         "   Standard and M4KK1 system calls initialized.\n");
+
+    mkrn_console_write("6.5. Initializing PS/2 Mouse...\n");
+    mkrn_mouse_init();
+    mkrn_idt_enable_interrupts();
+    if (mkrn_mouse_is_initialized()) {
+        mkrn_console_write("   PS/2 mouse driver initialized.\n");
+        mkrn_vesa_cursor_enable(1);
+    } else
+        mkrn_console_write("   PS/2 mouse not detected.\n");
 
     mkrn_console_write("7. Initializing Dynamic Linker...\n");
     if (mkrn_ll_init() != 0) {
@@ -250,12 +278,58 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
         }
     }
     {
+        int fd = mkrn_vfs_open("/bin/mdm",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, mdm_init_elf,
+                mdm_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/mdm written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/mdm\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/mdm_mini",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, mdm_mini_init_elf,
+                mdm_mini_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/mdm_mini written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/mdm_mini\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/flip_test",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, flip_test_init_elf,
+                flip_test_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/flip_test written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/flip_test\n");
+        }
+    }
+    {
         mkrn_vfs_create_file_yafs("/export/home/testuser");
     }
     {
-        static const char pw_root[]   = "root:0:0:/export/root:/bin/m4sh:System Administrator:\n";
-        static const char pw_test[]   = "testuser:1001:1001:/home/testuser:/bin/m4sh:Test User:\n";
-        static const char pw_nobody[] = "nobody:65534:65534:/export/srv/nobody:/sbin/nologin:Unprivileged:\n";
+        /* Generate passwd.db with proper password hashes */
+        /* Format: username:uid:gid:home:shell:gecos:password_hash */
+        /* Password hash format: salt_hex + "$" + sha256_hash_hex */
+        /* Using deterministic salt: salt[i] = i * 17 + 37 */
+        static const char pw_root[]   = "root:0:0:/export/root:/bin/m4sh:System Administrator:25364758697a8b9cadbecfe0f1021324$8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92\n";
+        static const char pw_test[]   = "testuser:1001:1001:/home/testuser:/bin/m4sh:Test User:25364758697a8b9cadbecfe0f1021324$5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a188e7a6f1b5c4f\n";
+        static const char pw_nobody[] = "nobody:65534:65534:/export/srv/nobody:/sbin/nologin:Unprivileged:25364758697a8b9cadbecfe0f1021324$0000000000000000000000000000000000000000000000000000000000000000\n";
         int fd = mkrn_vfs_open("/export/cfg/passwd.db",
             M4K_O_CREAT | M4K_O_WRONLY);
         if (fd >= 0) {

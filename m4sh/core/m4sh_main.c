@@ -59,6 +59,7 @@ musr_cmd_t musr_cmd_table[] = {
     {"groupmod",musr_cmd_groupmod,"Modify group"},
     {"cu",     musr_cmd_cu,     "Change user (switch account)"},
     {"userlog",musr_cmd_userlog,"Show login history"},
+    {"gfx_test",musr_cmd_gfx_test,"Draw graphics test pattern"},
     {NULL, NULL, NULL}
 };
 

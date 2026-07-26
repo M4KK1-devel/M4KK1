@@ -26,3 +26,6 @@ pkg/**/*.o
 # OS
 Thumbs.db
 .DS_Store
+
+# Build output directory
+output/

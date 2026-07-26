@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <video.h>
 
 typedef enum {
     MOUSE_EVENT_BUTTON_PRESS = 0,
@@ -100,3 +101,16 @@ int  mkrn_mouse_save_config(
 
 int  mkrn_mouse_self_test(void);
 int  mkrn_mouse_diagnostic(void);
+
+/* ── PS/2 mouse driver (mouse.c) ── */
+void     mkrn_mouse_init(void);
+void     mkrn_mouse_handler(void);
+bool     mkrn_mouse_is_initialized(void);
+void     mkrn_mouse_get_position(int32_t *pX, int32_t *pY);
+void     mkrn_mouse_get_movement(int8_t *pX, int8_t *pY, int8_t *pZ);
+uint8_t  mkrn_mouse_get_buttons(void);
+void     mkrn_mouse_set_sample_rate(uint32_t u32Rate);
+uint32_t mkrn_mouse_get_sample_rate(void);
+bool     mkrn_mouse_has_wheel(void);
+bool     mkrn_mouse_has_event(void);
+bool     mkrn_mouse_get_event(struct m4k_mouse_event *ev);
