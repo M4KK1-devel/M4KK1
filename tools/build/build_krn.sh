@@ -62,7 +62,24 @@ else
     ISO_NAME="m4kk1_${MAJOR}.${MINOR}.${PATCH}_build${BUILD}.iso"
 fi
 
-CC=gcc
+# 检测PCC交叉编译器
+if command -v i386-pc-m4kk1-pcc >/dev/null 2>&1; then
+    CC=i386-pc-m4kk1-pcc
+    echo "Using PCC cross-compiler: $CC"
+else
+    CC=gcc
+    echo "PCC not found, using native gcc: $CC"
+fi
+
+# 检测Make工具
+if command -v make >/dev/null 2>&1; then
+    MAKE=make
+    echo "Using Make: $MAKE"
+else
+    MAKE=
+    echo "WARNING: Make not found, using manual build"
+fi
+
 AS=nasm
 LD=ld
 CFLAGS="-Wall -Wextra -O2 -g -ffreestanding -nostdlib -nostdinc -m32 -mno-sse -mno-sse2 -mno-mmx -std=gnu99 -fno-stack-protector -fno-pic -fno-pie"
@@ -130,7 +147,7 @@ echo "=== Building M4SH userspace shell ==="
 M4SH_CFLAGS="-ffreestanding -nostdlib -nostdinc -m32 -mno-sse -std=gnu99 -fno-stack-protector -fno-pic -fno-pie -Isys/src/include"
 M4SH_CFLAGS="$M4SH_CFLAGS -I$PWD/sys/src/include -I$PWD/include -I$PWD/sys/src/arch/m4kk1/include -I$PWD/m4sh -Isys/src/include"
 OBJS=""
-for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/lib/*' | sort); do
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/lib/*' | sort); do
     o="${f%.c}.o"
     $CC $M4SH_CFLAGS -c "$f" -o "$o"
     OBJS="$OBJS $o"
@@ -146,7 +163,8 @@ echo "   Login ELF: m4sh/login/login.elf ($(stat -c%s m4sh/login/login.elf) byte
 echo "=== Building MDM (Display Manager) ELF ==="
 $CC $M4SH_CFLAGS -c usr/src/lib/libgui.c -o usr/src/lib/libgui.o
 $CC $M4SH_CFLAGS -c usr/src/cmd/mdm.c -o usr/src/cmd/mdm.o
-$LD -m elf_i386 -T m4sh/m4sh.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/mdm.elf usr/src/cmd/mdm.o usr/src/lib/libgui.o
+$CC $M4SH_CFLAGS -c m4sh/lib/pwd.c -o m4sh/lib/pwd_mdm.o
+$LD -m elf_i386 -T m4sh/m4sh.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/mdm.elf usr/src/cmd/mdm.o usr/src/lib/libgui.o m4sh/lib/pwd_mdm.o
 echo "   MDM ELF: usr/src/cmd/mdm.elf ($(stat -c%s usr/src/cmd/mdm.elf) bytes)"
 
 echo "=== Building MDM Mini (Test) ELF ==="
@@ -158,6 +176,23 @@ echo "=== Building Flip Test ELF ==="
 $CC $M4SH_CFLAGS -c usr/src/cmd/flip_test.c -o usr/src/cmd/flip_test.o
 $LD -m elf_i386 -T m4sh/m4sh.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/flip_test.elf usr/src/cmd/flip_test.o
 echo "   Flip Test ELF: usr/src/cmd/flip_test.elf ($(stat -c%s usr/src/cmd/flip_test.elf) bytes)"
+
+echo "=== Building Copland (display server) ELF ==="
+$CC $M4SH_CFLAGS -c usr/src/lib/libgui.c -o usr/src/lib/libgui.o
+$CC $M4SH_CFLAGS -c usr/src/cmd/copland.c -o usr/src/cmd/copland.o
+$LD -m elf_i386 -T usr/src/cmd/copland.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/copland.elf usr/src/cmd/copland.o usr/src/lib/libgui.o
+echo "   Copland ELF: usr/src/cmd/copland.elf ($(stat -c%s usr/src/cmd/copland.elf) bytes)"
+
+echo "=== Building Sprach (window manager) ELFs ==="
+$CC $M4SH_CFLAGS -c usr/src/sprach/sprach.c -o usr/src/sprach/sprach.o
+for m in stack tiling scroll; do
+    $CC $M4SH_CFLAGS -c "usr/src/sprach/sprach_mode_${m}.c" -o "usr/src/sprach/sprach_mode_${m}.o"
+    $LD -m elf_i386 -T usr/src/sprach/sprach.ld -nostdlib -z max-page-size=0x1000 \
+        -o "usr/src/sprach/sprach_${m}" \
+        usr/src/sprach/sprach.o "usr/src/sprach/sprach_mode_${m}.o"
+    echo "   Sprach ${m} ELF: usr/src/sprach/sprach_${m} ($(stat -c%s usr/src/sprach/sprach_${m}) bytes)"
+done
+cp -f usr/src/sprach/sprach_stack ./usr/bin/sprach
 
 echo "=== Building init ELF ==="
 $CC $M4SH_CFLAGS -c init/init.c -o init/init.o
@@ -190,6 +225,18 @@ sed 's/usr_src_cmd_flip_test_elf/flip_test_init_elf/g; s/usr_src_cmd_flip_test_e
 rm -f init/flip_test_elf_.c
 echo "   Generated init/flip_test_elf.c"
 
+xxd -i usr/src/cmd/copland.elf > init/copland_elf_.c
+sed 's/usr_src_cmd_copland_elf/copland_init_elf/g; s/usr_src_cmd_copland_elf_len/copland_init_elf_len/g' init/copland_elf_.c > init/copland_elf.c
+rm -f init/copland_elf_.c
+echo "   Generated init/copland_elf.c"
+
+for m in stack tiling scroll; do
+    xxd -i "usr/src/sprach/sprach_${m}" > "init/sprach_${m}_elf_.c"
+    sed "s/usr_src_sprach_sprach_${m}/sprach_${m}_init_elf/g; s/usr_src_sprach_sprach_${m}_len/sprach_${m}_init_elf_len/g" "init/sprach_${m}_elf_.c" > "init/sprach_${m}_elf.c"
+    rm -f "init/sprach_${m}_elf_.c"
+    echo "   Generated init/sprach_${m}_elf.c"
+done
+
 xxd -i init/init.elf > init/init_elf.c
 echo "   Generated init/init_elf.c"
 
@@ -198,6 +245,11 @@ cp -f m4sh/m4sh.elf ./usr/bin/m4sh
 cp -f m4sh/login/login.elf ./usr/bin/login
 cp -f usr/src/cmd/mdm.elf ./usr/bin/mdm
 cp -f usr/src/cmd/flip_test.elf ./usr/bin/flip_test
+cp -f usr/src/cmd/copland.elf ./usr/bin/copland
+cp -f usr/src/cmd/copland.elf ./usr/bin/copland_status
+cp -f usr/src/sprach/sprach_stack ./usr/bin/sprach_stack
+cp -f usr/src/sprach/sprach_tiling ./usr/bin/sprach_tiling
+cp -f usr/src/sprach/sprach_scroll ./usr/bin/sprach_scroll
 cp -f init/init.elf ./usr/bin/init
 for f in usr/src/cmd/*.elf; do
     [ -f "$f" ] && cp -f "$f" ./usr/bin/ || true
@@ -211,6 +263,10 @@ $CC $CFLAGS -c init/login_elf.c -o $OBJDIR/login_elf.o
 $CC $CFLAGS -c init/mdm_elf.c -o $OBJDIR/mdm_elf.o
 $CC $CFLAGS -c init/mdm_mini_elf.c -o $OBJDIR/mdm_mini_elf.o
 $CC $CFLAGS -c init/flip_test_elf.c -o $OBJDIR/flip_test_elf.o
+$CC $CFLAGS -c init/copland_elf.c -o $OBJDIR/copland_elf.o
+$CC $CFLAGS -c init/sprach_stack_elf.c -o $OBJDIR/sprach_stack_elf.o
+$CC $CFLAGS -c init/sprach_tiling_elf.c -o $OBJDIR/sprach_tiling_elf.o
+$CC $CFLAGS -c init/sprach_scroll_elf.c -o $OBJDIR/sprach_scroll_elf.o
 
 echo "=== Compiling VFS ==="
 $CC $CFLAGS -c sys/src/fs/vfs.c -o $OBJDIR/vfs.o
@@ -251,6 +307,10 @@ echo "=== Linking kernel ==="
     $OBJDIR/mdm_elf.o \
     $OBJDIR/mdm_mini_elf.o \
     $OBJDIR/flip_test_elf.o \
+    $OBJDIR/copland_elf.o \
+    $OBJDIR/sprach_stack_elf.o \
+    $OBJDIR/sprach_tiling_elf.o \
+    $OBJDIR/sprach_scroll_elf.o \
     $OBJDIR/btree.o \
     $OBJDIR/yafs_test.o \
     $OBJDIR/yafs_vfs.o \
@@ -282,6 +342,12 @@ menuentry "M4KK1" {
 }
 GRUB
  rm -f output/"$ISO_NAME"
- grub-mkrescue -o output/"$ISO_NAME" "$ISODIR"
-rm -rf "$ISODIR"
- echo "=== ISO built: output/$ISO_NAME ($(stat -c%s \"output/$ISO_NAME\") bytes) ==="
+ if grub-mkrescue -o output/"$ISO_NAME" "$ISODIR" 2>/tmp/m4kk1_grub_err.txt; then
+     echo "=== ISO built: output/$ISO_NAME ($(stat -c%s \"output/$ISO_NAME\") bytes) ==="
+ else
+     echo "WARNING: ISO build failed (grub-mkrescue needs mtools/mformat)."
+     echo "         Kernel is still available: output/m4kk1.krn"
+     echo "         Boot it directly: qemu-system-i386 -kernel output/m4kk1.krn -serial stdio"
+     cat /tmp/m4kk1_grub_err.txt >&2
+ fi
+rm -rf "$ISODIR" /tmp/m4kk1_grub_err.txt

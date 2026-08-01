@@ -69,7 +69,7 @@ static bool m4k_syscall_check_permission(uint32_t syscall_num, uint32_t current_
     return (current_permission & m4k_syscall_table[syscall_num].permission_mask) != 0;
 }
 
-void m4k_syscall_handler(u32 syscall_num, u32 *saved_regs)
+uint32_t m4k_syscall_handler(u32 syscall_num, u32 *saved_regs)
 {
     uint32_t idx;
     uint32_t result = 0x4D000000;
@@ -85,17 +85,10 @@ void m4k_syscall_handler(u32 syscall_num, u32 *saved_regs)
 
     idx = syscall_num & 0xFF;
 
-    if (syscall_num == 0x4D000002) {
-        mkrn_console_write("[handler] SPAWN syscall received! idx=");
-        mkrn_console_write_hex(idx);
-        mkrn_console_write(" registered=");
-        mkrn_console_write_hex(m4k_syscall_table[idx].registered);
-        mkrn_console_write("\n");
-    }
     if (idx >= 256 || !m4k_syscall_table[idx].registered) {
         M4K_LOG_WARN("Unregistered M4KK1 system call");
         m4k_syscall_stats.failed_calls++;
-        goto m4k_syscall_return;
+        return result;
     }
 
     mkrn_process_t *current_process = mkrn_process_get_current();
@@ -105,31 +98,18 @@ void m4k_syscall_handler(u32 syscall_num, u32 *saved_regs)
     if (!m4k_syscall_check_permission(idx, current_permission)) {
         m4k_syscall_stats.permission_denied++;
         result = 0x4D000001;
-        goto m4k_syscall_return;
+        return result;
     }
 
     m4k_syscall_handler_t handler = m4k_syscall_table[idx].handler;
     if (handler != NULL) {
-        if (syscall_num == 0x4D000002) {
-            mkrn_console_write("[handler] calling SPAWN handler at addr 0x");
-            mkrn_console_write_hex((uint32_t)(uintptr_t)handler);
-            mkrn_console_write("\n");
-        }
         result = handler(arg1, arg2, arg3, arg4, arg5);
-        if (syscall_num == 0x4D000002) {
-            mkrn_console_write("[handler] SPAWN handler returned, result=");
-            mkrn_console_write_hex(result);
-            mkrn_console_write("\n");
-        }
     } else {
         m4k_syscall_stats.failed_calls++;
         result = 0x4D000002;
     }
 
-m4k_syscall_return:
-    __asm__ volatile ("movl %0, %%eax" : : "r"(result));
-    /* saved_regs values remain unmodified on stack;
-       assembly stub will pop them for iret */
+    return result;
 }
 
 extern void isr_m4k_syscall(void);
@@ -208,6 +188,7 @@ const char *m4k_syscall_get_name(uint32_t num)
         case M4K_SYS_DRAW_RECT: return "m4k_draw_rect";
         case M4K_SYS_DRAW_TEXT: return "m4k_draw_text";
         case M4K_SYS_GET_KEYBOARD_EVENT: return "m4k_get_keyboard_event";
+        case M4K_SYS_GFX_BLIT: return "m4k_gfx_blit";
         default: return "unknown";
     }
 }
@@ -481,9 +462,6 @@ static uint32_t m4k_syscall_spawn_impl(uint32_t arg1, uint32_t arg2, uint32_t ar
     if (!path)
         return (uint32_t)-1;
 
-    mkrn_console_write("spawn: opening ");
-    mkrn_console_write(path);
-    mkrn_console_write("\n");
     int fd = mkrn_vfs_open(path, M4K_O_RDONLY);
     if (fd < 0) {
         mkrn_console_write("spawn: open failed\n");
@@ -522,9 +500,6 @@ static uint32_t m4k_syscall_spawn_impl(uint32_t arg1, uint32_t arg2, uint32_t ar
 
     if (total == 0)
         goto out;
-    mkrn_console_write("spawn: loaded ");
-    mkrn_console_write_dec(total);
-    mkrn_console_write(" bytes\n");
 
     const char *slash = path;
     const char *last_slash = path;
@@ -592,6 +567,7 @@ void m4k_syscall_init_handlers(void)
     m4k_syscall_register(M4K_SYS_DRAW_RECT, m4k_syscall_draw_rect_impl);
     m4k_syscall_register(M4K_SYS_DRAW_TEXT, m4k_syscall_draw_text_impl);
     m4k_syscall_register(M4K_SYS_GET_KEYBOARD_EVENT, m4k_syscall_keyboard_event_impl);
+    m4k_syscall_register(M4K_SYS_GFX_BLIT, m4k_syscall_gfx_blit_impl);
 
     M4K_LOG_INFO("M4KK1 system call handlers registered");
 }

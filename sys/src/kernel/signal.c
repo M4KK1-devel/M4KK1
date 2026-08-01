@@ -100,7 +100,11 @@ void mkrn_signal_deliver(mkrn_process_t *proc, int sig)
 
     if (mkrn_signal_is_fatal(sig)) {
         proc->exit_status = sig;
-        mkrn_process_exit(sig);
+        /* The fatal signal must terminate the TARGET process, which may
+         * differ from the current one (kill() from another process).
+         * mkrn_process_exit() only ever exits `current`, so mark the
+         * target for reaping by the scheduler instead. */
+        mkrn_process_terminate(proc->pid);
     } else if (mkrn_signal_is_stop(sig)) {
         proc->state_tags |= M4K_STOPPED;
         proc->state_tags &= ~M4K_SCHED_READY;

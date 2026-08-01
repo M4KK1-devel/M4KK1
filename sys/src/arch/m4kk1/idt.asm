@@ -274,20 +274,27 @@ GLOBAL isr_default
 isr_default:
     pusha
 
-    ; 显示异常信息
-    mov esi, exception_msg
-    call print_string
-
     ; 获取中断向量号
     mov eax, [esp + 32]         ; 从栈中获取向量号
 
-    ; 显示向量号
-    mov esi, vector_msg
-    call print_string
-    call print_hex
+    push eax
+    mov eax, dbg_msg_x
+    push eax
+    call mkrn_console_write
+    add esp, 4
+    pop eax
 
-    mov esi, newline
-    call print_string
+    push eax
+    call mkrn_console_write_hex
+    add esp, 4
+
+    push eax
+    mov eax, dbg_msg_y
+    push eax
+    call mkrn_console_write
+    add esp, 4
+    pop eax
+    popa
 
     ; 停止系统
     cli
@@ -295,27 +302,50 @@ isr_default:
     jmp $
 
 ; 默认IRQ处理函数
+; 现在调用C语言处理程序 mkrn_idt_handle_irq()
 GLOBAL irq_default
 irq_default:
     pusha
 
-    ; 发送EOI到主PIC
-    mov al, 0x20
-    out 0x20, al
-
-    ; 检查是否为从PIC的中断
-    mov al, 0x0B
+    ; 确定IRQ号 - 先检查从PIC
+    mov al, 0x0B        ; OCW3: 读取ISR
     out 0xA0, al
     in al, 0xA0
+    test al, al
+    jnz .slave_irq
 
-    ; 如果是从PIC的中断，发送EOI到从PIC
-    test al, 0x80
-    jz .no_slave_eoi
+    ; 检查主PIC
+    mov al, 0x0B        ; OCW3: 读取ISR
+    out 0x20, al
+    in al, 0x20
 
-    mov al, 0x20
-    out 0xA0, al
+    ; 找到触发的IRQ位 - 先零扩展al到eax
+    movzx eax, al       ; 将 al 零扩展到 eax
+    bsf eax, eax
+    jz .no_irq          ; 没有IRQ，可能是伪中断
 
-.no_slave_eoi:
+    ; IRQ号在eax中 (0-7 对应主PIC)
+    push eax
+    call mkrn_idt_handle_irq
+    add esp, 4
+    jmp .done
+
+.slave_irq:
+    ; 从PIC中断 - 先零扩展al到eax
+    movzx eax, al       ; 将 al 零扩展到 eax
+    bsf eax, eax
+    jz .no_irq
+    add eax, 8          ; 从PIC IRQ是 8-15
+    push eax
+    call mkrn_idt_handle_irq
+    add esp, 4
+
+.done:
+    popa
+    iret
+
+.no_irq:
+    ; 伪中断或无IRQ，直接返回
     popa
     iret
 
@@ -337,6 +367,7 @@ irq_timer:
 ; 系统调用中断处理函数 (int 0x80)
 GLOBAL isr_syscall
 isr_syscall:
+    push eax                ; preserve syscall number across frame capture
     push ebx
     push ecx
     push edx
@@ -344,14 +375,49 @@ isr_syscall:
     push edi
     push ebp
 
+    ; Save user frame for fork(): g_syscall_user_frame = {eip, cs, eflags, esp, ss, ebp}
+    ; Stack now: [esp]=ebp, +4=edi, +8=esi, +12=edx, +16=ecx, +20=ebx, +24=eax,
+    ;            +28=user_eip, +32=cs, +36=eflags, +40=esp, +44=ss
+    ; NOTE: use the symbol as an immediate (array address), not
+    ; dword [sym] which would load the array's first element instead.
+    mov eax, g_syscall_user_frame
+    mov ecx, [esp+28]
+    mov [eax], ecx
+    mov ecx, [esp+32]
+    mov [eax+4], ecx
+    mov ecx, [esp+36]
+    mov [eax+8], ecx
+    mov ecx, [esp+40]
+    mov [eax+12], ecx
+    mov ecx, [esp+44]
+    mov [eax+16], ecx
+    mov ecx, [esp+0]          ; user EBP (pushed first, bottom of block)
+    mov [eax+20], ecx
+
+    ; Restore the syscall number into EAX: the frame capture above
+    ; clobbered the register, and mkrn_syscall_handler reads the number
+    ; from EAX at entry.
+    mov eax, [esp+24]
+
     call mkrn_syscall_handler
 
+    ; Cooperative scheduling: give other ready processes (e.g. a forked
+    ; child) a chance to run before returning to user mode.  EAX holds
+    ; the syscall return value, so save it across the switch.
+    push eax
+    call mkrn_process_yield
+    pop eax
+
+    ; NOTE: this ISR pushes EAX first (bottom of the saved block, [esp+24]),
+    ; unlike isr_m4k_syscall which pushes it last.  Restore in the order the
+    ; regs were pushed, then skip EAX.
     pop ebp
     pop edi
     pop esi
     pop edx
     pop ecx
     pop ebx
+    add esp, 4              ; skip saved EAX (syscall number, bottom of block)
     iret
 
 ; M4KK1 系统调用中断处理函数 (int 0x4D)
@@ -367,6 +433,25 @@ isr_m4k_syscall:
     push ebx
     push eax                ; top of saved regs = EAX (syscall number)
 
+    ; Save user frame for fork(): g_syscall_user_frame = {eip, cs, eflags, esp, ss, ebp}
+    ; Stack now: [esp]=eax, +4=ebx, +8=ecx, +12=edx, +16=esi, +20=edi, +24=ebp,
+    ;            +28=user_eip, +32=cs, +36=eflags, +40=esp, +44=ss
+    ; NOTE: use the symbol as an immediate (array address), not
+    ; dword [sym] which would load the array's first element instead.
+    mov eax, g_syscall_user_frame
+    mov ecx, [esp+28]
+    mov [eax], ecx
+    mov ecx, [esp+32]
+    mov [eax+4], ecx
+    mov ecx, [esp+36]
+    mov [eax+8], ecx
+    mov ecx, [esp+40]
+    mov [eax+12], ecx
+    mov ecx, [esp+44]
+    mov [eax+16], ecx
+    mov ecx, [esp+24]         ; user EBP (pushed last, at +24)
+    mov [eax+20], ecx
+
     lea eax, [esp+4]        ; pointer to EBX (2nd from top)
     push eax                ; 2nd arg: saved_regs points to EBX
     push dword [esp+4]      ; 1st arg: syscall_num = EAX (top of saved regs)
@@ -374,7 +459,14 @@ isr_m4k_syscall:
     call m4k_syscall_handler
     add esp, 8              ; pop two args
 
-    add esp, 4              ; skip saved EAX (return value is already in EAX)
+    ; Cooperative scheduling: give other ready processes (e.g. a forked
+    ; child) a chance to run before returning to user mode.  EAX holds
+    ; the syscall return value, so save it across the switch.
+    push eax
+    call mkrn_process_yield
+    pop eax
+
+    add esp, 4              ; skip saved EAX (syscall number at entry)
     pop ebx
     pop ecx
     pop edx
@@ -453,6 +545,8 @@ SECTION .rodata
 exception_msg   db "Exception occurred! Vector: 0x", 0
 vector_msg      db "0x", 0
 newline         db 13, 10, 0
+dbg_msg_x       db "[EXC] vec=", 0
+dbg_msg_y       db "\r\n", 0
 idt_msg         db "M4KK1 IDT Information:", 13, 10, 0
 idt_base_msg    db "  Base: 0x", 0
 idt_limit_msg   db "  Limit: 0x", 0
@@ -463,6 +557,11 @@ extern print_hex
 extern mkrn_timer_handler
 extern mkrn_syscall_handler
 extern m4k_syscall_handler
+extern mkrn_idt_handle_irq
+extern g_syscall_user_frame
+extern mkrn_process_yield
+extern mkrn_console_write
+extern mkrn_console_write_hex
 
 
 ; 获取IDT信息

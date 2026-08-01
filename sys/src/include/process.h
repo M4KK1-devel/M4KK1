@@ -41,6 +41,7 @@ typedef uint32_t gid_t;
 /* Debug / control */
 #define M4K_TRACED          0x00010000ULL
 #define M4K_STOPPED         0x00020000ULL
+#define M4K_TERMINATE       0x00040000ULL
 
 /* Lifecycle */
 #define M4K_ZOMBIE          0x01000000ULL
@@ -49,9 +50,9 @@ typedef uint32_t gid_t;
 /* Convenience masks */
 #define M4K_STATE_SCHED_MASK   0x00000007ULL
 #define M4K_STATE_WAIT_MASK    0x00007F00ULL
-#define M4K_STATE_CTRL_MASK    0x00030000ULL
+#define M4K_STATE_CTRL_MASK    0x00070000ULL
 #define M4K_STATE_LIFE_MASK    0x03000000ULL
-#define M4K_STATE_RESERVED     (~0x03037F07ULL)
+#define M4K_STATE_RESERVED     (~0x0307FF07ULL)
 
 /* ── Fork/Clone Flags ── */
 
@@ -106,6 +107,8 @@ typedef struct mkrn_process {
     struct m4k_rlimit rlimits[M4K_RLIMIT_NLIMITS];
     uint32_t priority;
     uint32_t thread_esp;
+    uint32_t kernel_stack;  /* top of this process's private kernel stack (TSS esp0) */
+    uint32_t user_stack_base; /* bottom of this process's user stack allocation */
     uint32_t sleep_ticks;
     uint32_t exit_status;
     uint32_t pending_signals;
@@ -176,9 +179,12 @@ int mkrn_process_fill_info(struct mkrn_procinfo *buf, uint32_t max);
 /* 4P1 new APIs */
 
 pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags);
+void mkrn_fork_child_restore(void);
+extern uint32_t g_syscall_user_frame[6];
 pid_t mkrn_spawn(const char *path, char *const argv[], char *const envp[], uint32_t flags);
 pid_t mkrn_waitpid(pid_t pid, int *status, int options);
 int mkrn_kill(pid_t pid, int sig);
+void mkrn_process_terminate(pid_t pid);
 int mkrn_setns(const char *path, const char *target, uint32_t flags);
 /* Internal helpers */
 mkrn_process_t *mkrn_process_find(pid_t pid);

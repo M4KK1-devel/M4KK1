@@ -25,5 +25,5 @@ void musr_cmd_export(int ac, char **av)
         return;
     }
     if (envar_cnt < 16)
-        musr_strcpy(envars[envar_cnt++], av[1]);
+        musr_strncpy(envars[envar_cnt++], av[1], sizeof(envars[0])-1);
 }

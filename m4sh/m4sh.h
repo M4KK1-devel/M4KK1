@@ -42,6 +42,16 @@ static void musr_strcpy(char *d, const char *s)
     while ((*d++ = *s++))
         ;
 }
+static void musr_strncpy(char *d, const char *s, size_t n)
+{
+    size_t i;
+    for (i = 0; i < n && s[i]; i++)
+        d[i] = s[i];
+    if (i < n)
+        d[i] = '\0';
+    else if (n > 0)
+        d[n - 1] = '\0';
+}
 static int musr_strcmp(const char *a, const char *b)
 {
     while (*a && *a == *b) {
@@ -55,6 +65,14 @@ static void musr_strcat(char *d, const char *s)
     d += musr_strlen(d);
     while ((*d++ = *s++))
         ;
+}
+static void musr_strncat(char *d, const char *s, size_t n)
+{
+    size_t dlen = musr_strlen(d);
+    size_t i;
+    for (i = 0; i < n && s[i]; i++)
+        d[dlen + i] = s[i];
+    d[dlen + i] = '\0';
 }
 static int musr_strncmp(const char *a, const char *b, int n)
 {
@@ -458,6 +476,7 @@ struct m4k_rlimit {
 
 static inline int m4k_getpid(void)    { return (int)m4k_sc0(M4K_SYS_GETPID); }
 static inline int m4k_getppid(void)   { return (int)m4k_sc0(M4K_SYS_GETPPID); }
+static inline int m4k_exit(uint32_t status) { return (int)m4k_sc1(M4K_SYS_EXIT, status); }
 static inline int m4k_getuid(void)    { return (int)m4k_sc0(M4K_SYS_GETUID); }
 static inline int m4k_geteuid(void)   { return (int)m4k_sc0(M4K_SYS_GETEUID); }
 static inline int m4k_getgid(void)    { return (int)m4k_sc0(M4K_SYS_GETGID); }
@@ -485,6 +504,7 @@ static inline int m4k_getrlimit(int r, struct m4k_rlimit *l) { return (int)m4k_s
 #define M4K_SYS_DRAW_RECT            0x4D000054
 #define M4K_SYS_DRAW_TEXT            0x4D000055
 #define M4K_SYS_GET_KEYBOARD_EVENT   0x4D000056
+#define M4K_SYS_GFX_BLIT             0x4D000057
 struct m4k_framebuffer_info {
     uint32_t phys_addr;
     uint32_t width;
@@ -526,6 +546,9 @@ static inline int m4k_draw_text(int x, int y, const char *str, uint32_t fg, uint
 }
 static inline int m4k_get_keyboard_event(struct m4k_keyboard_event *ev) {
     return (int)m4k_sc1(M4K_SYS_GET_KEYBOARD_EVENT, (uint32_t)ev);
+}
+static inline int m4k_gfx_blit(int x, int y, int w, int h, const void *src) {
+    return (int)m4k_sc5(M4K_SYS_GFX_BLIT, (uint32_t)x, (uint32_t)y, (uint32_t)w, (uint32_t)h, (uint32_t)src);
 }
 
 #define M4K_SESSION_MAX 16
@@ -683,16 +706,16 @@ static void cwd_init(void)
 {
     int n = musr_sc_getcwd(cwd, 256);
     if (n <= 0)
-        musr_strcpy(cwd, "/");
+        musr_strncpy(cwd, "/", sizeof(cwd)-1);
 }
 static void cwd_to_abs(const char *in, char *out, int osize)
 {
     if (!in || !*in) {
-        musr_strcpy(out, cwd);
+        musr_strncpy(out, cwd, osize-1);
         return;
     }
     if (in[0] == '/') {
-        musr_strcpy(out, in);
+        musr_strncpy(out, in, osize-1);
         return;
     }
     int i, j;

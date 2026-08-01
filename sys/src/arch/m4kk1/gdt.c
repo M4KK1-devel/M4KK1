@@ -12,9 +12,6 @@
 #include "../../include/string.h"
 #include "../../include/console.h"
 
-extern void gdt_set_tss_base(uint32_t base);
-extern void gdt_set_tss_limit(uint32_t limit);
-
 mkrn_gdt_entry_t gdt_entries[7];
 mkrn_gdt_ptr_t gdt_ptr;
 
@@ -126,14 +123,15 @@ mkrn_gdt_init(void)
 
 /**
  * @brief  Load the TSS via the LTR instruction.
+ *
+ * The TSS descriptor (base/limit) is already correct in the active
+ * GDT: mkrn_gdt_init() installs it with base = &tss_entry.  The
+ * gdt_set_tss_base/limit asm helpers only poke the legacy boot GDT
+ * array (which is never loaded), so they are not used here.
  */
 void
 mkrn_tss_flush(void)
 {
-    gdt_set_tss_base((uint32_t)&tss_entry);
-    gdt_set_tss_limit(
-        (uint32_t)(sizeof(mkrn_tss_entry_t) - 1));
-
     __asm__ volatile(
         "ltr %%ax\n" : : "a"(M4K_GDT_TSS));
 }

@@ -332,8 +332,10 @@ void mkrn_vesa_init(void)
 
 void mkrn_vesa_flip(void)
 {
-    if (!fb_info.initialized || !back_buffer)
+    if (!fb_info.initialized || !back_buffer) {
+        mkrn_console_write("[VESA] flip: not initialized or no back_buffer\n");
         return;
+    }
 
     if (mkrn_mouse_is_initialized()) {
         int32_t mx, my;
@@ -537,6 +539,7 @@ uint32_t m4k_syscall_draw_rect_impl(
         return (uint32_t)-1;
 
     mkrn_vesa_draw_rect(x, y, w, h, color, 1);
+
     return 0;
 }
 
@@ -555,5 +558,48 @@ uint32_t m4k_syscall_draw_text_impl(
         return (uint32_t)-1;
 
     mkrn_vesa_put_string(x, y, str, fg, bg);
+    return 0;
+}
+
+/* ── Syscall: blit a client pixel buffer into the back buffer ──
+ * Copies a w*h run of 32-bit pixels from the client's memory (flat
+ * address space, so any address is directly readable) into the
+ * back buffer at (x, y), clipped to the screen.  This is the
+ * primitive Copland uses to composite client-rendered window
+ * surfaces (the Sprach model). */
+uint32_t m4k_syscall_gfx_blit_impl(
+    uint32_t arg1, uint32_t arg2, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5)
+{
+    int x = (int)arg1;
+    int y = (int)arg2;
+    int w = (int)arg3;
+    int h = (int)arg4;
+    const uint32_t *src = (const uint32_t *)arg5;
+
+    if (!fb_info.initialized || !back_buffer || !src)
+        return (uint32_t)-1;
+    if (w <= 0 || h <= 0)
+        return 0;
+
+    int scr_w = (int)fb_info.width;
+    int scr_h = (int)fb_info.height;
+
+    /* Clip source/dest to the visible region */
+    if (x < 0) { w += x; src += (uint32_t)(-x); x = 0; }
+    if (y < 0) { h += y; src += (uint32_t)(-y) * (uint32_t)w; y = 0; }
+    if (x + w > scr_w) w = scr_w - x;
+    if (y + h > scr_h) h = scr_h - y;
+    if (w <= 0 || h <= 0)
+        return 0;
+
+    uint32_t *dst = back_buffer + (uint32_t)y * (uint32_t)scr_w + (uint32_t)x;
+
+    for (int row = 0; row < h; row++) {
+        const uint32_t *s = src + (uint32_t)row * (uint32_t)w;
+        uint32_t *d = dst + (uint32_t)row * (uint32_t)scr_w;
+        for (int col = 0; col < w; col++)
+            d[col] = s[col];
+    }
     return 0;
 }

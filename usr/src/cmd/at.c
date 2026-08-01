@@ -19,6 +19,20 @@ static struct {
 static int at_job_count;
 static uint32_t at_tick_counter;
 
+/* 命令注入防护：验证输入是否包含危险字符 */
+static int validate_command_input(const char *input)
+{
+    const char *dangerous = ";|&()`$><\\";
+    for (int i = 0; input[i]; i++) {
+        for (int j = 0; dangerous[j]; j++) {
+            if (input[i] == dangerous[j]) {
+                return 0; /* 发现危险字符 */
+            }
+        }
+    }
+    return 1; /* 输入安全 */
+}
+
 /**
  * musr_at_check_jobs - Check and run scheduled jobs
  *
@@ -39,7 +53,7 @@ void musr_at_check_jobs(void)
             out_putc('\n');
             char *argv[32];
             char copy[JOB_CMD_LEN];
-            musr_strcpy(copy, at_jobs[i].cmd);
+            musr_strncpy(copy, at_jobs[i].cmd, sizeof(copy)-1);
             int ac = 0;
             char *p = copy;
             while (*p) {
@@ -76,10 +90,21 @@ void musr_at_check_jobs(void)
  */
 void musr_cmd_at(int ac, char **av)
 {
-    if (ac < 4) {
-        out_puts("usage: at <now|+N> <sec|min> <command> [args]\n");
+    if (ac < 3) {
+        out_puts("usage: at <time> <command> [args...]\n");
         return;
     }
+    
+    /* 命令注入防护：验证所有参数 */
+    for (int i = 2; i < ac; i++) {
+        if (!validate_command_input(av[i])) {
+            c_red();
+            out_puts("at: rejected - dangerous characters detected\n");
+            c_rst();
+            return;
+        }
+    }
+    
     if (at_job_count >= JOB_MAX) {
         c_red();
         out_puts("at: job queue full\n");
@@ -121,12 +146,12 @@ void musr_cmd_at(int ac, char **av)
     }
     if (slot < 0)
         return;
-    musr_strcpy(at_jobs[slot].cmd, av[3]);
+    musr_strncpy(at_jobs[slot].cmd, av[3], sizeof(at_jobs[slot].cmd)-1);
     for (int i = 4; i < ac; i++) {
         int cl = musr_strlen(at_jobs[slot].cmd);
         if (cl + musr_strlen(av[i]) + 1 < JOB_CMD_LEN) {
             at_jobs[slot].cmd[cl] = ' ';
-            musr_strcpy(at_jobs[slot].cmd + cl + 1, av[i]);
+            musr_strncpy(at_jobs[slot].cmd + cl + 1, av[i], sizeof(at_jobs[slot].cmd)-cl-1);
         }
     }
     at_jobs[slot].due_tick = at_tick_counter + delay;

@@ -106,23 +106,7 @@ void musr_cmd_login(int ac, char **av) {
             verified = musr_verify_password(pass, entry.password_hash);
         }
 
-        // ---- 3. 回退：硬编码 root:123456（用于紧急访问） ----
-        if (!verified && musr_strcmp(user, "root") == 0 && musr_strcmp(pass, "123456") == 0) {
-            // 构造一个临时 entry
-            musr_strcpy(entry.username, "root");
-            entry.uid = 0;
-            entry.gid = 0;
-            musr_strcpy(entry.home, "/root");
-            musr_strcpy(entry.shell, "/bin/m4sh");
-            musr_strcpy(entry.gecos, "Superuser");
-            musr_strcpy(entry.password_hash, "123456");
-            verified = 1;
-            c_wht();
-            out_puts("WARNING: Using hardcoded root password (123456). Fix your passwd.db\n");
-            c_rst();
-        }
-
-        // ---- 4. 验证成功 ----
+        // ---- 3. 验证成功 ----
         if (verified) {
             c_grn();
             out_puts("Login successful\n");
@@ -153,10 +137,10 @@ void musr_cmd_login(int ac, char **av) {
                                       now /= 10; }
                         while (ri > 0) { tbuf[ti++] = rev[--ri]; } }
                     tbuf[ti] = '\0';
-                    musr_strcpy(lbuf, tbuf);
-                    musr_strcat(lbuf, "  ");
-                    musr_strcat(lbuf, entry.username);
-                    musr_strcat(lbuf, "  login  success  ttyS0\n");
+                    musr_strncpy(lbuf, tbuf, sizeof(lbuf)-1);
+                    musr_strncat(lbuf, "  ", sizeof(lbuf)-musr_strlen(lbuf)-1);
+                    musr_strncat(lbuf, entry.username, sizeof(lbuf)-musr_strlen(lbuf)-1);
+                    musr_strncat(lbuf, "  login  success  ttyS0\n", sizeof(lbuf)-musr_strlen(lbuf)-1);
                     musr_sc_write(lfd, lbuf, musr_strlen(lbuf));
                     musr_sc_close(lfd);
                 }

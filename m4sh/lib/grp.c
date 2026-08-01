@@ -51,9 +51,9 @@ int musr_read_groups_db(group_entry_t *entries, int max)
     int fd = musr_sc_open(GRP_DB_PATH, O_RDONLY);
     if (fd < 0) {
         /* Return default prime group */
-        musr_strcpy(entries[0].groupname, "prime");
+        musr_strncpy(entries[0].groupname, "prime", sizeof(entries[0].groupname)-1);
         entries[0].gid = 1001;
-        musr_strcpy(entries[0].members, "root");
+        musr_strncpy(entries[0].members, "root", sizeof(entries[0].members)-1);
         return 1;
     }
 

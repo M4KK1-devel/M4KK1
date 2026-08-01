@@ -831,7 +831,7 @@ static void sead_subst(char *line, int maxlen, const struct sead_op *op)
             for (int i = start + plen; line[i] && rp < maxlen - 1; i++)
                 result[rp++] = line[i];
             result[rp] = '\0';
-            musr_strcpy(line, result);
+            musr_strncpy(line, result, maxlen-1);
             llen = musr_strlen(line);
             if (rplen > 0)
                 start = start + rplen;
@@ -1061,7 +1061,7 @@ static void sead_process_stream(struct sead_ctx *ctx, const char *path)
         for (int i = 0; i < n; i++) {
             if (buf[i] == '\n' || li >= SEAD_LINE_MAX - 2) {
                 line[li] = '\0';
-                musr_strcpy(ctx->field_buf, line);
+                musr_strncpy(ctx->field_buf, line, sizeof(ctx->field_buf)-1);
                 ctx->line_no++;
                 sead_process_line(line, SEAD_LINE_MAX, ctx);
                 li = 0;
@@ -1072,7 +1072,7 @@ static void sead_process_stream(struct sead_ctx *ctx, const char *path)
     }
     if (li > 0) {
         line[li] = '\0';
-        musr_strcpy(ctx->field_buf, line);
+        musr_strncpy(ctx->field_buf, line, sizeof(ctx->field_buf)-1);
         ctx->line_no++;
         sead_process_line(line, SEAD_LINE_MAX, ctx);
     }
@@ -1145,7 +1145,7 @@ void musr_cmd_sead(int ac, char **av)
         } else if (musr_strpref(av[i], "-i")) {
             ctx.in_place = 1;
             if (av[i][2])
-                musr_strcpy(ctx.backup_ext, av[i] + 2);
+                musr_strncpy(ctx.backup_ext, av[i] + 2, sizeof(ctx.backup_ext)-1);
         } else if (musr_strpref(av[i], "-f")) {
             const char *fpath;
             if (av[i][2])

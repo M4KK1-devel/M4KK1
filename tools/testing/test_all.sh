@@ -1,0 +1,212 @@
+#!/bin/bash
+# M4KK1 完整功能测试脚本
+# 在WSL下运行
+
+set -e
+
+echo "=========================================="
+echo "M4KK1 完整功能测试"
+echo "=========================================="
+echo ""
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+PASS=0
+FAIL=0
+
+check_pass() {
+    echo -e "${GREEN}[PASS]${NC} $1"
+    PASS=$((PASS+1))
+}
+
+check_fail() {
+    echo -e "${RED}[FAIL]${NC} $1"
+    FAIL=$((FAIL+1))
+}
+
+# 测试1: 检查ISO文件
+echo "=== 测试1: ISO文件检查 ==="
+if [ -f "output/m4kk1_0.0.1_build1-alpha1.iso" ]; then
+    check_pass "ISO文件存在"
+else
+    check_fail "ISO文件不存在"
+    exit 1
+fi
+
+# 测试2: 检查ELF文件
+echo ""
+echo "=== 测试2: ELF文件检查 ==="
+ELFS=("m4sh" "login" "mdm" "flip_test" "init")
+for elf in "${ELFS[@]}"; do
+    if [ -f "usr/bin/$elf" ]; then
+        SIZE=$(stat -c%s "usr/bin/$elf" 2>/dev/null || echo "0")
+        check_pass "$elf 存在 ($SIZE bytes)"
+    else
+        check_fail "$elf 不存在"
+    fi
+done
+
+# mdm_mini 是可选的测试程序
+if [ -f "usr/bin/mdm_mini" ]; then
+    SIZE=$(stat -c%s "usr/bin/mdm_mini" 2>/dev/null || echo "0")
+    check_pass "mdm_mini 存在 ($SIZE bytes)"
+else
+    echo -e "${YELLOW}[INFO]${NC} mdm_mini 不存在（可选测试程序）"
+fi
+
+# 测试3: 检查安全修复
+echo ""
+echo "=== 测试3: 安全修复验证 ==="
+
+# 检查login.c中是否还有硬编码密码
+if grep -q "123456" usr/src/cmd/login.c; then
+    check_fail "login.c 中仍存在硬编码密码"
+else
+    check_pass "login.c 硬编码密码已移除"
+fi
+
+# 检查mdm.c中是否使用passwd.db
+if grep -q "musr_getpwnam" usr/src/cmd/mdm.c; then
+    check_pass "mdm.c 使用 passwd.db 验证"
+else
+    check_fail "mdm.c 未使用 passwd.db 验证"
+fi
+
+# 检查不安全函数替换
+STRCPY_COUNT=$(grep -r "musr_strcpy" --include="*.c" | grep -v "musr_strncpy" | wc -l)
+if [ "$STRCPY_COUNT" -eq 0 ]; then
+    check_pass "所有 musr_strcpy 已替换"
+else
+    check_fail "仍有 $STRCPY_COUNT 处 musr_strcpy 未替换"
+fi
+
+SPRINTF_COUNT=$(grep -r "sprintf" --include="*.c" | grep -v "snprintf" | wc -l)
+if [ "$SPRINTF_COUNT" -eq 0 ]; then
+    check_pass "所有 sprintf 已替换"
+else
+    check_fail "仍有 $SPRINTF_COUNT 处 sprintf 未替换"
+fi
+
+# 测试4: 编译验证
+echo ""
+echo "=== 测试4: 编译验证 ==="
+if ./tools/build/build_krn.sh > /tmp/build.log 2>&1; then
+    check_pass "编译成功"
+else
+    check_fail "编译失败"
+    echo "查看编译日志: tail -50 /tmp/build.log"
+fi
+
+# 测试5: QEMU启动测试（串口模式）
+echo ""
+echo "=== 测试5: QEMU启动测试 ==="
+timeout 20 qemu-system-i386 -cdrom output/m4kk1_0.0.1_build1-alpha1.iso \
+    -nographic -serial mon:stdio -no-reboot -display none 2>&1 | \
+    tee /tmp/qemu_test.log &
+QEMU_PID=$!
+
+# 等待系统启动
+sleep 15
+
+# 检查Init是否启动
+if grep -q "Init process started" /tmp/qemu_test.log; then
+    check_pass "Init进程成功启动"
+else
+    check_fail "Init进程未启动"
+fi
+
+# 检查MDM是否被尝试启动
+if grep -q "Starting MDM" /tmp/qemu_test.log; then
+    check_pass "Init尝试启动MDM图形登录"
+else
+    check_fail "Init未尝试启动MDM"
+fi
+
+# 检查MDM是否成功加载
+if grep -q "spawn:.*mdm" /tmp/qemu_test.log && grep -q "ELF loaded" /tmp/qemu_test.log; then
+    check_pass "MDM ELF成功加载并执行"
+else
+    check_fail "MDM加载失败"
+fi
+
+# 清理QEMU进程
+kill $QEMU_PID 2>/dev/null || true
+wait $QEMU_PID 2>/dev/null || true
+
+# 测试6: 检查关键文件
+echo ""
+echo "=== 测试6: 关键文件检查 ==="
+KEY_FILES=(
+    "m4sh/m4sh.h"
+    "m4sh/lib/pwd.c"
+    "usr/src/cmd/login.c"
+    "usr/src/cmd/mdm.c"
+    "usr/src/lib/libgui.c"
+    "init/init.c"
+    "sys/src/kernel/kmain.c"
+)
+
+for file in "${KEY_FILES[@]}"; do
+    if [ -f "$file" ]; then
+        check_pass "$file 存在"
+    else
+        check_fail "$file 不存在"
+    fi
+done
+
+# 测试7: 检查密码哈希实现
+echo ""
+echo "=== 测试7: 密码哈希检查 ==="
+if grep -q "sha256_ctx_t" m4sh/lib/pwd.c; then
+    check_pass "SHA-256 已实现"
+else
+    check_fail "SHA-256 未实现"
+fi
+
+if grep -q "musr_hash_password" m4sh/lib/pwd.c; then
+    check_pass "musr_hash_password 函数存在"
+else
+    check_fail "musr_hash_password 函数不存在"
+fi
+
+if grep -q "SALT_SIZE" m4sh/lib/pwd.c; then
+    check_pass "加盐逻辑已实现"
+else
+    check_fail "加盐逻辑未实现"
+fi
+
+# 测试8: 检查命令注入防护
+echo ""
+echo "=== 测试8: 命令注入防护检查 ==="
+if grep -q "validate_command_input" usr/src/cmd/batch.c; then
+    check_pass "batch.c 有输入验证"
+else
+    check_fail "batch.c 缺少输入验证"
+fi
+
+if grep -q "validate_command_input" usr/src/cmd/at.c; then
+    check_pass "at.c 有输入验证"
+else
+    check_fail "at.c 缺少输入验证"
+fi
+
+# 汇总
+echo ""
+echo "=========================================="
+echo "测试汇总"
+echo "=========================================="
+echo -e "通过: ${GREEN}$PASS${NC}"
+echo -e "失败: ${RED}$FAIL${NC}"
+echo ""
+
+if [ $FAIL -eq 0 ]; then
+    echo -e "${GREEN}所有测试通过！${NC}"
+    exit 0
+else
+    echo -e "${RED}有 $FAIL 项测试失败${NC}"
+    exit 1
+fi

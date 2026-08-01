@@ -112,10 +112,10 @@ void _start(void)
                                           now /= 10; }
                             while (ri > 0) { tbuf[ti++] = rev[--ri]; } }
                         tbuf[ti] = '\0';
-                        musr_strcpy(lbuf, tbuf);
-                        musr_strcat(lbuf, "  ");
-                        musr_strcat(lbuf, login_user);
-                        musr_strcat(lbuf, "  login  success  ttyS0\n");
+                        musr_strncpy(lbuf, tbuf, sizeof(lbuf)-1);
+                        musr_strncat(lbuf, "  ", sizeof(lbuf)-musr_strlen(lbuf)-1);
+                        musr_strncat(lbuf, login_user, sizeof(lbuf)-musr_strlen(lbuf)-1);
+                        musr_strncat(lbuf, "  login  success  ttyS0\n", sizeof(lbuf)-musr_strlen(lbuf)-1);
                         musr_sc_write(lfd, lbuf, musr_strlen(lbuf));
                         musr_sc_close(lfd);
                     }

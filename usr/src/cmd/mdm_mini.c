@@ -53,10 +53,6 @@ void _start(void) {
     ser_puts("[MDM_MINI] Test pattern drawn successfully!\n");
     ser_puts("[MDM_MINI] MDM mini test completed.\n");
     
-    /* Keep running to avoid immediate return to init */
-    ser_puts("[MDM_MINI] Entering idle loop...\n");
-    for (;;) {
-        /* Simple delay */
-        for (volatile int i = 0; i < 1000000; i++);
-    }
+    /* 测试完成后直接返回 */
+    ser_puts("[MDM_MINI] Exiting...\n");
 }

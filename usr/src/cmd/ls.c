@@ -22,7 +22,7 @@ void musr_cmd_ls(int ac, char **av)
     if (arg)
         cwd_to_abs(arg, ap, 256);
     else {
-        musr_strcpy(ap, cwd);
+        musr_strncpy(ap, cwd, sizeof(ap)-1);
     }
     int fd = musr_sc_open(ap, O_RDONLY);
     if (fd < 0) {

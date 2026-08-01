@@ -152,8 +152,8 @@ void musr_setup_env(void)
 
     char path_buf[256];
     char path_file[128];
-    musr_strcpy(path_file, "/export/PATH/");
-    musr_strcat(path_file, user_name);
+    musr_strncpy(path_file, "/export/PATH/", sizeof(path_file)-1);
+    musr_strncat(path_file, user_name, sizeof(path_file)-musr_strlen(path_file)-1);
 
     int n = read_file(path_file, path_buf, sizeof(path_buf));
     if (n <= 0) {

@@ -47,6 +47,7 @@ struct m4k_framebuffer_info {
 #define M4K_SYS_DRAW_RECT             0x4D000054
 #define M4K_SYS_DRAW_TEXT             0x4D000055
 #define M4K_SYS_GET_KEYBOARD_EVENT    0x4D000056
+#define M4K_SYS_GFX_BLIT              0x4D000057
 
 /* ── Mouse event (kernel→userspace) ── */
 struct m4k_mouse_event {
@@ -91,6 +92,9 @@ uint32_t m4k_syscall_draw_rect_impl(
     uint32_t arg1, uint32_t arg2, uint32_t arg3,
     uint32_t arg4, uint32_t arg5);
 uint32_t m4k_syscall_draw_text_impl(
+    uint32_t arg1, uint32_t arg2, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5);
+uint32_t m4k_syscall_gfx_blit_impl(
     uint32_t arg1, uint32_t arg2, uint32_t arg3,
     uint32_t arg4, uint32_t arg5);
 

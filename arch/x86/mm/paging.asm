@@ -27,7 +27,7 @@ global m4k_unmap_page
 
 ; M4KK1独特的分页初始化
 m4k_paging_init:
-    ; 设置M4KK1独特的页目录（映射前4MB）
+    ; 设置M4KK1独特的页目录（identity mapping 4GB）
     mov ecx, 0
 .map_loop:
     mov eax, ecx

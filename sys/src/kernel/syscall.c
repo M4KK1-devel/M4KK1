@@ -453,14 +453,15 @@ static u32 mkrn_syscall_exit_impl(u32 uArg1, u32 uArg2,
 static u32 mkrn_syscall_fork_impl(u32 uArg1, u32 uArg2,
     u32 uArg3, u32 uArg4, u32 uArg5)
 {
-    /* fork_status(inherit_mask=0, flags=RFPROC|RFFDG|RFNAMEG|RFENVG) */
-    uint64_t inherit_mask = ((uint64_t)uArg2 << 32) | uArg1;
-    uint32_t flags = uArg3;
-    if (flags == 0) {
-        /* Legacy fork: inherit nothing special, copy everything */
-        flags = RFPROC | RFFDG | RFNAMEG | RFENVG;
-    }
-    uint32_t ret = (uint32_t)mkrn_fork_status(inherit_mask, flags);
+    /* Legacy 0x80 fork: wrappers like musr_sc_fork() call musr_sc0()
+     * which passes only the syscall number in EAX, leaving EBX/ECX/EDX
+     * as caller garbage.  Do not interpret those as an inherit_mask /
+     * flags (a garbage EDX can carry the RFPROC bit and take us down
+     * the bad-inherit_mask error path).  Explicit fork args are only
+     * supported through the M4K 0x4D table (m4k_fork_status). */
+    (void)uArg1; (void)uArg2; (void)uArg3; (void)uArg4; (void)uArg5;
+    uint32_t ret = (uint32_t)mkrn_fork_status(0,
+        RFPROC | RFFDG | RFNAMEG | RFENVG);
     if ((int32_t)ret < 0) return M4K_SC_ERROR;
     return ret;
 }

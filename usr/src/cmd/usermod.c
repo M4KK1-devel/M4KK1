@@ -98,7 +98,7 @@ void musr_cmd_usermod(int ac, char **av)
     passwd_entry_t *e = &entries[found];
 
     if (new_shell) {
-        musr_strcpy(e->shell, new_shell);
+        musr_strncpy(e->shell, new_shell, sizeof(e->shell)-1);
     }
 
     if (new_group) {
@@ -113,9 +113,9 @@ void musr_cmd_usermod(int ac, char **av)
         /* Lock: prefix hash with ! */
         if (e->password_hash[0] != '!') {
             char tmp[256];
-            musr_strcpy(tmp, "!");
-            musr_strcat(tmp, e->password_hash);
-            musr_strcpy(e->password_hash, tmp);
+            musr_strncpy(tmp, "!", sizeof(tmp)-1);
+            musr_strncat(tmp, e->password_hash, sizeof(tmp)-musr_strlen(tmp)-1);
+            musr_strncpy(e->password_hash, tmp, sizeof(e->password_hash)-1);
         }
     }
 
@@ -170,7 +170,7 @@ void musr_cmd_usermod(int ac, char **av)
                 if (!already) {
                     int mlen = musr_strlen(members);
                     if (mlen > 0) { members[mlen++] = ','; }
-                    musr_strcpy(members + mlen, username);
+                    musr_strncpy(members + mlen, username, 256 - mlen);
                 }
             }
         }
@@ -195,7 +195,7 @@ void musr_cmd_usermod(int ac, char **av)
                         if (*p == ',') p++;
                     }
                     newm[ni] = '\0';
-                    musr_strcpy(members, newm);
+                    musr_strncpy(members, newm, sizeof(ventries->members)-1);
                     break;
                 }
             }

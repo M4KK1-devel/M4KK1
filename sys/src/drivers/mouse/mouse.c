@@ -224,7 +224,9 @@ mkrn_mouse_init(void)
     mouse_wait_ready();
     __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0x60), "d"((uint16_t)0x64));
     mouse_wait_ready();
-    __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0x27), "d"((uint16_t)0x60));
+    /* Command byte: 0x07 = enable IRQ12 (mouse), keep translation, system flag
+     * Bit 5 = 0 means enable mouse interrupt (was 0x27 which disabled it) */
+    __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0x07), "d"((uint16_t)0x60));
 
     mkrn_idt_register_handler(0x2C, (mkrn_int_handler_t)mkrn_mouse_handler);
     pic_unmask_irq(12);

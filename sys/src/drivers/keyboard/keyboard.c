@@ -15,6 +15,9 @@
 #include <stdbool.h>
 #include "../../include/string.h"
 
+/* PIC 中断屏蔽控制 */
+extern void pic_unmask_irq(uint32_t irq_num);
+
 #define KEYBOARD_DATA_PORT      0x60
 #define KEYBOARD_STATUS_PORT    0x64
 #define KEYBOARD_COMMAND_PORT   0x64
@@ -153,8 +156,10 @@ keyboard_send_data(uint8_t u8Data)
 static uint8_t
 keyboard_read_data(void)
 {
-    while (inb(KEYBOARD_STATUS_PORT)
-           & KEYBOARD_STATUS_OBF) { }
+    uint32_t timeout = 100000;
+    while ((inb(KEYBOARD_STATUS_PORT) & KEYBOARD_STATUS_OBF) == 0) {
+        if (--timeout == 0) return 0;  // 超时返回0
+    }
     return inb(KEYBOARD_DATA_PORT);
 }
 
@@ -317,45 +322,24 @@ mkrn_keyboard_has_char(void)
 void
 mkrn_kbd_init(void)
 {
-    M4K_LOG_INFO(
-        "Initializing keyboard driver...");
+    M4K_LOG_INFO("Initializing keyboard driver...");
 
-    mkrn_memset(&keyboard_state, 0,
-                sizeof(keyboard_state));
+    mkrn_memset(&keyboard_state, 0, sizeof(keyboard_state));
     keyboard_state.scancode_set = SCANCODE_SET_1;
     keyboard_state.num_lock = true;
     keyboard_state.buffer_head = 0;
     keyboard_state.buffer_tail = 0;
 
-    keyboard_send_command(KEYBOARD_CMD_DISABLE);
-
-    while (inb(KEYBOARD_STATUS_PORT)
-           & KEYBOARD_STATUS_OBF)
+    /* 清空输出缓冲区 */
+    uint32_t timeout = 100;
+    while ((inb(KEYBOARD_STATUS_PORT) & KEYBOARD_STATUS_OBF) && timeout--)
         inb(KEYBOARD_DATA_PORT);
 
-    if (keyboard_send_data(0xF0)) {
-        if (keyboard_wait_response()
-            == KEYBOARD_ACK)
-            keyboard_send_data(SCANCODE_SET_1);
-    }
+    /* 注册中断处理程序 */
+    mkrn_idt_register_handler(0x21, (mkrn_int_handler_t)mkrn_keyboard_handler);
 
-    keyboard_set_leds(
-        (keyboard_state.caps_lock
-             ? KEYBOARD_LED_CAPS
-             : 0)
-        | (keyboard_state.num_lock
-               ? KEYBOARD_LED_NUM
-               : 0)
-        | (keyboard_state.scroll_lock
-               ? KEYBOARD_LED_SCROLL
-               : 0));
-
-    keyboard_send_command(KEYBOARD_CMD_ENABLE);
-
-    mkrn_idt_register_handler(
-        0x21,
-        (mkrn_int_handler_t)
-            mkrn_keyboard_handler);
+    /* 取消屏蔽 IRQ1 */
+    pic_unmask_irq(1);
 
     keyboard_state.initialized = true;
     M4K_LOG_INFO("Keyboard driver initialized");

@@ -26,7 +26,7 @@ void musr_cmd_who(int ac, char **av)
         passwd_entry_t entry;
         char username[64];
         if (musr_getpwuid(sessions[i].uid, &entry) == 0) {
-            musr_strcpy(username, entry.username);
+            musr_strncpy(username, entry.username, sizeof(username)-1);
         } else {
             /* Fallback: show UID as number */
             username[0] = 'u';

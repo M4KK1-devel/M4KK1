@@ -84,7 +84,7 @@ void musr_cmd_groupmod(int ac, char **av)
     group_entry_t *e = &entries[found];
 
     if (new_name) {
-        musr_strcpy(e->groupname, new_name);
+        musr_strncpy(e->groupname, new_name, sizeof(e->groupname)-1);
     }
 
     if (add_user) {
@@ -104,7 +104,7 @@ void musr_cmd_groupmod(int ac, char **av)
         if (!already) {
             int mlen = musr_strlen(members);
             if (mlen > 0) { members[mlen++] = ','; }
-            musr_strcpy(members + mlen, add_user);
+            musr_strncpy(members + mlen, add_user, 256 - mlen);
         }
     }
 
@@ -125,7 +125,7 @@ void musr_cmd_groupmod(int ac, char **av)
             if (*p == ',') p++;
         }
         newm[ni] = '\0';
-        musr_strcpy(e->members, newm);
+        musr_strncpy(e->members, newm, sizeof(e->members)-1);
     }
 
     if (musr_update_groups_db(entries, count) == 0) {

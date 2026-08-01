@@ -80,38 +80,41 @@ static void draw_login_form(void) {
     gui_flip();
 }
 
-/* Authenticate user */
+/* Cached passwd entry from last successful lookup */
+static passwd_entry_t cached_entry;
+static int cached_entry_valid = 0;
+
+/* Authenticate user via passwd.db */
 static int authenticate_user(void) {
-    /* Hardcoded credentials for now */
-    if (musr_strcmp(username, "root") == 0 && musr_strcmp(password, "123456") == 0) {
-        return 0;  /* Success */
+    cached_entry_valid = 0;
+
+    /* Look up user in passwd.db */
+    if (musr_getpwnam(username, &cached_entry) != 0) {
+        return -1;  /* User not found */
     }
-    if (musr_strcmp(username, "testuser") == 0 && musr_strcmp(password, "yakumakki") == 0) {
-        return 0;  /* Success */
+
+    /* Verify password against stored hash */
+    if (musr_verify_password(password, cached_entry.password_hash) == 0) {
+        return -1;  /* Wrong password */
     }
-    return -1;  /* Failure */
+
+    cached_entry_valid = 1;
+    return 0;  /* Success */
 }
 
 /* Launch shell after successful login */
 static void launch_shell(void) {
-    uint32_t uid = 0;
-    uint32_t gid = 0;
-    const char *home = "/export/root";
-    
-    if (musr_strcmp(username, "testuser") == 0) {
-        uid = 1001;
-        gid = 1001;
-        home = "/home/testuser";
-    }
-    
+    if (!cached_entry_valid)
+        return;
+
     /* Set user identity */
-    m4k_setuid(uid);
-    m4k_setgid(gid);
-    m4k_chdir(home);
-    
+    m4k_setuid(cached_entry.uid);
+    m4k_setgid(cached_entry.gid);
+    m4k_chdir(cached_entry.home);
+
     /* Register session */
     m4k_register_session("tty0", m4k_getpid(), username);
-    
+
     /* Launch shell */
     m4k_spawn("/bin/m4sh", 0);
 }
@@ -154,6 +157,24 @@ static void handle_keyboard(void) {
                 field[len] = ch;
                 field[len + 1] = '\0';
                 draw_login_form();
+            }
+        }
+    }
+}
+
+/* Draw mouse cursor */
+static void draw_mouse_cursor(int x, int y) {
+    /* 简单的箭头光标 */
+    static const uint8_t cursor_pattern[] = {
+        0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC, 0xFE, 0xFF,
+        0xF8, 0xDC, 0xCC, 0x86, 0x06, 0x03, 0x03, 0x01
+    };
+    
+    for (int row = 0; row < 16; row++) {
+        for (int col = 0; col < 8; col++) {
+            if (cursor_pattern[row] & (0x80 >> col)) {
+                /* 绘制黑色像素 */
+                gui_draw_rect(x + col, y + row, 1, 1, 0x000000);
             }
         }
     }
@@ -206,12 +227,61 @@ static void handle_mouse(void) {
             }
         }
     }
+    
+    /* 绘制鼠标光标 */
+    draw_mouse_cursor(mouse_x, mouse_y);
 }
 
 /* Main entry point */
 void _start(void) {
+    /* Debug: output to serial */
+    ser_puts("[MDM] Starting M4KK1 Display Manager...\n");
+    
+    /* Test framebuffer info */
+    struct m4k_framebuffer_info fb;
+    int ret = m4k_get_framebuffer_info(&fb);
+    ser_puts("[MDM] m4k_get_framebuffer_info returned: ");
+    print_u32((uint32_t)ret);
+    ser_puts("\n");
+    if (ret == 0) {
+        ser_puts("[MDM] FB struct fields:\n");
+        ser_puts("  phys_addr = 0x");
+        print_u32(fb.phys_addr);
+        ser_puts("\n");
+        ser_puts("  width = ");
+        print_u32(fb.width);
+        ser_puts("\n");
+        ser_puts("  height = ");
+        print_u32(fb.height);
+        ser_puts("\n");
+        ser_puts("  bpp = ");
+        print_u32(fb.bpp);
+        ser_puts("\n");
+        ser_puts("  pitch = ");
+        print_u32(fb.pitch);
+        ser_puts("\n");
+    } else {
+        ser_puts("[MDM] ERROR: Cannot get framebuffer info!\n");
+    }
+    
+    /* Test simple draw */
+    ser_puts("[MDM] Testing m4k_draw_rect...\n");
+    ret = m4k_draw_rect(0, 0, 800, 600, 0x00FF0000);  /* Red screen */
+    ser_puts("[MDM] m4k_draw_rect returned: ");
+    print_u32((uint32_t)ret);
+    ser_puts("\n");
+    
+    /* Test flip */
+    ser_puts("[MDM] Testing m4k_flip...\n");
+    ret = m4k_flip();
+    ser_puts("[MDM] m4k_flip returned: ");
+    print_u32((uint32_t)ret);
+    ser_puts("\n");
+    
     /* Initialize display */
+    ser_puts("[MDM] Drawing login form...\n");
     draw_login_form();
+    ser_puts("[MDM] Login form drawn, entering event loop\n");
     
     /* Main event loop */
     for (;;) {

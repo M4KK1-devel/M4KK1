@@ -37,9 +37,9 @@ void musr_cmd_cu(int ac, char **av)
     char target[64];
 
     if (ac >= 2) {
-        musr_strcpy(target, av[1]);
+        musr_strncpy(target, av[1], sizeof(target)-1);
     } else {
-        musr_strcpy(target, "root");
+        musr_strncpy(target, "root", sizeof(target)-1);
     }
 
     /* Look up target user */

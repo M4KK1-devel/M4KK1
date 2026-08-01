@@ -9,6 +9,7 @@
 #include <process.h>
 #include <timer.h>
 #include <memory.h>
+#include <gdt.h>
 #include "kernel.h"
 #include "console.h"
 #include "syscall.h"
@@ -23,6 +24,9 @@
 static mkrn_process_ctrl_t process_ctrl;
 static mkrn_process_t *current = NULL;
 static uint32_t scheduler_enabled = 0;
+
+/* Forward: reaping (defined below the scheduler) */
+static void mkrn_process_reap(mkrn_process_t *p);
 
 #define READY_QUEUE_SIZE 64
 static mkrn_process_t *ready_queue[READY_QUEUE_SIZE];
@@ -226,25 +230,24 @@ void mkrn_sched_start(void)
     M4K_LOG_INFO("Scheduler started");
 }
 
-void mkrn_process_yield(void)
+void mkrn_process_yield(void);
+
+/* Scratch slot used by the naked context-switch trampoline below.
+ * Exported (not static): the naked asm references it by absolute
+ * symbol name, which linkers only resolve for global symbols. */
+uint32_t g_switch_esp;
+
+/* Pick the next process to run.  Called with g_switch_esp holding this
+ * process's kernel stack pointer (after the 4-register push block of
+ * the trampoline).  On a switch, g_switch_esp is overwritten with the
+ * next process's thread_esp and that process is returned (non-NULL).
+ * Returns NULL when the caller should simply continue. */
+mkrn_process_t *mkrn_process_switch_pick(void)
 {
     if (!scheduler_enabled || !current)
-        return;
+        return NULL;
 
-    uint32_t saved_esp;
-
-    asm volatile(
-        "pushl %%ebp\n"
-        "pushl %%edi\n"
-        "pushl %%esi\n"
-        "pushl %%ebx\n"
-        "movl %%esp, %0\n"
-        : "=r" (saved_esp)
-        :
-        : "memory"
-    );
-
-    current->thread_esp = saved_esp;
+    current->thread_esp = g_switch_esp;
 
     /* Re-enqueue if still running (yield) or sleeping (yield after block) */
     if (current->state_tags & M4K_SCHED_RUNNING) {
@@ -253,12 +256,16 @@ void mkrn_process_yield(void)
         ready_enqueue(current);
     }
 
-    /* Dequeue next ready process (skip stopped) */
+    /* Dequeue next ready process (skip stopped, reap terminated) */
     mkrn_process_t *next = NULL;
     while (1) {
         next = ready_dequeue();
         if (!next)
             break;
+        if (next->state_tags & M4K_TERMINATE) {
+            mkrn_process_reap(next);
+            continue;
+        }
         if (!(next->state_tags & M4K_STOPPED) &&
             (next->state_tags & M4K_SCHED_READY)) {
             break;
@@ -267,36 +274,41 @@ void mkrn_process_yield(void)
         ready_enqueue(next);
     }
 
-    if (!next) {
-        asm volatile(
-            "movl %0, %%esp\n"
-            "popl %%ebx\n"
-            "popl %%esi\n"
-            "popl %%edi\n"
-            "popl %%ebp\n"
-            "ret\n"
-            :
-            : "r" (saved_esp)
-            : "memory"
-        );
-        return;
+    if (next) {
+        current = next;
+        next->state_tags &= ~(M4K_SCHED_READY | M4K_SCHED_SLEEPING);
+        next->state_tags |= M4K_SCHED_RUNNING;
+        g_switch_esp = next->thread_esp;
+        mkrn_set_kernel_stack(next->kernel_stack);
     }
+    return next;
+}
 
-    current = next;
-    next->state_tags &= ~(M4K_SCHED_READY | M4K_SCHED_SLEEPING);
-    next->state_tags |= M4K_SCHED_RUNNING;
-
-    asm volatile(
-        "movl %0, %%esp\n"
+/* Cooperative context switch.  Naked: the whole save/resume lives in
+ * one inline-asm block, so no compiler-generated function frame sits
+ * between the saved stack pointer and the return address it must pop.
+ *
+ * Frame protocol (identical for every resume path, including the
+ * scheduler and mkrn_process_exit):
+ *   [ebp][edi][esi][ebx] then ret-address into the caller; the forked
+ *   child instead has [trampoline] and an iret frame below.
+ */
+__attribute__((naked)) void mkrn_process_yield(void)
+{
+    __asm__ volatile(
+        "pushl %%ebp\n"
+        "pushl %%edi\n"
+        "pushl %%esi\n"
+        "pushl %%ebx\n"
+        "movl %%esp, g_switch_esp\n"
+        "call mkrn_process_switch_pick\n"
+        "movl g_switch_esp, %%esp\n"
         "popl %%ebx\n"
         "popl %%esi\n"
         "popl %%edi\n"
         "popl %%ebp\n"
         "ret\n"
-        :
-        : "r" (next->thread_esp)
-        : "memory"
-    );
+        : : : "memory");
 }
 
 void mkrn_process_block(void)
@@ -327,8 +339,15 @@ void mkrn_process_switch_first(void)
 
     mkrn_process_t *p = current;
     p->state_tags = M4K_SCHED_RUNNING;
-    ready_enqueue(p);
+    /* NOTE: do NOT ready_enqueue(p) here.  The ready queue holds
+     * processes that are waiting to be resumed by a future yield;
+     * this process starts running directly and its thread_esp frame
+     * would otherwise be consumed now while a stale queue entry still
+     * points at it, so the first mkrn_process_yield() would resume a
+     * process with an already-consumed frame (garbage EIP -> #UD). */
     scheduler_enabled = 1;
+
+    mkrn_set_kernel_stack(p->kernel_stack);
 
     asm volatile(
         "movl %0, %%esp\n"
@@ -345,36 +364,73 @@ void mkrn_process_switch_first(void)
     __builtin_unreachable();
 }
 
-void mkrn_process_exit(int status)
+/* Reap a process: mark its state, notify parent, detach children.
+ * Used both by mkrn_process_exit() (current process) and by the
+ * scheduler when picking up a M4K_TERMINATE-marked task. */
+static void mkrn_process_reap(mkrn_process_t *p)
 {
-    if (!current)
-        return;
-
     M4K_LOG_INFO("Process exiting: PID=");
-    mkrn_console_write_dec(current->pid);
+    mkrn_console_write_dec(p->pid);
     mkrn_console_write("\n");
 
-    current->exit_status = status;
-    current->state_tags &= ~(M4K_SCHED_RUNNING | M4K_SCHED_READY | M4K_SCHED_SLEEPING);
-    current->state_tags &= ~M4K_STOPPED;
+    p->state_tags &= ~(M4K_SCHED_RUNNING | M4K_SCHED_READY |
+                       M4K_SCHED_SLEEPING | M4K_STOPPED | M4K_TERMINATE);
 
     /* Send SIGCHLD to parent */
-    mkrn_process_t *parent = mkrn_process_find((pid_t)current->ppid);
+    mkrn_process_t *parent = mkrn_process_find((pid_t)p->ppid);
     if (parent) {
-        mkrn_kill((pid_t)current->ppid, M4K_SIGCHLD);
+        mkrn_kill((pid_t)p->ppid, M4K_SIGCHLD);
     }
 
     process_ctrl.process_count--;
 
     /* Reparent children to PID 1 */
-    mkrn_process_reparent_children(current);
+    mkrn_process_reparent_children(p);
+}
 
-    /* Reap if NOWAIT */
-    mkrn_process_t *next = ready_dequeue();
+/* Dequeue the next runnable task, reaping any that were marked for
+ * termination (M4K_TERMINATE).  Returns NULL when the queue is empty. */
+static mkrn_process_t *mkrn_process_dequeue_live(void)
+{
+    for (;;) {
+        mkrn_process_t *p = ready_dequeue();
+        if (!p)
+            return NULL;
+        if (p->state_tags & M4K_TERMINATE) {
+            mkrn_process_reap(p);
+            continue;
+        }
+        return p;
+    }
+}
+
+void mkrn_process_exit(int status)
+{
+    if (!current)
+        return;
+
+    current->exit_status = status;
+    mkrn_process_reap(current);
+
+    /* Switch to the next task */
+    mkrn_process_t *next = mkrn_process_dequeue_live();
     if (next) {
+        mkrn_console_write("[SW]save=0x");
+        mkrn_console_write_hex(current->thread_esp);
+        mkrn_console_write(" kstk=0x");
+        mkrn_console_write_hex(next->kernel_stack);
+        mkrn_console_write(" next=");
+        mkrn_console_write_dec(next->pid);
+        mkrn_console_write(" esp=0x");
+        mkrn_console_write_hex(next->thread_esp);
+        mkrn_console_write(" state=0x");
+        mkrn_console_write_hex((uint32_t)next->state_tags);
+        mkrn_console_write("\n");
         current = next;
         current->state_tags &= ~(M4K_SCHED_READY | M4K_SCHED_SLEEPING);
         current->state_tags |= M4K_SCHED_RUNNING;
+
+        mkrn_set_kernel_stack(next->kernel_stack);
 
         asm volatile(
             "movl %0, %%esp\n"
@@ -475,21 +531,52 @@ int mkrn_process_fill_info(struct mkrn_procinfo *buf, uint32_t max)
 
 /* ── 4P1 fork_status: clone with selective inheritance ── */
 
+/* Captured by isr_syscall / isr_m4k_syscall at every syscall entry:
+ * {user_eip, user_cs, user_eflags, user_esp, user_ss, user_ebp} */
+uint32_t g_syscall_user_frame[6];
+
+/* Resume trampoline for a freshly forked child: the scheduler pops
+ * ebx/esi/edi/ebp and ret's here, then we pop the synthetic
+ * interrupt frame and iret back into user mode right after the
+ * fork syscall, with eax = 0 (child side). */
+void mkrn_fork_child_restore(void)
+{
+    __asm__ volatile(
+        "popl %%eax\n"
+        "popl %%ebx\n"
+        "popl %%ecx\n"
+        "popl %%edx\n"
+        "popl %%esi\n"
+        "popl %%edi\n"
+        "popl %%ebp\n"
+        "iret\n"
+        : : "r"(0) : "memory");
+    __builtin_unreachable();
+}
+
 pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
 {
-    if (!(flags & RFPROC))
+    if (!(flags & RFPROC)) {
+        M4K_LOG_ERROR("fork: no RFPROC");
         return -1;
+    }
 
-    if (inherit_mask & (M4K_ZOMBIE | M4K_IDLE | M4K_STATE_RESERVED))
+    if (inherit_mask & (M4K_ZOMBIE | M4K_IDLE | M4K_STATE_RESERVED)) {
+        M4K_LOG_ERROR("fork: bad inherit_mask");
         return -1;
+    }
 
     mkrn_process_t *parent = current;
-    if (!parent)
+    if (!parent) {
+        M4K_LOG_ERROR("fork: no current");
         return -1;
+    }
 
     mkrn_process_t *child = (mkrn_process_t *)mkrn_alloc(sizeof(mkrn_process_t));
-    if (!child)
+    if (!child) {
+        M4K_LOG_ERROR("fork: pcb alloc failed");
         return -1;
+    }
 
     mkrn_memset(child, 0, sizeof(mkrn_process_t));
 
@@ -542,22 +629,94 @@ pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
         /* FIXME: proper address space copy would need paging support */
     }
 
-    /* Stack: allocate new stack for child */
-    uint32_t *stack = (uint32_t *)mkrn_alloc(M4K_STACK_SIZE);
-    if (!stack) {
+    /* Private kernel stack for the child.  TSS esp0 is per-process
+     * (set on each context switch), so the child's future syscalls
+     * push onto its own stack instead of clobbering the parent's
+     * still-pending ISR frame.  The child's resume block lives on
+     * the top of this stack and is consumed once at first resume. */
+    uint32_t *kstack = (uint32_t *)mkrn_alloc(M4K_STACK_SIZE);
+    if (!kstack) {
+        M4K_LOG_ERROR("fork: kstack alloc failed");
         mkrn_free(child);
         return -1;
     }
-    uint32_t *sp = (uint32_t *)((uint32_t)stack + M4K_STACK_SIZE);
+    child->kernel_stack = (uint32_t)kstack + M4K_STACK_SIZE;
 
-    /* Push initial return address and zeros */
-    *--sp = 0xDEAD0000; /* marker */
-    *--sp = 0;
-    *--sp = 0;
-    *--sp = 0;
-    *--sp = 0;
+    /* The child resumes in user mode right after the fork syscall,
+     * with eax = 0 (child side).  It runs the parent's saved frame
+     * chain (the legacy wrappers execute
+     * `mov %eax,-0x4(%ebp); ...; leave; ret` right after `int $0x80`),
+     * so it inherits the parent's user esp/ebp — relocated onto a
+     * private byte-for-byte copy of the parent's stack (see below) so
+     * the two processes never clobber each other's live frames.
+     *
+     * Scheduler resume protocol (mkrn_process_yield): esp is restored
+     * to thread_esp, then pop ebx / pop esi / pop edi / pop ebp / ret.
+     * So thread_esp must point at a block laid out (low -> high):
+     *   [ebx][esi][edi][ebp][trampoline-ret]      <- yield pops + ret
+     *   [eax][ebx][ecx][edx][esi][edi][ebp]       <- mkrn_fork_child_restore pops
+     *   [eip][cs][eflags][esp][ss]                <- iret frame
+     */
+    uint32_t ueip    = g_syscall_user_frame[0];
+    uint32_t ucs     = g_syscall_user_frame[1];
+    uint32_t ueflags = g_syscall_user_frame[2];
+    uint32_t uesp    = g_syscall_user_frame[3];
+    uint32_t uss     = g_syscall_user_frame[4];
+    uint32_t uebp    = g_syscall_user_frame[5];
+    uint32_t child_top = child->kernel_stack;
 
-    child->thread_esp = (uint32_t)sp;
+    /* Private user stack for the child: a byte-for-byte copy of the
+     * parent's stack.  Without this, the child resumes on the parent's
+     * live frames and its continuation (m4k_spawn + wrapper calls)
+     * pushes INTO the parent's saved-ebp/return-address slots, so the
+     * parent later unwinds garbage when it resumes.  The resume esp/ebp
+     * are remapped into the copy at the same relative offset. */
+    if (parent->user_stack_base) {
+        uint32_t *ustack = (uint32_t *)mkrn_alloc(M4K_STACK_SIZE);
+        if (ustack) {
+            mkrn_memcpy(ustack, (void *)parent->user_stack_base,
+                        M4K_STACK_SIZE);
+            uint32_t orig_base = parent->user_stack_base;
+            uint32_t new_base = (uint32_t)ustack;
+            child->user_stack_base = new_base;
+            uesp = new_base + (uesp - orig_base);
+            uebp = new_base + (uebp - orig_base);
+            /* The byte copy still contains the parent's absolute frame
+             * pointers; rebase every saved ebp in the chain the child
+             * will unwind (each [ebp] slot up to the outermost frame). */
+            uint32_t p = uebp;
+            while (p >= new_base &&
+                   p < new_base + M4K_STACK_SIZE) {
+                uint32_t v = *(uint32_t *)p;
+                if (v < orig_base ||
+                    v >= orig_base + M4K_STACK_SIZE)
+                    break;
+                v = new_base + (v - orig_base);
+                *(uint32_t *)p = v;
+                p = v;
+            }
+        }
+    }
+
+    uint32_t *f = (uint32_t *)child_top;
+    *--f = uss;
+    *--f = uesp;                  /* user esp: resume on the child's stack copy */
+    *--f = ueflags;
+    *--f = ucs;
+    *--f = ueip;
+    *--f = uebp;                  /* user ebp: rebased into the stack copy */
+    *--f = 0;                     /* edi */
+    *--f = 0;                     /* esi */
+    *--f = 0;                     /* edx */
+    *--f = 0;                     /* ecx */
+    *--f = 0;                     /* ebx */
+    *--f = 0;                     /* eax: fork returns 0 in child */
+    *--f = (uint32_t)mkrn_fork_child_restore;  /* trampoline ret target */
+    *--f = 0;                     /* sched ebp */
+    *--f = 0;                     /* sched edi */
+    *--f = 0;                     /* sched esi */
+    *--f = 0;                     /* sched ebx */
+    child->thread_esp = (uint32_t)f;
     child->next = NULL;
 
     process_ctrl.process_count++;
@@ -621,6 +780,20 @@ pid_t mkrn_waitpid(pid_t pid, int *status, int options)
 
         return child_pid;
     }
+}
+
+/* Mark a process for termination; the scheduler reaps it the next
+ * time it would run.  Safe to call from another process's syscall. */
+void mkrn_process_terminate(pid_t pid)
+{
+    mkrn_process_t *target = mkrn_process_find(pid);
+    if (!target)
+        return;
+
+    target->state_tags &= ~M4K_SCHED_SLEEPING;
+    target->state_tags |= M4K_TERMINATE;
+    if (!(target->state_tags & M4K_STATE_SCHED_MASK))
+        target->state_tags |= M4K_SCHED_READY;
 }
 
 /* ── 4P1 kill ── */

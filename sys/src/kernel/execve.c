@@ -11,6 +11,7 @@
 #include "memory.h"
 #include "kernel.h"
 #include "console.h"
+#include "gdt.h"
 #include <string.h>
 
 extern unsigned char init_init_elf[];
@@ -18,9 +19,20 @@ extern unsigned int init_init_elf_len;
 
 static void idle_loop(void)
 {
-    while (1) {
-        __asm__ volatile("hlt");
-    }
+    /* Never expected to run (kmain execve's init onto the idle pcb
+     * before the first switch), but this is a ring-3 entry: `hlt` is
+     * privileged and would #GP, so busy-spin instead. */
+    for (;;)
+        __asm__ volatile("pause" : : : "memory");
+}
+
+/* Entry trampoline for a brand-new process: the scheduler pops
+ * ebx/esi/edi/ebp and ret's here, then we iret the synthetic ring-3
+ * interrupt frame (built by execve) into user mode. */
+__attribute__((naked)) void mkrn_process_entry_iret(void)
+{
+    __asm__ volatile("iret" : : : "memory");
+    __builtin_unreachable();
 }
 
 int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
@@ -117,17 +129,40 @@ int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
         return -1;
     }
 
-    u32 *sp = (u32 *)(
-        (u32)stack + M4K_STACK_SIZE);
+    /* Ring-3 entry frame (low -> high):
+     *   [ebx][esi][edi][ebp][mkrn_process_entry_iret]
+     *   [eip][cs=0x23][eflags][esp][ss=0x2B]
+     * The scheduler pops the 4 registers and ret's to the trampoline,
+     * which iret's into user mode (CPL3).  From then on every `int`
+     * switches to this process's private kernel stack via TSS esp0.
+     * Selectors carry RPL=3 (0x23/0x2B): iret to an outer ring requires
+     * SS RPL == new CS DPL, otherwise #GP. */
+    u32 *sp = (u32 *)((u32)stack + M4K_STACK_SIZE);
 
-    *--sp = ehdr->e_entry;
-    *--sp = 0;
-    *--sp = 0;
-    *--sp = 0;
-    *--sp = 0;
+    *--sp = M4K_GDT_USER_DATA | 0x3;        /* ss (ring 3, RPL=3) */
+    *--sp = (u32)stack + M4K_STACK_SIZE;    /* user esp: fresh stack top */
+    *--sp = 0x3202;                          /* eflags: IF + IOPL=3 (user port I/O) */
+    *--sp = M4K_GDT_USER_CODE | 0x3;        /* cs (ring 3, RPL=3) */
+    *--sp = ehdr->e_entry;                  /* eip */
+    *--sp = (u32)mkrn_process_entry_iret;   /* scheduler ret target */
+    *--sp = 0;                              /* sched ebp */
+    *--sp = 0;                              /* sched edi */
+    *--sp = 0;                              /* sched esi */
+    *--sp = 0;                              /* sched ebx */
 
     init->thread_esp = (u32)sp;
     init->state_tags = M4K_SCHED_READY;
+
+    /* Release the replaced image's user stack (idle's pre-init frame
+     * or a fork child's private copy); the new frame above is the only
+     * live reference from now on.  Done only here, after every
+     * validation and the new stack allocation succeeded, so a failed
+     * execve leaves the old stack intact. */
+    if (init->user_stack_base) {
+        mkrn_free((void *)init->user_stack_base);
+        init->user_stack_base = 0;
+    }
+    init->user_stack_base = (u32)stack;
 
     mkrn_console_write("[INFO] execve: init process ready, stack at 0x");
     mkrn_console_write_hex((u32)stack);
@@ -141,10 +176,15 @@ int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
 static void setup_idle_stack(mkrn_process_t *proc)
 {
     u32 *stack = (u32 *)mkrn_alloc(M4K_STACK_SIZE);
-    u32 *sp = (u32 *)(
-        (u32)stack + M4K_STACK_SIZE);
+    u32 *sp = (u32 *)((u32)stack + M4K_STACK_SIZE);
 
+    /* Same ring-3 entry frame as execve (replaced before switch_first). */
+    *--sp = M4K_GDT_USER_DATA | 0x3;
+    *--sp = (u32)stack + M4K_STACK_SIZE;
+    *--sp = 0x3202;                          /* eflags: IF + IOPL=3 (user code does direct port I/O) */
+    *--sp = M4K_GDT_USER_CODE | 0x3;
     *--sp = (u32)idle_loop;
+    *--sp = (u32)mkrn_process_entry_iret;
     *--sp = 0;
     *--sp = 0;
     *--sp = 0;
@@ -152,6 +192,13 @@ static void setup_idle_stack(mkrn_process_t *proc)
 
     proc->thread_esp = (u32)sp;
     proc->state_tags = M4K_SCHED_READY;
+    proc->user_stack_base = (u32)stack;
+
+    /* Private kernel stack: TSS esp0 is per-process (set on each
+     * context switch), so a process's pending ISR frame can never be
+     * clobbered by another process entering the kernel. */
+    u32 *kstack = (u32 *)mkrn_alloc(M4K_STACK_SIZE);
+    proc->kernel_stack = (u32)kstack + M4K_STACK_SIZE;
 }
 
 mkrn_process_t *mkrn_execve_create_idle(void)

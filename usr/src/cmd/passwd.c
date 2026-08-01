@@ -40,7 +40,7 @@ void musr_cmd_passwd(int ac, char **av)
     int is_self = 1;
 
     if (ac >= 2) {
-        musr_strcpy(target_user, av[1]);
+        musr_strncpy(target_user, av[1], sizeof(target_user)-1);
         is_self = 0;
     }
 
@@ -58,7 +58,7 @@ void musr_cmd_passwd(int ac, char **av)
         if (is_self) {
             if (entries[i].uid == cur_uid) {
                 target_idx = i;
-                musr_strcpy(target_user, entries[i].username);
+                musr_strncpy(target_user, entries[i].username, sizeof(target_user)-1);
                 break;
             }
         } else {

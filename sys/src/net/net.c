@@ -30,7 +30,7 @@ static struct {
 void
 mkrn_net_get_mac_string(uint8_t *pMac, char *pBuffer)
 {
-    sprintf(pBuffer,
+    snprintf(pBuffer, 18,
             "%02x:%02x:%02x:%02x:%02x:%02x",
             pMac[0], pMac[1], pMac[2], pMac[3],
             pMac[4], pMac[5]);
@@ -66,8 +66,8 @@ mkrn_net_string_to_ip(const char *pString)
 uint32_t
 mkrn_net_ip_to_string(uint32_t u32Ip, char *pBuffer)
 {
-    return (uint32_t)sprintf(
-        pBuffer, "%d.%d.%d.%d",
+    return (uint32_t)snprintf(
+        pBuffer, 16, "%d.%d.%d.%d",
         (u32Ip >> 24) & 0xFF, (u32Ip >> 16) & 0xFF,
         (u32Ip >> 8) & 0xFF, u32Ip & 0xFF);
 }

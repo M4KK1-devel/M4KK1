@@ -708,7 +708,7 @@ void musr_cmd_date(int ac, char **av)
     char tz_buf[16];
     read_tz_string(tz_buf, sizeof(tz_buf));
     if (!tz_buf[0])
-        musr_strcpy(tz_buf, bUTC ? "UTC" : "LOCAL");
+        musr_strncpy(tz_buf, bUTC ? "UTC" : "LOCAL", sizeof(tz_buf)-1);
     const char *tz_string = tz_buf;
     int tz_offset = 0;
     if (!bUTC)

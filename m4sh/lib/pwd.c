@@ -148,7 +148,8 @@ static int from_hex(const char *hex, uint8_t *bin, uint32_t max)
 
 #define SALT_SIZE 16
 
-void musr_hash_password(const char *password, const uint8_t *salt, char *hash_out)
+/* 内部：使用指定盐值计算 SHA-256 哈希，输出纯哈希十六进制（不带盐前缀） */
+static void hash_with_salt(const char *password, const uint8_t *salt, char *hash_hex)
 {
     sha256_ctx_t ctx;
     sha256_init(&ctx);
@@ -156,19 +157,28 @@ void musr_hash_password(const char *password, const uint8_t *salt, char *hash_ou
     sha256_update(&ctx, salt, SALT_SIZE);
     uint8_t digest[SHA256_DIGEST_SIZE];
     sha256_final(&ctx, digest);
-    to_hex(digest, SHA256_DIGEST_SIZE, hash_out);
+    to_hex(digest, SHA256_DIGEST_SIZE, hash_hex);
+}
+
+void musr_hash_password(const char *password, const uint8_t *salt, char *out)
+{
+    /* 输出格式：salt_hex$hash_hex */
+    to_hex(salt, SALT_SIZE, out);
+    out[2 * SALT_SIZE] = '$';
+    hash_with_salt(password, salt, out + 2 * SALT_SIZE + 1);
 }
 
 int musr_verify_password(const char *password, const char *stored_hash)
 {
-    if (musr_strlen(stored_hash) != 64 + 2*SALT_SIZE + 1)
+    /* 期望格式长度：32(salt_hex) + 1('$') + 64(hash_hex) = 97 */
+    if (musr_strlen(stored_hash) != 2 * SALT_SIZE + 1 + 64)
         return 0;
     uint8_t salt[SALT_SIZE];
     if (from_hex(stored_hash, salt, SALT_SIZE) != SALT_SIZE)
         return 0;
-    char computed[128];
-    musr_hash_password(password, salt, computed);
-    return musr_strcmp(stored_hash + 2*SALT_SIZE + 1, computed) == 0;
+    char computed[65];
+    hash_with_salt(password, salt, computed);
+    return musr_strcmp(stored_hash + 2 * SALT_SIZE + 1, computed) == 0;
 }
 
 void musr_make_password_hash(const char *password, char *hash_out)
@@ -176,11 +186,7 @@ void musr_make_password_hash(const char *password, char *hash_out)
     uint8_t salt[SALT_SIZE];
     for (int i = 0; i < SALT_SIZE; i++)
         salt[i] = (uint8_t)(i * 17 + 37);
-    to_hex(salt, SALT_SIZE, hash_out);
-    hash_out[2*SALT_SIZE] = '$';
-    char pw_hash[128];
-    musr_hash_password(password, salt, pw_hash);
-    musr_strcpy(hash_out + 2*SALT_SIZE + 1, pw_hash);
+    musr_hash_password(password, salt, hash_out);
 }
 
 /* ── passwd.db entry ── */
@@ -228,10 +234,10 @@ int musr_read_passwd_db(passwd_entry_t *entries, int max)
     if (fd < 0) {
         entries[0].uid = 0;
         entries[0].gid = 0;
-        musr_strcpy(entries[0].username, "root");
-        musr_strcpy(entries[0].home, "/root");
-        musr_strcpy(entries[0].shell, "/bin/m4sh");
-        musr_strcpy(entries[0].gecos, "System Administrator");
+        musr_strncpy(entries[0].username, "root", sizeof(entries[0].username)-1);
+        musr_strncpy(entries[0].home, "/root", sizeof(entries[0].home)-1);
+        musr_strncpy(entries[0].shell, "/bin/m4sh", sizeof(entries[0].shell)-1);
+        musr_strncpy(entries[0].gecos, "System Administrator", sizeof(entries[0].gecos)-1);
         musr_make_password_hash("123456", entries[0].password_hash);
         return 1;
     }
@@ -261,10 +267,10 @@ int musr_read_passwd_db(passwd_entry_t *entries, int max)
     if (count == 0) {
         entries[0].uid = 0;
         entries[0].gid = 0;
-        musr_strcpy(entries[0].username, "root");
-        musr_strcpy(entries[0].home, "/root");
-        musr_strcpy(entries[0].shell, "/bin/m4sh");
-        musr_strcpy(entries[0].gecos, "System Administrator");
+        musr_strncpy(entries[0].username, "root", sizeof(entries[0].username)-1);
+        musr_strncpy(entries[0].home, "/root", sizeof(entries[0].home)-1);
+        musr_strncpy(entries[0].shell, "/bin/m4sh", sizeof(entries[0].shell)-1);
+        musr_strncpy(entries[0].gecos, "System Administrator", sizeof(entries[0].gecos)-1);
         musr_make_password_hash("123456", entries[0].password_hash);
         return 1;
     }
@@ -368,7 +374,7 @@ int musr_parse_login_conf(const char *username, login_class_t *out)
     (void)username;
     /* Set defaults per §6.10.2 */
     memset(out, 0, sizeof(login_class_t));
-    musr_strcpy(out->class_name, "default");
+    musr_strncpy(out->class_name, "default", sizeof(out->class_name)-1);
     out->cputime = ~0ULL;
     out->datasize = 256 * 1024 * 1024ULL;
     out->stacksize = 8 * 1024 * 1024ULL;

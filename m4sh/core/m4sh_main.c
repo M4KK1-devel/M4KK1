@@ -194,7 +194,7 @@ static void exec_one(const char *line)
     char expanded[512];
     expand_vars(expanded, line, 512);
     char copy[512], *argv[32];
-    musr_strcpy(copy, expanded);
+    musr_strncpy(copy, expanded, sizeof(copy)-1);
     int ac = tokenize_quoted(copy, argv, 32);
     
     if (ac == 0)
@@ -496,7 +496,7 @@ static void tab_comp(void)
     if (n == 0)
         return;
     if (n == 1) {
-        musr_strcpy(cmd_buf, tab_matches[0]);
+        musr_strncpy(cmd_buf, tab_matches[0], sizeof(cmd_buf)-1);
         cmd_len = musr_strlen(cmd_buf);
         cmd_buf[cmd_len++] = ' ';
         cmd_buf[cmd_len] = '\0';
@@ -522,11 +522,11 @@ static void hist_add(const char *c)
         musr_strcmp(history[hist_count - 1], c) == 0)
         return;
     if (hist_count < HIST_MAX)
-        musr_strcpy(history[hist_count++], c);
+        musr_strncpy(history[hist_count++], c, sizeof(history[0])-1);
     else {
         for (int i = 1; i < HIST_MAX; i++)
-            musr_strcpy(history[i - 1], history[i]);
-        musr_strcpy(history[HIST_MAX - 1], c);
+            musr_strncpy(history[i - 1], history[i], sizeof(history[0])-1);
+        musr_strncpy(history[HIST_MAX - 1], c, sizeof(history[0])-1);
     }
 }
 
@@ -572,7 +572,7 @@ static void execute(void)
     if (cmd_len == 0)
         return;
     char copy[512];
-    musr_strcpy(copy, cmd_buf);
+    musr_strncpy(copy, cmd_buf, sizeof(copy)-1);
     hist_add(copy);
     hist_cur = hist_count;
 
@@ -636,14 +636,14 @@ static void handle_esc(int sec)
     }
     if (third == 'A' && hist_cur > 0) {
         hist_cur--;
-        musr_strcpy(cmd_buf, history[hist_cur]);
+        musr_strncpy(cmd_buf, history[hist_cur], sizeof(cmd_buf)-1);
         cmd_len = musr_strlen(cmd_buf);
     } else if (third == 'B' && hist_cur < hist_count) {
         hist_cur++;
         if (hist_cur == hist_count)
             cmd_buf[cmd_len = 0] = '\0';
         else {
-            musr_strcpy(cmd_buf, history[hist_cur]);
+            musr_strncpy(cmd_buf, history[hist_cur], sizeof(cmd_buf)-1);
             cmd_len = musr_strlen(cmd_buf);
         }
     }

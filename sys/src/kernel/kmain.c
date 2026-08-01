@@ -23,6 +23,7 @@
 #include "vfs.h"
 #include <video.h>
 #include <mouse.h>
+#include <keyboard.h>
 #include <yafs.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -46,6 +47,14 @@ extern unsigned char mdm_mini_init_elf[];
 extern unsigned int mdm_mini_init_elf_len;
 extern unsigned char flip_test_init_elf[];
 extern unsigned int flip_test_init_elf_len;
+extern unsigned char copland_init_elf[];
+extern unsigned int copland_init_elf_len;
+extern unsigned char sprach_stack_init_elf[];
+extern unsigned int sprach_stack_init_elf_len;
+extern unsigned char sprach_tiling_init_elf[];
+extern unsigned int sprach_tiling_init_elf_len;
+extern unsigned char sprach_scroll_init_elf[];
+extern unsigned int sprach_scroll_init_elf_len;
 
 void mkrn_yafs_test(void);
 int mkrn_yafs_create_fhs(u64 *root_lba);
@@ -123,6 +132,7 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
 
     mkrn_console_write("2. Initializing GDT...\n");
     mkrn_gdt_init();
+    mkrn_tss_flush();
     mkrn_console_write("   GDT initialized.\n");
 
     mkrn_console_write("3. Initializing IDT and Interrupts...\n");
@@ -157,6 +167,14 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
 
     mkrn_console_write(
         "   Standard and M4KK1 system calls initialized.\n");
+
+    mkrn_console_write("6.4. Initializing PS/2 Keyboard...\n");
+    mkrn_kbd_init();
+    if (mkrn_keyboard_is_initialized()) {
+        mkrn_console_write("   PS/2 keyboard driver initialized.\n");
+    } else {
+        mkrn_console_write("   PS/2 keyboard not detected.\n");
+    }
 
     mkrn_console_write("6.5. Initializing PS/2 Mouse...\n");
     mkrn_mouse_init();
@@ -317,6 +335,91 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
             mkrn_console_write(" bytes)\n");
         } else {
             mkrn_console_write("   WARNING: failed to create /bin/flip_test\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/copland",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, copland_init_elf,
+                copland_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/copland written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/copland\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/copland_status",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, copland_init_elf,
+                copland_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/copland_status written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/copland_status\n");
+        }
+    }
+    {
+        /* Default window manager: Copland spawns /bin/sprach */
+        int fd = mkrn_vfs_open("/bin/sprach",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, sprach_stack_init_elf,
+                sprach_stack_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/sprach written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/sprach\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/sprach_stack",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, sprach_stack_init_elf,
+                sprach_stack_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/sprach_stack written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/sprach_stack\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/sprach_tiling",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, sprach_tiling_init_elf,
+                sprach_tiling_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/sprach_tiling written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/sprach_tiling\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/sprach_scroll",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, sprach_scroll_init_elf,
+                sprach_scroll_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/sprach_scroll written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/sprach_scroll\n");
         }
     }
     {

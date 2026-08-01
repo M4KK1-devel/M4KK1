@@ -9,26 +9,14 @@ void _start(void)
     ser_puts("[INIT] Init process started\n");
     ser_puts("[INIT] ========================================\n");
 
-    /* Launch flip_test for VESA display verification */
-    ser_puts("[INIT] Launching flip_test (VESA display verification)...\n");
-    int ret = m4k_spawn("/bin/flip_test", 0);
+    /* Phase 1: bring up the Copland display server (graphical HAL) */
+    ser_puts("[INIT] Starting Copland (display server)...\n");
+    int ret = m4k_spawn("/bin/copland", 0);
 
     if (ret < 0) {
-        ser_puts("[INIT] flip_test failed (ret=");
-        print_u32((uint32_t)ret);
-        ser_puts("), trying mdm_mini...\n");
-        ret = m4k_spawn("/bin/mdm_mini", 0);
-    }
-
-    if (ret < 0) {
-        ser_puts("[INIT] mdm_mini failed, trying full MDM...\n");
-        ret = m4k_spawn("/bin/mdm", 0);
-    }
-
-    if (ret < 0) {
-        ser_puts("[INIT] All graphical programs failed, falling back to serial login.\n");
+        ser_puts("[INIT] Copland spawn failed, falling back to serial login...\n");
     } else {
-        ser_puts("[INIT] Graphical program returned, falling back to serial login.\n");
+        ser_puts("[INIT] Copland returned, falling back to serial login...\n");
     }
 
     /* Fallback to serial login */
