@@ -23,23 +23,30 @@ static uint32_t  back_buffer_size = 0;
 /* ── Font data ── */
 #include "font_8x16.c"
 
-/* ── Cursor overlay ── */
+/* ── Cursor overlay (save/restore software sprite) ── */
 #define CURSOR_W 16
 #define CURSOR_H 16
 
 static const uint16_t cursor_bitmap[CURSOR_H] = {
-    0x8000, 0xC000, 0xA000, 0x9000,
-    0x8800, 0x8400, 0x8200, 0x8100,
-    0x8080, 0x8040, 0x8020, 0x8010,
-    0x8E08, 0x9100, 0xA100, 0xC100,
+    0xC000, 0xE000, 0xF000, 0xF800,
+    0xFC00, 0xFE00, 0xFF00, 0xFF80,
+    0xFFC0, 0xFFE0, 0xE7E0, 0xC3E0,
+    0x81E0, 0x00E0, 0x0060, 0x0020,
 };
 
 static int32_t cursor_x = 400;
 static int32_t cursor_y = 300;
+static int32_t cursor_old_x = -1;
+static int32_t cursor_old_y = -1;
+static uint32_t cursor_bg[CURSOR_W * CURSOR_H];
 static bool    cursor_enabled = false;
 
 void mkrn_vesa_set_cursor_pos(int32_t x, int32_t y)
 {
+    if (x < 0) x = 0;
+    if (x >= (int32_t)fb_info.width) x = (int32_t)fb_info.width - 1;
+    if (y < 0) y = 0;
+    if (y >= (int32_t)fb_info.height) y = (int32_t)fb_info.height - 1;
     cursor_x = x;
     cursor_y = y;
 }
@@ -49,17 +56,12 @@ void mkrn_vesa_cursor_enable(int enable)
     cursor_enabled = !!enable;
 }
 
-static void vesa_draw_cursor(void)
+/* XOR the cursor bitmap onto back_buffer at (sx, sy) */
+static void cursor_xor_on_backbuf(int sx, int sy)
 {
-    if (!cursor_enabled || !fb_info.initialized)
-        return;
-
-    uint32_t *lfb = (uint32_t *)fb_info.phys_addr;
+    if (!back_buffer) return;
     int w = (int)fb_info.width;
     int h = (int)fb_info.height;
-    int sx = cursor_x;
-    int sy = cursor_y;
-
     for (int row = 0; row < CURSOR_H; row++) {
         int py = sy + row;
         if (py < 0 || py >= h) continue;
@@ -68,8 +70,124 @@ static void vesa_draw_cursor(void)
             int px = sx + col;
             if (px < 0 || px >= w) continue;
             if (bits & (0x8000 >> col))
-                lfb[py * w + px] ^= 0x00FFFFFF;
+                back_buffer[py * w + px] ^= 0x00FFFFFF;
         }
+    }
+}
+
+/* Save a CURSOR_W x CURSOR_H rect from back_buffer into cursor_bg */
+static void cursor_save_bg(int sx, int sy)
+{
+    if (!back_buffer) return;
+    int w = (int)fb_info.width;
+    int h = (int)fb_info.height;
+    for (int row = 0; row < CURSOR_H; row++) {
+        int py = sy + row;
+        if (py < 0 || py >= h) {
+            mkrn_memset(&cursor_bg[row * CURSOR_W], 0, CURSOR_W * 4);
+            continue;
+        }
+        for (int col = 0; col < CURSOR_W; col++) {
+            int px = sx + col;
+            if (px < 0 || px >= w)
+                cursor_bg[row * CURSOR_W + col] = 0;
+            else
+                cursor_bg[row * CURSOR_W + col] = back_buffer[py * w + px];
+        }
+    }
+}
+
+/* Restore cursor_bg pixels onto back_buffer (erase cursor) */
+static void cursor_restore_bg(int sx, int sy)
+{
+    if (!back_buffer) return;
+    int w = (int)fb_info.width;
+    int h = (int)fb_info.height;
+    for (int row = 0; row < CURSOR_H; row++) {
+        int py = sy + row;
+        if (py < 0 || py >= h) continue;
+        for (int col = 0; col < CURSOR_W; col++) {
+            int px = sx + col;
+            if (px < 0 || px >= w) continue;
+            back_buffer[py * w + px] = cursor_bg[row * CURSOR_W + col];
+        }
+    }
+}
+
+/* ── Full cursor cycle: restore old, save new, draw new ── */
+void mkrn_vesa_update_cursor(void)
+{
+    if (!cursor_enabled || !back_buffer || !fb_info.initialized)
+        return;
+
+    /* Single source of truth: the mouse driver's accumulated absolute
+     * position (already clamped to the screen and carrying the 2x
+     * ballistics).  Syncing here (not only in mkrn_vesa_flip) means
+     * mid-frame cursor moves stay aligned with hit-testing no matter
+     * when the WM asks for an update. */
+    if (mkrn_mouse_is_initialized()) {
+        int32_t mx, my;
+        mkrn_mouse_get_position(&mx, &my);
+        cursor_x = mx;
+        cursor_y = my;
+    }
+
+    int nx = cursor_x;
+    int ny = cursor_y;
+
+    if (nx >= (int)fb_info.width)  nx = (int)fb_info.width - 1;
+    if (ny >= (int)fb_info.height) ny = (int)fb_info.height - 1;
+    if (nx < 0) nx = 0;
+    if (ny < 0) ny = 0;
+
+    if (nx == cursor_old_x && ny == cursor_old_y)
+        return;
+
+    /* Restore old cursor position from saved background */
+    if (cursor_old_x >= 0 && cursor_old_y >= 0)
+        cursor_restore_bg(cursor_old_x, cursor_old_y);
+
+    /* Save new position background and draw */
+    cursor_save_bg(nx, ny);
+    cursor_xor_on_backbuf(nx, ny);
+
+    /* Flip both rects: old (restored) and new (with cursor) */
+    if (cursor_old_x >= 0 && cursor_old_y >= 0)
+        mkrn_vesa_flip_rect(cursor_old_x, cursor_old_y, CURSOR_W, CURSOR_H);
+    mkrn_vesa_flip_rect(nx, ny, CURSOR_W, CURSOR_H);
+
+    cursor_old_x = nx;
+    cursor_old_y = ny;
+}
+
+/* ── Partial flip: copy a rect from back_buffer to LFB ── */
+void mkrn_vesa_flip_rect(int x, int y, int w, int h)
+{
+    if (!fb_info.initialized || !back_buffer)
+        return;
+    if (w <= 0 || h <= 0) return;
+
+    int scr_w = (int)fb_info.width;
+    int scr_h = (int)fb_info.height;
+
+    /* Clip to screen */
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > scr_w) w = scr_w - x;
+    if (y + h > scr_h) h = scr_h - y;
+    if (w <= 0 || h <= 0) return;
+
+    uint32_t *lfb = (uint32_t *)fb_info.phys_addr;
+    uint32_t *src = back_buffer + y * scr_w + x;
+    uint32_t *dst = lfb + y * scr_w + x;
+
+    for (int row = 0; row < h; row++) {
+        uint32_t pixels = (uint32_t)w;
+        uint32_t *s = src + row * scr_w;
+        uint32_t *d = dst + row * scr_w;
+        __asm__ volatile("cld; rep movsl"
+            : "+c"(pixels), "+D"(d), "+S"(s)
+            : : "memory");
     }
 }
 
@@ -309,9 +427,9 @@ void mkrn_vesa_init(void)
     mkrn_console_write_dec(fb_info.bpp);
     mkrn_console_write(", pitch=");
     mkrn_console_write_dec(fb_info.pitch);
-    mkrn_console_write(", back_buf=0x");
-    mkrn_console_write_hex((uint32_t)back_buffer);
     mkrn_console_write("\n");
+
+    cursor_enabled = true;
 
     /* Clear to black */
     mkrn_vesa_clear(VESA_COLOR_BLACK);
@@ -332,15 +450,19 @@ void mkrn_vesa_init(void)
 
 void mkrn_vesa_flip(void)
 {
-    if (!fb_info.initialized || !back_buffer) {
-        mkrn_console_write("[VESA] flip: not initialized or no back_buffer\n");
+    if (!fb_info.initialized || !back_buffer)
         return;
-    }
 
     if (mkrn_mouse_is_initialized()) {
         int32_t mx, my;
         mkrn_mouse_get_position(&mx, &my);
         mkrn_vesa_set_cursor_pos(mx, my);
+    }
+
+    /* Draw cursor onto fresh back_buffer (composite just wrote the scene) */
+    if (cursor_enabled) {
+        cursor_save_bg(cursor_x, cursor_y);
+        cursor_xor_on_backbuf(cursor_x, cursor_y);
     }
 
     uint32_t *lfb = (uint32_t *)fb_info.phys_addr;
@@ -351,7 +473,9 @@ void mkrn_vesa_flip(void)
         : "S"(back_buffer)
         : "memory");
 
-    vesa_draw_cursor();
+    /* Track cursor position for mid-frame cursor_update save/restore */
+    cursor_old_x = cursor_x;
+    cursor_old_y = cursor_y;
 }
 
 void mkrn_vesa_clear(uint32_t color)
@@ -359,9 +483,13 @@ void mkrn_vesa_clear(uint32_t color)
     if (!back_buffer)
         return;
 
+    /* rep stosl fill: 1024x600x4 = 2.4MB per clear — the per-pixel
+     * C loop dominated boot and window-drag redraw paths. */
     uint32_t pixels = fb_info.width * fb_info.height;
-    for (uint32_t i = 0; i < pixels; i++)
-        back_buffer[i] = color;
+    __asm__ volatile("cld; rep stosl"
+        : "+c"(pixels), "+D"(back_buffer)
+        : "a"(color)
+        : "memory");
 }
 
 /* ── Phase 2: Drawing primitives ── */
@@ -397,11 +525,24 @@ void mkrn_vesa_draw_line(int x1, int y1, int x2, int y2, uint32_t color)
 void mkrn_vesa_draw_rect(int x, int y, int w, int h, uint32_t color, int fill)
 {
     if (fill) {
+        if (!back_buffer)
+            return;
+        /* Clip once, then write through a row pointer — the old
+         * per-pixel put_pixel re-ran full bounds checks for every
+         * pixel of every filled rect (the hottest GUI primitive). */
         int x2 = x + w;
         int y2 = y + h;
-        for (int row = y; row < y2; row++)
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        if (x2 > (int)fb_info.width)  x2 = (int)fb_info.width;
+        if (y2 > (int)fb_info.height) y2 = (int)fb_info.height;
+        if (x >= x2 || y >= y2)
+            return;
+        for (int row = y; row < y2; row++) {
+            uint32_t *prow = back_buffer + (uint32_t)row * fb_info.width;
             for (int col = x; col < x2; col++)
-                mkrn_vesa_put_pixel(col, row, color);
+                prow[col] = color;
+        }
     } else {
         mkrn_vesa_draw_line(x, y, x + w - 1, y, color);
         mkrn_vesa_draw_line(x, y, x, y + h - 1, color);
@@ -585,9 +726,13 @@ uint32_t m4k_syscall_gfx_blit_impl(
     int scr_w = (int)fb_info.width;
     int scr_h = (int)fb_info.height;
 
+    /* The client's source buffer has one row of orig_w pixels; clipping
+     * shrinks the copied width but the row stride stays orig_w. */
+    int orig_w = w;
+
     /* Clip source/dest to the visible region */
     if (x < 0) { w += x; src += (uint32_t)(-x); x = 0; }
-    if (y < 0) { h += y; src += (uint32_t)(-y) * (uint32_t)w; y = 0; }
+    if (y < 0) { h += y; src += (uint32_t)(-y) * (uint32_t)orig_w; y = 0; }
     if (x + w > scr_w) w = scr_w - x;
     if (y + h > scr_h) h = scr_h - y;
     if (w <= 0 || h <= 0)
@@ -596,10 +741,33 @@ uint32_t m4k_syscall_gfx_blit_impl(
     uint32_t *dst = back_buffer + (uint32_t)y * (uint32_t)scr_w + (uint32_t)x;
 
     for (int row = 0; row < h; row++) {
-        const uint32_t *s = src + (uint32_t)row * (uint32_t)w;
+        const uint32_t *s = src + (uint32_t)row * (uint32_t)orig_w;
         uint32_t *d = dst + (uint32_t)row * (uint32_t)scr_w;
-        for (int col = 0; col < w; col++)
-            d[col] = s[col];
+        uint32_t cnt = (uint32_t)w;
+        __asm__ volatile("cld; rep movsl"
+            : "+c"(cnt), "+D"(d), "+S"(s)
+            :
+            : "memory");
     }
+    return 0;
+}
+
+/* ── Syscall: flip a partial region of back_buffer to LFB ── */
+uint32_t m4k_syscall_flip_rect_impl(
+    uint32_t arg1, uint32_t arg2, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5)
+{
+    (void)arg5;
+    mkrn_vesa_flip_rect((int)arg1, (int)arg2, (int)arg3, (int)arg4);
+    return 0;
+}
+
+/* ── Syscall: update cursor position (save/restore + draw + flip rects) ── */
+uint32_t m4k_syscall_update_cursor_impl(
+    uint32_t arg1, uint32_t arg2, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5)
+{
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    mkrn_vesa_update_cursor();
     return 0;
 }

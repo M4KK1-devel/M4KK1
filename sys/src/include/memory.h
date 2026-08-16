@@ -30,6 +30,8 @@ typedef struct mkrn_mem_block {
     u32 size;
     u8 used;
     struct mkrn_mem_block *next;
+    struct mkrn_mem_block *prev;    /* O(1) left-neighbour merge in
+                                       mkrn_free (full coalesce) */
 } mkrn_mem_block_t;
 
 #define M4K_PAGE_SIZE 4096

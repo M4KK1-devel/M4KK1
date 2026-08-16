@@ -89,9 +89,20 @@ mkrn_console_scroll(void)
 
     uint16_t *pBuffer = (uint16_t *)VGA_MEMORY;
 
-    for (int i = 0; i < VGA_WIDTH * (VGA_HEIGHT - 1);
-         i++)
-        pBuffer[i] = pBuffer[i + VGA_WIDTH];
+    /* Single overlapping up-copy + one-row clear: one VGA pass
+     * instead of per-word C loop (rep movsl, 2 words per dword). */
+    uint32_t u32Words =
+        (uint32_t)VGA_WIDTH * (VGA_HEIGHT - 1);
+    int bOddTail = (int)(u32Words & 1u);
+    uint32_t u32Dwords = u32Words >> 1;
+    uint16_t const *pu16Src = pBuffer + VGA_WIDTH;
+    uint16_t *pu16Dst = pBuffer;
+    __asm__ volatile("cld; rep movsl"
+        : "+c"(u32Dwords), "+D"(pu16Dst), "+S"(pu16Src)
+        :
+        : "memory");
+    if (bOddTail)
+        *pu16Dst = *pu16Src;
 
     uint16_t u16Color =
         (console_state.background_color << 4)

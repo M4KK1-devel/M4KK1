@@ -62,6 +62,95 @@ static void ready_remove(mkrn_process_t *p)
     }
 }
 
+/* All-process registry: every PCB is linked here from creation until
+ * its parent reaps it via waitpid.  The ready queue only holds tasks
+ * waiting for the CPU; sleeping and zombie processes must stay
+ * findable for kill()/waitpid()/procfs, which walk this list. */
+static mkrn_process_t *all_procs = NULL;
+static uint32_t all_procs_count = 0;
+
+static void proc_registry_add(mkrn_process_t *p)
+{
+    if (!p)
+        return;
+    p->next = all_procs;
+    all_procs = p;
+    all_procs_count++;
+}
+
+static void proc_registry_remove(mkrn_process_t *p)
+{
+    mkrn_process_t **pp = &all_procs;
+    while (*pp) {
+        if (*pp == p) {
+            *pp = p->next;
+            p->next = NULL;
+            all_procs_count--;
+            return;
+        }
+        pp = &(*pp)->next;
+    }
+}
+
+/* Release every allocation owned by a reaped zombie PCB.  Called from
+ * waitpid after the parent harvested the exit status, at which point
+ * no scheduler state can reference the process anymore. */
+static void proc_free_zombie(mkrn_process_t *p)
+{
+    if (p->user_stack_base)
+        mkrn_free((void *)p->user_stack_base);
+    if (p->kernel_stack)
+        mkrn_free((void *)(p->kernel_stack - M4K_STACK_SIZE));
+    proc_registry_remove(p);
+    mkrn_free(p);
+}
+
+/* Stall probe: dump current process + ready-queue contents */
+void mkrn_process_dump_sched(void)
+{
+    mkrn_console_write("Q cur=");
+    if (current) {
+        mkrn_console_write_dec(current->pid);
+        mkrn_console_write(":");
+        mkrn_console_write(current->name);
+        mkrn_console_write(" esp=");
+        mkrn_console_write_hex(current->thread_esp);
+        mkrn_console_write(" tags=");
+        mkrn_console_write_hex((uint32_t)current->state_tags);
+    } else {
+        mkrn_console_write("none");
+    }
+    mkrn_console_write(" q=[");
+    for (uint32_t i = 0; i < ready_queue_count; i++) {
+        if (i > 0)
+            mkrn_console_write(",");
+        mkrn_console_write_dec(ready_queue[i]->pid);
+        mkrn_console_write(":");
+        mkrn_console_write_hex((uint32_t)ready_queue[i]->state_tags);
+    }
+    mkrn_console_write("]\n");
+}
+
+int mkrn_process_is_ready(pid_t pid)
+{
+    for (uint32_t i = 0; i < ready_queue_count; i++)
+        if (ready_queue[i]->pid == (uint32_t)pid)
+            return 1;
+    return 0;
+}
+
+uint32_t mkrn_process_get_tags(pid_t pid)
+{
+    mkrn_process_t *p = mkrn_process_find(pid);
+    return p ? (uint32_t)p->state_tags : 0;
+}
+
+uint32_t mkrn_process_get_thread_esp(pid_t pid)
+{
+    mkrn_process_t *p = mkrn_process_find(pid);
+    return p ? p->thread_esp : 0;
+}
+
 static uint32_t next_pid(void)
 {
     return process_ctrl.next_pid++;
@@ -71,13 +160,14 @@ static uint32_t next_pid(void)
 
 mkrn_process_t *mkrn_process_find(pid_t pid)
 {
-    /* Search ready queue */
-    for (uint32_t i = 0; i < ready_queue_count; i++) {
-        if (ready_queue[i]->pid == (uint32_t)pid)
-            return ready_queue[i];
+    /* Walk the all-process registry: the ready queue alone misses
+     * sleeping and zombie processes, breaking kill/procfs/reparent. */
+    for (mkrn_process_t *p = all_procs; p; p = p->next) {
+        if (p->pid == (uint32_t)pid)
+            return p;
     }
 
-    /* Also check current */
+    /* Also check current (running right now) */
     if (current && current->pid == (uint32_t)pid)
         return current;
 
@@ -258,12 +348,15 @@ mkrn_process_t *mkrn_process_switch_pick(void)
 
     /* Dequeue next ready process (skip stopped, reap terminated) */
     mkrn_process_t *next = NULL;
-    while (1) {
+    uint32_t scanned = 0;
+    while (scanned < ready_queue_count + 1) {
         next = ready_dequeue();
         if (!next)
             break;
+        scanned++;
         if (next->state_tags & M4K_TERMINATE) {
             mkrn_process_reap(next);
+            scanned--;          /* reaped task left the queue */
             continue;
         }
         if (!(next->state_tags & M4K_STOPPED) &&
@@ -273,6 +366,8 @@ mkrn_process_t *mkrn_process_switch_pick(void)
         /* Put stopped/non-ready back at end */
         ready_enqueue(next);
     }
+    if (scanned >= ready_queue_count + 1)
+        next = NULL;            /* every queued task is stopped: spin idly */
 
     if (next) {
         current = next;
@@ -373,8 +468,12 @@ static void mkrn_process_reap(mkrn_process_t *p)
     mkrn_console_write_dec(p->pid);
     mkrn_console_write("\n");
 
+    /* Transition to zombie: keep the PCB (holding the exit status)
+     * until the parent harvests it in waitpid, but stop scheduling. */
     p->state_tags &= ~(M4K_SCHED_RUNNING | M4K_SCHED_READY |
                        M4K_SCHED_SLEEPING | M4K_STOPPED | M4K_TERMINATE);
+    p->state_tags |= M4K_ZOMBIE;
+    ready_remove(p);
 
     /* Send SIGCHLD to parent */
     mkrn_process_t *parent = mkrn_process_find((pid_t)p->ppid);
@@ -411,12 +510,24 @@ void mkrn_process_exit(int status)
 
     current->exit_status = status;
     mkrn_process_reap(current);
+    mkrn_process_t *dying = current;
 
     /* Switch to the next task */
     mkrn_process_t *next = mkrn_process_dequeue_live();
     if (next) {
+        /* Publish the handoff BEFORE any logging: mkrn_console_write
+         * paths can deliver interrupts whose handlers dereference
+         * `current`, which would still point at the reaped zombie
+         * PCB below.  The dying PCB stays valid until waitpid reaps
+         * it, so reading its fields after the switch is safe. */
+        current = next;
+        next->state_tags &= ~(M4K_SCHED_READY | M4K_SCHED_SLEEPING);
+        next->state_tags |= M4K_SCHED_RUNNING;
+
+        mkrn_set_kernel_stack(next->kernel_stack);
+
         mkrn_console_write("[SW]save=0x");
-        mkrn_console_write_hex(current->thread_esp);
+        mkrn_console_write_hex(dying->thread_esp);
         mkrn_console_write(" kstk=0x");
         mkrn_console_write_hex(next->kernel_stack);
         mkrn_console_write(" next=");
@@ -426,11 +537,6 @@ void mkrn_process_exit(int status)
         mkrn_console_write(" state=0x");
         mkrn_console_write_hex((uint32_t)next->state_tags);
         mkrn_console_write("\n");
-        current = next;
-        current->state_tags &= ~(M4K_SCHED_READY | M4K_SCHED_SLEEPING);
-        current->state_tags |= M4K_SCHED_RUNNING;
-
-        mkrn_set_kernel_stack(next->kernel_stack);
 
         asm volatile(
             "movl %0, %%esp\n"
@@ -454,9 +560,9 @@ void mkrn_process_reparent_children(mkrn_process_t *parent)
 {
     if (!parent) return;
 
-    for (uint32_t i = 0; i < ready_queue_count; i++) {
-        if (ready_queue[i]->ppid == parent->pid) {
-            ready_queue[i]->ppid = 1;
+    for (mkrn_process_t *p = all_procs; p; p = p->next) {
+        if (p->ppid == parent->pid && p != parent) {
+            p->ppid = 1;
         }
     }
 }
@@ -472,6 +578,8 @@ void mkrn_process_init(void)
     mkrn_memset(&process_ctrl, 0, sizeof(process_ctrl));
     process_ctrl.next_pid = 1;
     ready_queue_count = 0;
+    all_procs = NULL;
+    all_procs_count = 0;
 
     mkrn_process_t *idle = mkrn_execve_create_idle();
     if (!idle) {
@@ -482,6 +590,7 @@ void mkrn_process_init(void)
     process_ctrl.current = idle;
     process_ctrl.process_count = 1;
     process_ctrl.next_pid = 2;
+    proc_registry_add(idle);
 
     M4K_LOG_INFO("Idle process created: PID=1");
 }
@@ -512,9 +621,9 @@ int mkrn_process_fill_info(struct mkrn_procinfo *buf, uint32_t max)
         written++;
     }
 
-    /* Then ready queue */
-    for (uint32_t i = 0; i < ready_queue_count && written < max; i++) {
-        mkrn_process_t *p = ready_queue[i];
+    /* Then every other process in the registry (includes sleeping
+     * and zombie processes the ready queue never shows). */
+    for (mkrn_process_t *p = all_procs; p && written < max; p = p->next) {
         if (p && p != current) {
             buf[written].pid = p->pid;
             buf[written].ppid = p->ppid;
@@ -720,6 +829,19 @@ pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
     child->next = NULL;
 
     process_ctrl.process_count++;
+    proc_registry_add(child);
+    if (ready_queue_count >= READY_QUEUE_SIZE) {
+        /* Queue full: undo the fork instead of returning a ghost pid
+         * that the scheduler will silently drop. */
+        M4K_LOG_ERROR("fork: ready queue full");
+        proc_registry_remove(child);
+        process_ctrl.process_count--;
+        mkrn_free((void *)(child->kernel_stack - M4K_STACK_SIZE));
+        if (child->user_stack_base)
+            mkrn_free((void *)child->user_stack_base);
+        mkrn_free(child);
+        return -1;
+    }
     ready_enqueue(child);
 
     return (pid_t)child->pid;
@@ -734,12 +856,15 @@ pid_t mkrn_waitpid(pid_t pid, int *status, int options)
     while (1) {
         mkrn_process_t *child = NULL;
 
-        /* Find a matching child */
-        for (uint32_t i = 0; i < ready_queue_count; i++) {
-            if (ready_queue[i]->ppid == mkrn_process_get_pid()) {
-                if (pid == -1 || (uint32_t)pid == ready_queue[i]->pid) {
-                    child = ready_queue[i];
-                    break;
+        /* Find a matching child in the all-process registry (the
+         * ready queue misses zombies — they were removed on exit). */
+        for (mkrn_process_t *p = all_procs; p; p = p->next) {
+            if (p->ppid == mkrn_process_get_pid()
+                && p != current) {
+                if (pid == -1 || (uint32_t)pid == p->pid) {
+                    child = p;
+                    if (child->state_tags & M4K_ZOMBIE)
+                        break;
                 }
             }
         }
@@ -764,9 +889,8 @@ pid_t mkrn_waitpid(pid_t pid, int *status, int options)
         uint32_t exit_val = child->exit_status;
         pid_t child_pid = (pid_t)child->pid;
 
-        /* Remove from ready queue */
-        ready_remove(child);
-        mkrn_free(child);
+        /* Free the PCB and its stacks */
+        proc_free_zombie(child);
 
         if (status) {
             if (exit_val < M4K_NSIG) {
