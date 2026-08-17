@@ -174,6 +174,31 @@ mkrn_process_t *mkrn_process_find(pid_t pid)
     return NULL;
 }
 
+/* Snapshot the pids of every live process (ready, sleeping, zombie)
+ * into pids[], returning the count copied (capped at max).  One pass
+ * over all_procs — lets procfs directory listings enumerate pids in
+ * O(n) instead of probing find() once per candidate pid (O(1024*n)
+ * in the old callers).  Includes current when not already linked,
+ * matching mkrn_process_find's lookup set. */
+uint32_t mkrn_process_get_pids(uint32_t *pids, uint32_t max)
+{
+    uint32_t n = 0;
+    for (mkrn_process_t *p = all_procs; p && n < max; p = p->next)
+        pids[n++] = p->pid;
+    if (current && n < max) {
+        int found = 0;
+        for (uint32_t i = 0; i < n; i++) {
+            if (pids[i] == current->pid) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found)
+            pids[n++] = current->pid;
+    }
+    return n;
+}
+
 /* ── Public API ── */
 
 mkrn_process_t *mkrn_process_get_current(void)

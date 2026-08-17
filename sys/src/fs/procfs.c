@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <kernel.h>
 #include <console.h>
+#include <kstrtox.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -194,11 +195,10 @@ int mkrn_procfs_open(const char *path, int flags, int *out_fd)
     }
 
     /* Parse PID */
-    uint32_t pid = 0;
-    while (*p >= '0' && *p <= '9') {
-        pid = pid * 10 + (*p - '0');
-        p++;
-    }
+    unsigned int pid_val = 0;
+    if (mkrn_kstrtouint(p, 10, &pid_val) < 0)
+        return -1;
+    uint32_t pid = pid_val;
     if (pid == 0) return -1;
 
     mkrn_process_t *proc = procfs_find_pid(pid);
@@ -325,10 +325,10 @@ int mkrn_procfs_write(int fd, const void *buf, uint32_t count)
     while (*c == ' ' || *c == '\t') c++;
 
     if (strncmp(c, "kill ", 5) == 0) {
-        int sig = 0;
-        const char *s = c + 5;
-        while (*s >= '0' && *s <= '9')
-            sig = sig * 10 + (*s++ - '0');
+        unsigned int sig_val = 0;
+        if (mkrn_kstrtouint(c + 5, 10, &sig_val) < 0)
+            return -1;
+        int sig = (int)sig_val;
         if (sig > 0 && sig < M4K_NSIG)
             return (mkrn_kill((pid_t)pid, sig) == 0) ? (int)count : -1;
         return -1;
@@ -348,11 +348,10 @@ int mkrn_procfs_write(int fd, const void *buf, uint32_t count)
     }
 
     if (strncmp(c, "niceness ", 9) == 0) {
-        int val = 0;
-        const char *s = c + 9;
-        while (*s >= '0' && *s <= '9')
-            val = val * 10 + (*s++ - '0');
-        p->priority = (uint32_t)val;
+        unsigned int val = 0;
+        if (mkrn_kstrtouint(c + 9, 10, &val) < 0)
+            return -1;
+        p->priority = val;
         return (int)count;
     }
 
@@ -418,25 +417,23 @@ int mkrn_procfs_getdents(int fd, struct mkrn_vfs_dirent *buf, uint32_t max)
     /* /sys/proc/ root listing */
     if (pid == 0) {
         uint32_t written = 0;
-        /* Scan all processes */
-        mkrn_process_t *cur = mkrn_process_get_current();
-        if (cur && written < max) {
-            memset(&buf[written], 0, sizeof(struct mkrn_vfs_dirent));
-            buf[written].inode = cur->pid;
-            buf[written].type = 2;
-            procfs_format(buf[written].name, sizeof(buf[written].name), "%u", cur->pid);
-            written++;
+        /* One-pass pid snapshot — the old loop probed find() for every
+         * candidate pid (O(1024*n)) and silently capped pids at 255,
+         * hiding any process with pid > 255. */
+        uint32_t pids[128];
+        uint32_t np = mkrn_process_get_pids(pids, 128);
+        for (uint32_t i = 1; i < np; i++) {   /* insertion sort: ascending */
+            uint32_t key = pids[i];
+            int j = (int)i - 1;
+            while (j >= 0 && pids[j] > key) { pids[j + 1] = pids[j]; j--; }
+            pids[j + 1] = key;
         }
-        for (uint32_t i = 1; i < 256 && written < max; i++) {
-            if (i == cur->pid) continue;
-            mkrn_process_t *p = mkrn_process_find((pid_t)i);
-            if (p) {
-                memset(&buf[written], 0, sizeof(struct mkrn_vfs_dirent));
-                buf[written].inode = p->pid;
-                buf[written].type = 2;
-                procfs_format(buf[written].name, sizeof(buf[written].name), "%u", p->pid);
-                written++;
-            }
+        for (uint32_t i = 0; i < np && written < max; i++) {
+            memset(&buf[written], 0, sizeof(struct mkrn_vfs_dirent));
+            buf[written].inode = pids[i];
+            buf[written].type = 2;
+            procfs_format(buf[written].name, sizeof(buf[written].name), "%u", pids[i]);
+            written++;
         }
         return (int)written;
     }

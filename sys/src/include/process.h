@@ -160,6 +160,10 @@ void mkrn_process_block(void);
 void mkrn_process_wakeup(mkrn_process_t *process);
 
 mkrn_process_t *mkrn_process_get_current(void);
+void mkrn_process_dump_sched(void);
+int mkrn_process_is_ready(pid_t pid);
+uint32_t mkrn_process_get_tags(pid_t pid);
+uint32_t mkrn_process_get_thread_esp(pid_t pid);
 uint32_t mkrn_process_get_pid(void);
 uint32_t mkrn_process_get_ppid(void);
 uint32_t mkrn_process_get_uid(void);
@@ -188,6 +192,10 @@ void mkrn_process_terminate(pid_t pid);
 int mkrn_setns(const char *path, const char *target, uint32_t flags);
 /* Internal helpers */
 mkrn_process_t *mkrn_process_find(pid_t pid);
+
+/* One-pass pid snapshot of all live processes (see process.c).
+ * Returns count copied; pids come out in registry (unsorted) order. */
+uint32_t mkrn_process_get_pids(uint32_t *pids, uint32_t max);
 int mkrn_process_enqueue_ready(mkrn_process_t *p);
 void mkrn_process_reparent_children(mkrn_process_t *parent);
 int mkrn_process_has_pending_signal(mkrn_process_t *p);

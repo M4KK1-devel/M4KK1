@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <kstrtox.h>
 #include <console.h>
 #include <vfs.h>
 #include <process.h>
@@ -113,11 +114,10 @@ static int procfs_getpid_from_path(const char *path)
         return -1;
     p += 9;
 
-    int pid = 0;
-    while (*p >= '0' && *p <= '9') {
-        pid = pid * 10 + (*p - '0');
-        p++;
-    }
+    unsigned int pid_val = 0;
+    if (mkrn_kstrtouint(p, 10, &pid_val) < 0)
+        pid_val = 0;
+    int pid = (int)pid_val;
     return pid;
 }
 
@@ -171,11 +171,10 @@ int mkrn_procfs_open(const char *path, int flags, int *out_fd)
         pf->file_type = FT_NS;
         /* Parse ns index from filename */
         if (name && *name >= '0' && *name <= '9') {
-            int idx = 0;
-            const char *np = name;
-            while (*np >= '0' && *np <= '9')
-                idx = idx * 10 + (*np++ - '0');
-            pf->ns_index = idx;
+            unsigned int idx_val = 0;
+            if (mkrn_kstrtouint(name, 10, &idx_val) < 0)
+                idx_val = 0;
+            pf->ns_index = (int)idx_val;
         }
     } else if (strcmp(name, "ctl") == 0) {
         pf->file_type = FT_CTL;
@@ -229,17 +228,24 @@ int mkrn_procfs_read(int fd, void *buf, uint32_t count)
     if (pf->file_type == -1) {
         char tmp[512];
         int len = 0;
-        for (int pid = 0; pid < 1024 && len < (int)count - 12; pid++) {
-            mkrn_process_t *proc = mkrn_process_find((pid_t)pid);
-            if (proc) {
-                char nbuf[16];
-                int ni = 0;
-                int n = pid;
-                if (n == 0) { nbuf[ni++] = '0'; }
-                else { char rev[16]; int ri = 0; while (n > 0) { rev[ri++] = '0' + (n % 10); n /= 10; } while (ri > 0) nbuf[ni++] = rev[--ri]; }
-                for (int j = 0; j < ni; j++) tmp[len++] = nbuf[j];
-                tmp[len++] = '\n';
-            }
+        /* One-pass pid snapshot — the old loop probed find() for every
+         * candidate pid 0..1023 (O(1024*n) registry walks per read). */
+        uint32_t pids[128];
+        uint32_t np = mkrn_process_get_pids(pids, 128);
+        for (uint32_t i = 1; i < np; i++) {   /* insertion sort: ascending */
+            uint32_t key = pids[i];
+            int j = (int)i - 1;
+            while (j >= 0 && pids[j] > key) { pids[j + 1] = pids[j]; j--; }
+            pids[j + 1] = key;
+        }
+        for (uint32_t i = 0; i < np && len < (int)count - 12; i++) {
+            char nbuf[16];
+            int ni = 0;
+            uint32_t n = pids[i];
+            if (n == 0) { nbuf[ni++] = '0'; }
+            else { char rev[16]; int ri = 0; while (n > 0) { rev[ri++] = '0' + (n % 10); n /= 10; } while (ri > 0) nbuf[ni++] = rev[--ri]; }
+            for (int j = 0; j < ni; j++) tmp[len++] = nbuf[j];
+            tmp[len++] = '\n';
         }
         if (len == 0) { tmp[len++] = '\n'; }
         mkrn_memcpy(buf, tmp, (uint32_t)len);
@@ -405,12 +411,10 @@ int mkrn_procfs_write(int fd, const void *buf, uint32_t count)
     }
 
     if (strncmp(line, "kill ", 5) == 0) {
-        int sig = 0;
-        const char *sp = line + 5;
-        while (*sp >= '0' && *sp <= '9') {
-            sig = sig * 10 + (*sp - '0');
-            sp++;
-        }
+        unsigned int sig_val = 0;
+        if (mkrn_kstrtouint(line + 5, 10, &sig_val) < 0)
+            sig_val = 0;
+        int sig = (int)sig_val;
         if (sig > 0)
             mkrn_kill((pid_t)pf->pid, sig);
         return (int)count;
@@ -494,11 +498,13 @@ int mkrn_procfs_write(int fd, const void *buf, uint32_t count)
 
     if (strncmp(line, "niceness ", 9) == 0) {
         int nice = 0;
-        const char *np = line + 9;
         int sign = 1;
+        const char *np = line + 9;
         if (*np == '-') { sign = -1; np++; }
-        while (*np >= '0' && *np <= '9')
-            nice = nice * 10 + (*np++ - '0');
+        unsigned int nice_val = 0;
+        if (mkrn_kstrtouint(np, 10, &nice_val) < 0)
+            nice_val = 0;
+        nice = sign * (int)nice_val;
         /* FIXME: implement actual niceness scheduling */
         (void)sign;
         (void)proc;
@@ -574,20 +580,27 @@ int mkrn_procfs_getdents(int fd, struct mkrn_vfs_dirent *buf, uint32_t max)
     uint32_t written = 0;
 
     if (pf->file_type == -1) {
-        /* Listing /sys/proc/ — return PID directories */
-        for (int pid = 0; pid < 1024 && written < max; pid++) {
-            mkrn_process_t *proc = mkrn_process_find((pid_t)pid);
-            if (proc) {
-                char nbuf[16];
-                int ni = 0;
-                int n = pid;
-                if (n == 0) { nbuf[ni++] = '0'; }
-                else { char rev[16]; int ri = 0; while (n > 0) { rev[ri++] = '0' + (n % 10); n /= 10; } while (ri > 0) nbuf[ni++] = rev[--ri]; }
-                nbuf[ni] = '\0';
-                mkrn_memcpy(buf[written].name, nbuf, (uint32_t)(ni + 1));
-                buf[written].type = 1;
-                written++;
-            }
+        /* Listing /sys/proc/ — return PID directories.
+         * One-pass pid snapshot (old loop probed find() per candidate
+         * pid 0..1023 = O(1024*n) registry walks per getdents). */
+        uint32_t pids[128];
+        uint32_t np = mkrn_process_get_pids(pids, 128);
+        for (uint32_t i = 1; i < np; i++) {   /* insertion sort: ascending */
+            uint32_t key = pids[i];
+            int j = (int)i - 1;
+            while (j >= 0 && pids[j] > key) { pids[j + 1] = pids[j]; j--; }
+            pids[j + 1] = key;
+        }
+        for (uint32_t i = 0; i < np && written < max; i++) {
+            char nbuf[16];
+            int ni = 0;
+            uint32_t n = pids[i];
+            if (n == 0) { nbuf[ni++] = '0'; }
+            else { char rev[16]; int ri = 0; while (n > 0) { rev[ri++] = '0' + (n % 10); n /= 10; } while (ri > 0) nbuf[ni++] = rev[--ri]; }
+            nbuf[ni] = '\0';
+            mkrn_memcpy(buf[written].name, nbuf, (uint32_t)(ni + 1));
+            buf[written].type = 1;
+            written++;
         }
         return (int)written;
     }
