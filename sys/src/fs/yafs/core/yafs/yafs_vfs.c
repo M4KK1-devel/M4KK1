@@ -327,9 +327,20 @@ create_link(uint64_t *pRoot, uint64_t u64ParentInode,
         (u64ParentInode << 16)
             | (u64Hash & 0xFFFF));
     bool bInserted;
-    return mkrn_yafs_btree_insert(pRoot, u64Key,
-                                  u64ChildInode,
-                                  &bInserted);
+    if (mkrn_yafs_btree_insert(pRoot, u64Key,
+                               u64ChildInode,
+                               &bInserted)
+        != 0)
+        return -1;
+    /* bInserted == false means the dir-entry key already exists —
+     * either a duplicate name or a 16-bit name-hash collision with a
+     * DIFFERENT sibling.  Either way the old entry would be silently
+     * overwritten (value replaced: the old file becomes unreachable
+     * = data loss).  Refuse instead.  The static FHS tree is
+     * collision-free (audited), so boot-time creation is unaffected. */
+    if (!bInserted)
+        return -1;
+    return 0;
 }
 
 struct parent_ctx {
@@ -481,8 +492,21 @@ mkrn_yafs_mkdir(uint64_t *pRoot,
         return -1;
     if (create_link(pRoot, u64ParentInode, pName,
                     u64InodeNr)
-        != 0)
+        != 0) {
+        /* Roll back the inode created by create_inode so a refused
+         * link (duplicate/collision) doesn't leak the block + orphan
+         * the inode key. */
+        bool bDeleted;
+        uint64_t u64Ik = mkrn_yafs_make_key(
+            YAFS_KS_INODE, u64InodeNr);
+        yafs_entry_t lba_val;
+        if (mkrn_yafs_btree_lookup(*pRoot, u64Ik,
+                                   &lba_val) == 0)
+            mkrn_yafs_dev_free_block(lba_val);
+        mkrn_yafs_btree_delete(pRoot, u64Ik,
+                               &bDeleted);
         return -1;
+    }
     *pNewInodeOut = u64InodeNr;
     return 0;
 }

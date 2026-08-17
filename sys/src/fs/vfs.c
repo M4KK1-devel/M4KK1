@@ -465,9 +465,12 @@ mkrn_vfs_create_file_yafs(const char *pPathname)
     if (mkrn_yafs_btree_insert(
             &root_yafs_tree, u64DirKey, u64Ino,
             &bInserted)
-        != 0) {
+        != 0 || !bInserted) {
         /* Roll back the inode-key insert so a failed dir-entry
-         * insert doesn't leak the allocated block + orphan key. */
+         * insert doesn't leak the allocated block + orphan key.
+         * !bInserted = name-hash collision with a different sibling
+         * — proceeding would silently overwrite that entry (data
+         * loss), so refuse like create_link does. */
         bool bDeleted;
         mkrn_yafs_btree_delete(
             &root_yafs_tree, u64InodeKey, &bDeleted);
@@ -1040,6 +1043,13 @@ mkrn_vfs_getdents(int fd, struct mkrn_vfs_dirent *pBuf,
         return mkrn_devfs_getdents(fd, pBuf, count);
 
     if (root_yafs_tree != 0) {
+        /* A pipe fd has file == root-sentinel AND yafs_inode == 0 —
+         * without this guard getdents on it would silently list the
+         * filesystem root (offset happens to hold the pipe index,
+         * not a directory context at all). */
+        if (fd_table[fd].file == &file_table[0]
+            && fd_table[fd].yafs_inode == 0)
+            return -1;
         uint64_t u64DirInode = fd_table[fd].yafs_inode;
         if (u64DirInode == 0)
             u64DirInode = 1;

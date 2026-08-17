@@ -215,7 +215,8 @@ btree_insert_node(uint64_t u64NodeLba, uint64_t u64Key,
             &bExact);
 
         uint64_t u64ChildLba =
-            pInternal->children[pos];
+            pInternal->children[bExact
+                ? (uint32_t)pos + 1 : (uint32_t)pos];
         uint64_t u64ChildSplitKey = 0;
         uint64_t u64ChildSplitLba = 0;
         bool bChildInserted = false;
@@ -227,13 +228,32 @@ btree_insert_node(uint64_t u64NodeLba, uint64_t u64Key,
         if (u64NewChildLba == 0)
             return 0;
 
-        pInternal->children[pos] = u64NewChildLba;
+        /* Propagate the child's inserted flag even when the child
+         * did NOT split — the old code only wrote *pInserted inside
+         * the split branch, so a successful insert that descended an
+         * internal node without splitting reported bInserted=false
+         * at the top level.  With callers now honoring bInserted
+         * (collision guard) that misreported every such create. */
+        if (pInserted)
+            *pInserted = bChildInserted;
+
+        /* The slot we descended into (ci, matching the descent
+         * computation above) is the one that must be re-pointed at
+         * the updated child, and the promoted separator belongs at
+         * key index ci — keys[ci] separates children[ci] (old, now
+         * updated) from children[ci+1] (the split's right half).
+         * Using `pos` here corrupted the left sibling's slot
+         * whenever the descent took the exact-match right branch. */
+        uint32_t ci = bExact
+            ? (uint32_t)pos + 1 : (uint32_t)pos;
+
+        pInternal->children[ci] = u64NewChildLba;
 
         if (u64ChildSplitLba != 0) {
             internal_insert_at(
                 pInternal,
                 new_node.header.entry_count,
-                (uint32_t)pos + 1,
+                ci,
                 u64ChildSplitKey, u64ChildSplitLba);
             new_node.header.entry_count++;
             if (pInserted && bChildInserted)
@@ -309,7 +329,17 @@ mkrn_yafs_btree_lookup(uint64_t u64RootLba,
     if (u64RootLba == 0)
         return -1;
 
+    uint64_t seen[64];
+    int nseen = 0;
     while (1) {
+        int dup = -1;
+        for (int si = 0; si < nseen; si++) {
+            if (seen[si] == u64Current) { dup = si; break; }
+        }
+        if (dup >= 0 || nseen >= 64) {
+            return -1;
+        }
+        seen[nseen++] = u64Current;
         if (mkrn_yafs_node_read(u64Current, &node) != 0)
             return -1;
         if (node.header.flags & YAFS_NODE_LEAF)
@@ -319,8 +349,14 @@ mkrn_yafs_btree_lookup(uint64_t u64RootLba,
         int pos = key_search(
             node.payload.internal.keys,
             node.header.entry_count, u64Key, &bExact);
+        /* Descent must match insert/delete/find_leaf: an exact hit
+         * on a separator belongs to the RIGHT subtree (children[pos+1])
+         * — separators are promoted first-keys of the right node, so
+         * the key itself lives there.  children[pos] on exact matches
+         * descended into the left subtree and missed real keys. */
         u64Current =
-            node.payload.internal.children[pos];
+            node.payload.internal.children[
+                bExact ? (uint32_t)pos + 1 : (uint32_t)pos];
     }
 
     bool bExact = false;
@@ -415,9 +451,10 @@ mkrn_yafs_btree_delete(uint64_t *pRootLba,
             *pDeleted = false;
         return -1;
     }
-
-    yafs_node_t new_root;
-    mkrn_yafs_node_clone(&root_node, &new_root);
+    /* (A dead node_clone used to live here: new_root was written and
+     * never read — 4 KB of stack churn per delete.  The path walk
+     * below re-reads nodes itself; root_node is only used for the
+     * header check at the end.  Removed.) */
 
 #define YAFS_BTREE_MAX_DEPTH 32
 
@@ -446,9 +483,10 @@ mkrn_yafs_btree_delete(uint64_t *pRootLba,
         int pos = key_search(
             n.payload.internal.keys,
             n.header.entry_count, u64Key, &bExact);
-        path[depth].child_idx = pos;
+        int ci = bExact ? pos + 1 : pos;
+        path[depth].child_idx = ci;
         u64Current =
-            n.payload.internal.children[pos];
+            n.payload.internal.children[ci];
         depth++;
 
         if (depth >= YAFS_BTREE_MAX_DEPTH) {
@@ -616,6 +654,7 @@ mkrn_yafs_btree_find_leaf(uint64_t u64RootLba,
             node.payload.internal.keys,
             node.header.entry_count, u64Key, &bExact);
         u64Current =
-            node.payload.internal.children[pos];
+            node.payload.internal.children[bExact
+                ? (uint32_t)pos + 1 : (uint32_t)pos];
     }
 }
