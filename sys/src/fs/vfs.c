@@ -226,14 +226,14 @@ mkrn_vfs_pipe(int fd[2])
     fd_table[rfd].fd = rfd;
     fd_table[rfd].file = &file_table[0];
     fd_table[rfd].offset = (uint32_t)pi;
-    fd_table[rfd].flags = 0;
+    fd_table[rfd].flags = M4K_O_RDONLY;
     fd_table[rfd].in_use = true;
     fd_table[rfd].yafs_inode = 0;
 
     fd_table[wfd].fd = wfd;
     fd_table[wfd].file = &file_table[0];
     fd_table[wfd].offset = (uint32_t)pi;
-    fd_table[wfd].flags = 0;
+    fd_table[wfd].flags = M4K_O_WRONLY;
     fd_table[wfd].in_use = true;
     fd_table[wfd].yafs_inode = 0;
     return 0;
@@ -253,6 +253,10 @@ mkrn_vfs_dup2(int oldfd, int newfd)
         return -1;
     if (!fd_table[oldfd].in_use)
         return -1;
+    /* POSIX: dup2(fd, fd) is a no-op that returns fd — closing
+     * newfd first would destroy the shared entry. */
+    if (oldfd == newfd)
+        return newfd;
     if (fd_table[newfd].in_use)
         mkrn_vfs_close(newfd);
     fd_table[newfd] = fd_table[oldfd];
@@ -450,8 +454,10 @@ mkrn_vfs_create_file_yafs(const char *pPathname)
     if (mkrn_yafs_btree_insert(
             &root_yafs_tree, u64InodeKey, u64Lba,
             &bInserted)
-        != 0)
+        != 0) {
+        mkrn_yafs_dev_free_block(u64Lba);
         return -1;
+    }
     uint64_t u64Hash = mkrn_yafs_name_hash(pName);
     uint64_t u64DirKey = mkrn_yafs_make_key(
         YAFS_KS_DIR_ENTRY,
@@ -459,8 +465,15 @@ mkrn_vfs_create_file_yafs(const char *pPathname)
     if (mkrn_yafs_btree_insert(
             &root_yafs_tree, u64DirKey, u64Ino,
             &bInserted)
-        != 0)
+        != 0) {
+        /* Roll back the inode-key insert so a failed dir-entry
+         * insert doesn't leak the allocated block + orphan key. */
+        bool bDeleted;
+        mkrn_yafs_btree_delete(
+            &root_yafs_tree, u64InodeKey, &bDeleted);
+        mkrn_yafs_dev_free_block(u64Lba);
         return -1;
+    }
     return 0;
 }
 
@@ -476,11 +489,16 @@ mkrn_vfs_open(const char *pPathname, int flags)
     if (!pPathname || !bVfsInitialized)
         return -1;
 
-    /* Basic permission check: non-root cannot access /sys or /boot */
+    /* Basic permission check: non-root cannot access /sys or /boot
+     * (exact component match — a bare prefix compare would also
+     * reject unrelated names like "/syshello" or "/bootcamp"). */
     mkrn_process_t *pCur = mkrn_process_get_current();
     if (pCur && pCur->euid != M4K_UID_ROOT) {
-        if ((pPathname[0] == '/' && strncmp(pPathname, "/sys", 4) == 0) ||
-            (pPathname[0] == '/' && strncmp(pPathname, "/boot", 5) == 0)) {
+        if (pPathname[0] == '/'
+            && (mkrn_strcmp(pPathname, "/sys") == 0
+                || mkrn_strncmp(pPathname, "/sys/", 5) == 0
+                || mkrn_strcmp(pPathname, "/boot") == 0
+                || mkrn_strncmp(pPathname, "/boot/", 6) == 0)) {
             return -1;
         }
     }
@@ -505,6 +523,16 @@ mkrn_vfs_open(const char *pPathname, int flags)
     if (pPathname[0] == '/' && strncmp(pPathname, "/device", 7) == 0) {
         int fd;
         if (mkrn_device_tree_open(pPathname, flags, &fd) == 0)
+            return fd;
+        return -1;
+    }
+
+    /* Route /dev and /dev/... to DevFS (block device nodes) */
+    if (pPathname[0] == '/'
+        && (strncmp(pPathname, "/dev/", 5) == 0
+            || mkrn_strcmp(pPathname, "/dev") == 0)) {
+        int fd;
+        if (mkrn_devfs_open(pPathname, flags, &fd) == 0)
             return fd;
         return -1;
     }
@@ -599,6 +627,10 @@ mkrn_vfs_read(int fd, void *pBuf, size_t count)
     if (mkrn_device_tree_is_dt_fd(fd))
         return mkrn_device_tree_read(fd, pBuf, (uint32_t)count);
 
+    /* Route DevFS reads */
+    if (mkrn_devfs_is_devfs_fd(fd))
+        return mkrn_devfs_read(fd, pBuf, (uint32_t)count);
+
     if (fd_table[fd].file == &file_table[0]
         && fd_table[fd].yafs_inode == 0)
     {
@@ -611,11 +643,19 @@ mkrn_vfs_read(int fd, void *pBuf, size_t count)
             return -1;
         uint32_t u32Total = 0;
         while (u32Total < count && pPb->bytes > 0) {
-            ((uint8_t *)pBuf)[u32Total++] =
-                pPb->data[pPb->read_pos];
+            /* Copy in contiguous segments instead of per-byte so a
+             * 4 KB pipe read is 1–2 memcpys, not 4096 byte moves. */
+            uint32_t u32Seg = PIPE_BUF_SIZE - pPb->read_pos;
+            if (u32Seg > pPb->bytes)
+                u32Seg = pPb->bytes;
+            if (u32Seg > count - u32Total)
+                u32Seg = count - u32Total;
+            mkrn_memcpy((uint8_t *)pBuf + u32Total,
+                   pPb->data + pPb->read_pos, u32Seg);
             pPb->read_pos =
-                (pPb->read_pos + 1) % PIPE_BUF_SIZE;
-            pPb->bytes--;
+                (pPb->read_pos + u32Seg) % PIPE_BUF_SIZE;
+            pPb->bytes -= u32Seg;
+            u32Total += u32Seg;
         }
         return (int)u32Total;
     }
@@ -674,6 +714,10 @@ mkrn_vfs_write(int fd, const void *pBuf, size_t count)
     if (mkrn_device_tree_is_dt_fd(fd))
         return mkrn_device_tree_write(fd, pBuf, (uint32_t)count);
 
+    /* Route DevFS writes */
+    if (mkrn_devfs_is_devfs_fd(fd))
+        return mkrn_devfs_write(fd, pBuf, (uint32_t)count);
+
     if (fd_table[fd].file == &file_table[0]
         && fd_table[fd].yafs_inode == 0)
     {
@@ -688,11 +732,19 @@ mkrn_vfs_write(int fd, const void *pBuf, size_t count)
         while (u32Total < count
                && pPb->bytes < PIPE_BUF_SIZE)
         {
-            pPb->data[pPb->write_pos] =
-                ((const uint8_t *)pBuf)[u32Total++];
+            /* Contiguous free run: to buffer end, or up to read_pos
+             * when the tail wraps — 1–2 memcpys per write. */
+            uint32_t u32Seg = PIPE_BUF_SIZE - pPb->write_pos;
+            if (u32Seg > PIPE_BUF_SIZE - pPb->bytes)
+                u32Seg = PIPE_BUF_SIZE - pPb->bytes;
+            if (u32Seg > count - u32Total)
+                u32Seg = count - u32Total;
+            mkrn_memcpy(pPb->data + pPb->write_pos,
+                   (const uint8_t *)pBuf + u32Total, u32Seg);
             pPb->write_pos =
-                (pPb->write_pos + 1) % PIPE_BUF_SIZE;
-            pPb->bytes++;
+                (pPb->write_pos + u32Seg) % PIPE_BUF_SIZE;
+            pPb->bytes += u32Seg;
+            u32Total += u32Seg;
         }
         return (int)u32Total;
     }
@@ -733,6 +785,10 @@ mkrn_vfs_write(int fd, const void *pBuf, size_t count)
         }
         pFile->data = pNewData;
         pFile->capacity = u32NewCap;
+        /* Zero the extension gap so a seek past EOF does not leak
+         * stale kernel-heap bytes into the file on read back. */
+        mkrn_memset(pFile->data + pFile->size, 0,
+                    pFile->capacity - pFile->size);
     }
     mkrn_memcpy(pFile->data + pFdp->offset, pBuf, count);
     pFdp->offset += (uint32_t)count;
@@ -751,14 +807,49 @@ mkrn_vfs_close(int fd)
 {
     if (fd < 0 || fd >= M4K_VFS_MAX_FDS || !bVfsInitialized)
         return -1;
+
+    /* Route special filesystem closes (fds not in fd_table) */
+    if (mkrn_procfs_is_procfs_fd(fd))
+        return mkrn_procfs_close(fd);
+    if (mkrn_sessions_is_sessions_fd(fd))
+        return mkrn_sessions_close(fd);
+    if (mkrn_device_tree_is_dt_fd(fd))
+        return mkrn_device_tree_close(fd);
+    if (mkrn_devfs_is_devfs_fd(fd))
+        return mkrn_devfs_close(fd);
+
     if (!fd_table[fd].in_use)
         return -1;
-    if (mkrn_procfs_is_procfs_fd(fd))
-        mkrn_procfs_close(fd);
-    if (mkrn_sessions_is_sessions_fd(fd))
-        mkrn_sessions_close(fd);
-    if (mkrn_device_tree_is_dt_fd(fd))
-        mkrn_device_tree_close(fd);
+
+    /* Pipe teardown: fd_table entries with file == &file_table[0] and
+     * yafs_inode == 0 encode the pipe index in `offset` (see
+     * mkrn_vfs_pipe).  Mark the closed end and release the slot once
+     * BOTH ends are closed — previously nothing ever set these flags,
+     * so every pipe leaked its slot forever (MAX_PIPES exhaustion). */
+    if (fd_table[fd].file == &file_table[0]
+        && fd_table[fd].yafs_inode == 0)
+    {
+        int pi = (int)fd_table[fd].offset;
+        if (pi >= 0 && pi < MAX_PIPES
+            && pipe_buffers[pi].in_use)
+        {
+            pipe_buffer_t *pPb = &pipe_buffers[pi];
+            bool bIsWriteEnd =
+                (fd_table[fd].flags & M4K_O_WRONLY) != 0;
+            bool bIsReadEnd =
+                (fd_table[fd].flags & M4K_O_RDONLY) != 0;
+            if (!bIsWriteEnd && !bIsReadEnd)
+                bIsReadEnd = true; /* RDWR/O_RDWR default: read end */
+            if (bIsWriteEnd)
+                pPb->write_closed = true;
+            else
+                pPb->read_closed = true;
+            if (pPb->read_closed && pPb->write_closed) {
+                mkrn_memset(pPb, 0, sizeof(pipe_buffer_t));
+            }
+        }
+    }
+
     mkrn_memset(&fd_table[fd], 0, sizeof(mkrn_file_desc_t));
     return 0;
 }
@@ -770,14 +861,56 @@ mkrn_vfs_close(int fd)
  * @param whence  M4K_SEEK_SET, M4K_SEEK_CUR, M4K_SEEK_END
  * @return new offset, or -1 on error.
  */
+static int read_inode_raw(uint64_t inode_nr, struct yafs_inode_value *iv_out);
+
 int
 mkrn_vfs_lseek(int fd, int offset, int whence)
 {
     if (fd < 0 || fd >= M4K_VFS_MAX_FDS || !bVfsInitialized)
         return -1;
+
+    /* Route DevFS seeks (fds not in fd_table) */
+    if (mkrn_devfs_is_devfs_fd(fd))
+        return mkrn_devfs_lseek(fd, offset, whence);
+
     mkrn_file_desc_t *pFdp = &fd_table[fd];
     if (!pFdp->in_use || !pFdp->file)
         return -1;
+
+    /* Pipe fds encode the pipe index in `offset` — seeking would
+     * corrupt that encoding and redirect later reads/writes to the
+     * wrong pipe.  Reject (ESPIPE-style). */
+    if (pFdp->file == &file_table[0] && pFdp->yafs_inode == 0)
+        return -1;
+
+    /* YAFS fds: file_table[0] is the ramfs root sentinel whose size is
+     * 0, so the generic clamp below forced every seek back to 0.
+     * Compute against the inode's real size instead. */
+    if (pFdp->yafs_inode != 0 && root_yafs_tree != 0) {
+        struct yafs_inode_value iv;
+        int64_t base;
+        switch (whence) {
+        case M4K_SEEK_SET:
+            base = 0;
+            break;
+        case M4K_SEEK_CUR:
+            base = (int64_t)pFdp->offset;
+            break;
+        case M4K_SEEK_END:
+            if (read_inode_raw(pFdp->yafs_inode, &iv) != 0)
+                return -1;
+            base = (int64_t)iv.size;
+            break;
+        default:
+            return -1;
+        }
+        int64_t new_off = base + offset;
+        if (new_off < 0)
+            new_off = 0;
+        pFdp->offset = (uint32_t)new_off;
+        return (int)pFdp->offset;
+    }
+
     int new_offset;
     switch (whence) {
     case M4K_SEEK_SET:
@@ -901,6 +1034,10 @@ mkrn_vfs_getdents(int fd, struct mkrn_vfs_dirent *pBuf,
     /* Route device tree getdents */
     if (mkrn_device_tree_is_dt_fd(fd))
         return mkrn_device_tree_getdents(fd, pBuf, count);
+
+    /* Route DevFS getdents */
+    if (mkrn_devfs_is_devfs_fd(fd))
+        return mkrn_devfs_getdents(fd, pBuf, count);
 
     if (root_yafs_tree != 0) {
         uint64_t u64DirInode = fd_table[fd].yafs_inode;

@@ -539,9 +539,16 @@ void mkrn_vesa_draw_rect(int x, int y, int w, int h, uint32_t color, int fill)
         if (x >= x2 || y >= y2)
             return;
         for (int row = y; row < y2; row++) {
-            uint32_t *prow = back_buffer + (uint32_t)row * fb_info.width;
-            for (int col = x; col < x2; col++)
-                prow[col] = color;
+            uint32_t *prow =
+                back_buffer + (uint32_t)row * fb_info.width
+                + (uint32_t)x;
+            uint32_t cnt = (uint32_t)(x2 - x);
+            /* rep stosl — the same win flip_rect/gfx_blit already get
+             * from rep movsl; store-fill skips the load of every pixel. */
+            __asm__ volatile("cld; rep stosl"
+                : "+c"(cnt), "+D"(prow)
+                : "a"(color)
+                : "memory");
         }
     } else {
         mkrn_vesa_draw_line(x, y, x + w - 1, y, color);
@@ -558,14 +565,27 @@ void mkrn_vesa_put_char(int x, int y, char c, uint32_t fg, uint32_t bg)
         return;
 
     const unsigned char *glyph = font_8x16 + idx * FONT_8X16_HEIGHT;
-    for (int row = 0; row < FONT_8X16_HEIGHT && (y + row) < (int)fb_info.height; row++) {
-        unsigned char bits = glyph[row];
-        for (int col = 0; col < FONT_8X16_WIDTH && (x + col) < (int)fb_info.width; col++) {
-            int px = x + col;
-            int py = y + row;
-            if (px >= 0 && py >= 0)
-                mkrn_vesa_put_pixel(px, py, (bits & (0x80 >> col)) ? fg : bg);
-        }
+    /* Clip once per glyph instead of bounds-checking every pixel via
+     * put_pixel — text rendering is the hottest per-pixel path after
+     * rect fill.  Write through row pointers like draw_rect does. */
+    int x0 = x > 0 ? x : 0;
+    int x_end = x + FONT_8X16_WIDTH;
+    if (x_end > (int)fb_info.width)
+        x_end = (int)fb_info.width;
+    int y0 = y > 0 ? y : 0;
+    int y_end = y + FONT_8X16_HEIGHT;
+    if (y_end > (int)fb_info.height)
+        y_end = (int)fb_info.height;
+    if (x0 >= x_end || y0 >= y_end)
+        return;
+
+    for (int row = y0; row < y_end; row++) {
+        unsigned char bits = glyph[row - y];
+        uint32_t *prow =
+            back_buffer + (uint32_t)row * fb_info.width;
+        for (int col = x0; col < x_end; col++)
+            prow[col] =
+                (bits & (0x80 >> (col - x))) ? fg : bg;
     }
 }
 

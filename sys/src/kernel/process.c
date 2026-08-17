@@ -918,6 +918,13 @@ void mkrn_process_terminate(pid_t pid)
     target->state_tags |= M4K_TERMINATE;
     if (!(target->state_tags & M4K_STATE_SCHED_MASK))
         target->state_tags |= M4K_SCHED_READY;
+    /* A SLEEPING or STOPPED target is not in the ready queue — merely
+     * setting M4K_SCHED_READY would never get it dispatched, so the
+     * M4K_TERMINATE mark would sit forever and waitpid would hang.
+     * Re-enqueue so the scheduler's reap path sees it (queue-full is
+     * tolerable: a queued target gets reaped on its next dequeue). */
+    if (!mkrn_process_is_ready(target->pid))
+        ready_enqueue(target);
 }
 
 /* ── 4P1 kill ── */
