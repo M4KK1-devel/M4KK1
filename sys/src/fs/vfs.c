@@ -435,7 +435,9 @@ mkrn_vfs_create_file_yafs(const char *pPathname)
     uint64_t u64Lba = mkrn_yafs_dev_alloc_block();
     if (u64Lba == 0)
         return -1;
-    uint8_t iv_buf[4096];
+    /* Static scratch (see read_inode_raw): same non-reentrancy
+     * argument, one shared 4 KB BSS buffer for raw inode blocks. */
+    static uint8_t iv_buf[4096];
     mkrn_memset(iv_buf, 0, sizeof(iv_buf));
     struct yafs_inode_value *pIv =
         (struct yafs_inode_value *)iv_buf;
@@ -1068,7 +1070,10 @@ static int read_inode_raw(uint64_t inode_nr, struct yafs_inode_value *iv_out)
     yafs_entry_t lba_val;
     if (mkrn_yafs_btree_lookup(root_yafs_tree, key, &lba_val) != 0)
         return -1;
-    uint8_t buf[4096];
+    /* Static instead of stack: a 4 KB frame on every inode access
+     * puts needless depth on the (finite) kernel stack.  The YAFS
+     * data path is non-reentrant (syscall context only). */
+    static uint8_t buf[4096];
     if (mkrn_yafs_dev_read(lba_val, buf) != 0)
         return -1;
     mkrn_memcpy(iv_out, buf, sizeof(struct yafs_inode_value));
@@ -1081,7 +1086,7 @@ static int write_inode_raw(uint64_t inode_nr, const struct yafs_inode_value *iv)
     yafs_entry_t lba_val;
     if (mkrn_yafs_btree_lookup(root_yafs_tree, key, &lba_val) != 0)
         return -1;
-    uint8_t buf[4096];
+    static uint8_t buf[4096];
     mkrn_memset(buf, 0, sizeof(buf));
     mkrn_memcpy(buf, iv, sizeof(struct yafs_inode_value));
     return mkrn_yafs_dev_write(lba_val, buf);

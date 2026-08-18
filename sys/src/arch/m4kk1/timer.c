@@ -43,6 +43,10 @@ static void (*pfnTimerCallback)(void) = NULL;
 static mkrn_timer_alarm_t alarms[MAX_ALARMS];
 static uint32_t u32NextAlarmId = 1;
 static uint32_t u32ActiveAlarms = 0;
+/* High-water mark of the alarm table: lets the IRQ hot path skip
+ * the 256-slot scan entirely while no alarm has ever been armed.
+ * Shrinks only when the last alarm slot above it is destroyed. */
+static uint32_t u32AlarmHwm = 0;
 
 static uint32_t u32CpuFrequencyMhz = 0;
 
@@ -254,21 +258,29 @@ mkrn_timer_handler(uint32_t *frame)
     u64TimerNanoseconds +=
         (1000000000ULL / u32TimerFrequency);
 
-    for (uint32_t i = 0; i < MAX_ALARMS; i++) {
-        if (alarms[i].active
-            && alarms[i].callback)
-        {
-            alarms[i].remaining_ms--;
+    /* Hot path: with no alarms armed (the common case) this tick
+     * handler reduces to two counter updates. */
+    if (u32ActiveAlarms > 0) {
+        for (uint32_t i = 0; i < u32AlarmHwm; i++) {
+            if (alarms[i].active
+                && alarms[i].callback)
+            {
+                alarms[i].remaining_ms--;
 
-            if (alarms[i].remaining_ms == 0) {
-                alarms[i].callback();
+                if (alarms[i].remaining_ms == 0) {
+                    alarms[i].callback();
 
-                if (alarms[i].interval_ms > 0)
-                    alarms[i].remaining_ms =
-                        alarms[i].interval_ms;
-                else {
-                    alarms[i].active = 0;
-                    u32ActiveAlarms--;
+                    if (alarms[i].interval_ms > 0)
+                        alarms[i].remaining_ms =
+                            alarms[i].interval_ms;
+                    else {
+                        alarms[i].active = 0;
+                        u32ActiveAlarms--;
+                        while (u32AlarmHwm > 0
+                               && !alarms[
+                                     u32AlarmHwm - 1].active)
+                            u32AlarmHwm--;
+                    }
                 }
             }
         }
@@ -407,6 +419,8 @@ mkrn_timer_create_alarm(
             alarms[i].active = 1;
             alarms[i].callback = pCallback;
             u32ActiveAlarms++;
+            if (i + 1 > u32AlarmHwm)
+                u32AlarmHwm = i + 1;
 
             M4K_LOG_INFO("Alarm created: ID=");
             mkrn_console_write_dec(
@@ -440,6 +454,11 @@ mkrn_timer_destroy_alarm(uint32_t u32AlarmId)
             alarms[i].active = 0;
             alarms[i].callback = NULL;
             u32ActiveAlarms--;
+            /* Shrink the scan window when the top slots go idle so
+             * the tick handler doesn't keep walking dead entries. */
+            while (u32AlarmHwm > 0
+                   && !alarms[u32AlarmHwm - 1].active)
+                u32AlarmHwm--;
 
             M4K_LOG_INFO(
                 "Alarm destroyed: ID=");

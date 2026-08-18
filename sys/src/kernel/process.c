@@ -30,33 +30,55 @@ static void mkrn_process_reap(mkrn_process_t *p);
 
 #define READY_QUEUE_SIZE 64
 static mkrn_process_t *ready_queue[READY_QUEUE_SIZE];
+static uint32_t ready_queue_head = 0;   /* next dequeue slot */
 static uint32_t ready_queue_count = 0;
 
-static void ready_enqueue(mkrn_process_t *p)
+/* Ring buffer: enqueue/dequeue are O(1).  The old array-shift dequeue
+ * moved up to READY_QUEUE_SIZE-1 pointers on EVERY context switch. */
+static int ready_enqueue(mkrn_process_t *p)
 {
-    if (ready_queue_count >= READY_QUEUE_SIZE)
-        return;
-    ready_queue[ready_queue_count++] = p;
+    if (!p)
+        return -1;
+    if (ready_queue_count >= READY_QUEUE_SIZE) {
+        /* Dropping the entry here is a lost wakeup: the task would
+         * sleep forever with nobody left to requeue it.  Refuse and
+         * let the caller (fork) back out cleanly. */
+        M4K_LOG_ERROR("ready queue full, enqueue refused");
+        return -1;
+    }
+    ready_queue[(ready_queue_head + ready_queue_count)
+                % READY_QUEUE_SIZE] = p;
+    ready_queue_count++;
+    return 0;
 }
 
 static mkrn_process_t *ready_dequeue(void)
 {
     if (ready_queue_count == 0)
         return NULL;
-    mkrn_process_t *p = ready_queue[0];
+    mkrn_process_t *p = ready_queue[ready_queue_head];
+    ready_queue_head =
+        (ready_queue_head + 1) % READY_QUEUE_SIZE;
     ready_queue_count--;
-    for (uint32_t i = 0; i < ready_queue_count; i++)
-        ready_queue[i] = ready_queue[i + 1];
     return p;
 }
 
 static void ready_remove(mkrn_process_t *p)
 {
     for (uint32_t i = 0; i < ready_queue_count; i++) {
-        if (ready_queue[i] == p) {
+        uint32_t slot =
+            (ready_queue_head + i) % READY_QUEUE_SIZE;
+        if (ready_queue[slot] == p) {
+            /* Close the hole by shifting the tail forward; removal
+             * is rare (exit/kill) next to the O(1) hot path. */
+            for (uint32_t j = i; j + 1 < ready_queue_count; j++) {
+                uint32_t a = (ready_queue_head + j)
+                             % READY_QUEUE_SIZE;
+                uint32_t b = (ready_queue_head + j + 1)
+                             % READY_QUEUE_SIZE;
+                ready_queue[a] = ready_queue[b];
+            }
             ready_queue_count--;
-            for (uint32_t j = i; j < ready_queue_count; j++)
-                ready_queue[j] = ready_queue[j + 1];
             return;
         }
     }
@@ -122,20 +144,27 @@ void mkrn_process_dump_sched(void)
     }
     mkrn_console_write(" q=[");
     for (uint32_t i = 0; i < ready_queue_count; i++) {
+        mkrn_process_t *qp =
+            ready_queue[(ready_queue_head + i)
+                        % READY_QUEUE_SIZE];
         if (i > 0)
             mkrn_console_write(",");
-        mkrn_console_write_dec(ready_queue[i]->pid);
+        mkrn_console_write_dec(qp->pid);
         mkrn_console_write(":");
-        mkrn_console_write_hex((uint32_t)ready_queue[i]->state_tags);
+        mkrn_console_write_hex((uint32_t)qp->state_tags);
     }
     mkrn_console_write("]\n");
 }
 
 int mkrn_process_is_ready(pid_t pid)
 {
-    for (uint32_t i = 0; i < ready_queue_count; i++)
-        if (ready_queue[i]->pid == (uint32_t)pid)
+    for (uint32_t i = 0; i < ready_queue_count; i++) {
+        mkrn_process_t *qp =
+            ready_queue[(ready_queue_head + i)
+                        % READY_QUEUE_SIZE];
+        if (qp->pid == (uint32_t)pid)
             return 1;
+    }
     return 0;
 }
 
@@ -333,10 +362,7 @@ uint32_t mkrn_process_get_count(void)
 
 int mkrn_process_enqueue_ready(mkrn_process_t *p)
 {
-    if (!p)
-        return -1;
-    ready_enqueue(p);
-    return 0;
+    return ready_enqueue(p);
 }
 
 void mkrn_sched_start(void)
@@ -630,6 +656,7 @@ void mkrn_process_init(void)
 
     mkrn_memset(&process_ctrl, 0, sizeof(process_ctrl));
     process_ctrl.next_pid = 1;
+    ready_queue_head = 0;
     ready_queue_count = 0;
     all_procs = NULL;
     all_procs_count = 0;

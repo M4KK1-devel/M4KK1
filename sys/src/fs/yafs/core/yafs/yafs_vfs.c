@@ -23,6 +23,12 @@ int mkrn_yafs_dev_write(uint64_t u64Lba,
 uint64_t mkrn_yafs_dev_alloc_block(void);
 void mkrn_yafs_dev_free_block(uint64_t u64Lba);
 
+/* Shared 4 KB scratch for raw inode block access.  The YAFS path is
+ * non-reentrant (process context only); keeping this in BSS instead
+ * of a 4 KB stack frame keeps kernel-stack depth flat on every
+ * inode read/write. */
+static uint8_t g_inode_scratch[4096];
+
 static const char *
 strrchr_y(const char *pS, int c)
 {
@@ -582,7 +588,7 @@ mkrn_yafs_rename(uint64_t *pRoot,
                                &inode_lba_val)
         == 0)
     {
-        uint8_t iv_buf[4096];
+        uint8_t *iv_buf = g_inode_scratch;
         if (mkrn_yafs_dev_read(inode_lba_val, iv_buf)
             == 0)
         {
@@ -737,17 +743,27 @@ mkrn_yafs_read_file_data(struct yafs_mount *pM,
              bi < u32ExtentLen && u32Remaining > 0;
              bi++)
         {
-            if (mkrn_yafs_dev_read(u64Lba + bi,
-                                   block_buf)
-                != 0)
-                return -1;
-
             uint32_t u32Copy =
                 u32BlockSize - u32BlockOff;
             if (u32Copy > u32Remaining)
                 u32Copy = u32Remaining;
-            mkrn_memcpy(pOut, block_buf + u32BlockOff,
-                   u32Copy);
+
+            if (u32Copy == u32BlockSize) {
+                /* Aligned full block: dev_read copies straight into
+                 * the caller's buffer — no block_buf round trip. */
+                if (mkrn_yafs_dev_read(u64Lba + bi,
+                                       pOut)
+                    != 0)
+                    return -1;
+            } else {
+                if (mkrn_yafs_dev_read(u64Lba + bi,
+                                       block_buf)
+                    != 0)
+                    return -1;
+                mkrn_memcpy(pOut,
+                       block_buf + u32BlockOff,
+                       u32Copy);
+            }
             pOut += u32Copy;
             u32Remaining -= u32Copy;
             *pRead += u32Copy;
@@ -824,6 +840,22 @@ mkrn_yafs_write_file_data(struct yafs_mount *pM,
             u32BlockSize - u32BlockOff;
         if (u32Copy > u32Remaining)
             u32Copy = u32Remaining;
+
+        if (bFound && u32BlockOff == 0
+            && u32Copy == u32BlockSize)
+        {
+            /* Full aligned overwrite: write the caller's buffer
+             * directly — skip the RMW read and block_buf copy. */
+            if (mkrn_yafs_dev_write(u64Lba, pIn) != 0)
+                return -1;
+            pIn += u32Copy;
+            u32Remaining -= u32Copy;
+            *pWritten += u32Copy;
+            u32BlockOff = 0;
+            u64BlockIdx++;
+            continue;
+        }
+
         mkrn_memcpy(block_buf + u32BlockOff, pIn, u32Copy);
 
         if (mkrn_yafs_dev_write(u64Lba, block_buf)
@@ -865,7 +897,7 @@ mkrn_yafs_write_file_data(struct yafs_mount *pM,
             &inode_lba_val)
         == 0)
     {
-        uint8_t iv_buf[4096];
+        uint8_t *iv_buf = g_inode_scratch;
         if (mkrn_yafs_dev_read(inode_lba_val, iv_buf)
             == 0)
         {
