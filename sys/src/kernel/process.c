@@ -576,8 +576,36 @@ void mkrn_process_exit(int status)
         );
     }
 
-    while (1) {
+    /* No ready task right now.  Do NOT just hlt forever: a timer or
+     * device ISR can wake a sleeping process (ready_enqueue from the
+     * interrupt handler) after we parked, and without a running task
+     * nobody would ever dispatch it — the system would freeze with
+     * runnable work pending.  Park with interrupts enabled and
+     * re-probe the queue after every wake-up. */
+    for (;;) {
         asm volatile("hlt");
+
+        mkrn_process_t *next = mkrn_process_dequeue_live();
+        if (!next)
+            continue;
+
+        current = next;
+        next->state_tags &= ~(M4K_SCHED_READY | M4K_SCHED_SLEEPING);
+        next->state_tags |= M4K_SCHED_RUNNING;
+
+        mkrn_set_kernel_stack(next->kernel_stack);
+
+        asm volatile(
+            "movl %0, %%esp\n"
+            "popl %%ebx\n"
+            "popl %%esi\n"
+            "popl %%edi\n"
+            "popl %%ebp\n"
+            "ret\n"
+            :
+            : "r" (next->thread_esp)
+            : "memory"
+        );
     }
 }
 
@@ -877,6 +905,24 @@ pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
 pid_t mkrn_waitpid(pid_t pid, int *status, int options)
 {
     (void)options; /* blocking wait only for now */
+
+    /* ECHILD check up front: if no matching child exists at all,
+     * POSIX says return -1 — the old code yield()-spun forever on
+     * waitpid(pid_of_non_child) or waitpid(-1) from a childless
+     * process, burning the CPU and never returning. */
+    {
+        int has_child = 0;
+        pid_t mypid = mkrn_process_get_pid();
+        for (mkrn_process_t *p = all_procs; p; p = p->next) {
+            if (p->ppid == mypid && p != current
+                && (pid == -1 || (uint32_t)pid == p->pid)) {
+                has_child = 1;
+                break;
+            }
+        }
+        if (!has_child)
+            return -1;
+    }
 
     while (1) {
         mkrn_process_t *child = NULL;

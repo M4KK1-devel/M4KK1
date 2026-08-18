@@ -18,6 +18,7 @@
 #define DEVFS_MAX_FILES     64
 #define DEVFS_MAX_NAME      32
 #define DEVFS_FD_BASE       4000
+#define DEVFS_FD_LIMIT      4096   /* == M4K_VFS_MAX_FDS boundary */
 #define DEVFS_MAX_DRIVES    2
 #define DEVFS_MAX_PARTS     4
 
@@ -62,8 +63,13 @@ devfs_alloc_file(void)
 {
     for (int i = 0; i < DEVFS_MAX_FILES; i++) {
         if (!devfs_files[i].in_use) {
-            devfs_files[i].in_use = true;
+            /* Wrap within our fd range: without this the monotonic
+             * counter hits M4K_VFS_MAX_FDS (4096) after 96 leaked
+             * fds and every /dev open fails permanently. */
             devfs_files[i].fd = devfs_next_fd++;
+            if (devfs_next_fd >= DEVFS_FD_LIMIT)
+                devfs_next_fd = DEVFS_FD_BASE;
+            devfs_files[i].in_use = true;
             devfs_files[i].offset = 0;
             return &devfs_files[i];
         }
@@ -255,6 +261,25 @@ mkrn_devfs_read(int fd, void *buf, uint32_t count)
         uint32_t sector = (uint32_t)(abs_byte / M4K_ATA_SECTOR_SIZE);
         uint32_t off_in_sec = (uint32_t)(abs_byte % M4K_ATA_SECTOR_SIZE);
 
+        /* Aligned full-sector run: batch the ATA command instead of
+         * one command per sector (each single-sector PIO costs a
+         * BSY+DRQ handshake — the dominant per-sector overhead). */
+        if (off_in_sec == 0 && count - total >= M4K_ATA_SECTOR_SIZE) {
+            uint32_t batch = (count - total) / M4K_ATA_SECTOR_SIZE;
+            uint64_t remain = size_bytes - df->offset;
+            if (batch > remain / M4K_ATA_SECTOR_SIZE)
+                batch = (uint32_t)(remain / M4K_ATA_SECTOR_SIZE);
+            if (batch > 0) {
+                if (mkrn_ata_read_sectors(df->drive, sector, batch,
+                                          out + total) != 0)
+                    break;
+                uint32_t bytes = batch * M4K_ATA_SECTOR_SIZE;
+                total += bytes;
+                df->offset += bytes;
+                continue;
+            }
+        }
+
         if (mkrn_ata_read_sectors(df->drive, sector, 1, secbuf) != 0)
             break;
 
@@ -302,7 +327,15 @@ mkrn_devfs_write(int fd, const void *buf, uint32_t count)
         if (chunk > remain)
             chunk = (uint32_t)remain;
 
-        if (off_in_sec != 0 || chunk < M4K_ATA_SECTOR_SIZE) {
+        if (off_in_sec == 0 && chunk >= M4K_ATA_SECTOR_SIZE
+            && chunk - (chunk % M4K_ATA_SECTOR_SIZE) > 0) {
+            /* Aligned full-sector run: write directly in one
+             * multi-sector command instead of per-sector commands. */
+            uint32_t batch = chunk / M4K_ATA_SECTOR_SIZE;
+            if (mkrn_ata_write_sectors(df->drive, sector, batch,
+                                       in + total) != 0)
+                break;
+        } else if (off_in_sec != 0 || chunk < M4K_ATA_SECTOR_SIZE) {
             /* Partial sector: read-modify-write */
             if (mkrn_ata_read_sectors(df->drive, sector, 1, secbuf) != 0)
                 break;

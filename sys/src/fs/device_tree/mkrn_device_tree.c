@@ -32,6 +32,9 @@ typedef struct {
 static dt_file_t dt_files[DT_MAX_FILES];
 static int dt_next_fd = 3000;
 
+#define DT_FD_BASE  3000
+#define DT_FD_LIMIT 4000   /* devfs range starts here */
+
 void mkrn_device_tree_init(void)
 {
     memset(dt_files, 0, sizeof(dt_files));
@@ -96,8 +99,12 @@ static dt_file_t *dt_alloc_file(void)
 {
     for (int i = 0; i < DT_MAX_FILES; i++) {
         if (!dt_files[i].in_use) {
-            dt_files[i].in_use = true;
+            /* Wrap within our fd range so long-running open/close
+             * cycles never leak into the devfs range above us. */
             dt_files[i].fd = dt_next_fd++;
+            if (dt_next_fd >= DT_FD_LIMIT)
+                dt_next_fd = DT_FD_BASE;
+            dt_files[i].in_use = true;
             dt_files[i].read_offset = 0;
             dt_files[i].device_idx = -1;
             return &dt_files[i];

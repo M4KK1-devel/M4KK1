@@ -11,6 +11,8 @@
 #include <namespace.h>
 
 #define PROCFS_MAX_FILES 64
+#define PROCFS_FD_BASE   1000
+#define PROCFS_FD_LIMIT  2000   /* sessions range starts here */
 #define PROCFS_MAX_NAME  64
 
 #define FT_STATUS   0
@@ -31,7 +33,7 @@ typedef struct {
 } procfs_file_t;
 
 static procfs_file_t procfs_files[PROCFS_MAX_FILES];
-static int procfs_next_fd = 1000;
+static int procfs_next_fd = PROCFS_FD_BASE;
 
 static const char *format_state_tags(uint64_t tags)
 {
@@ -92,8 +94,28 @@ static procfs_file_t *procfs_alloc_file(void)
 {
     for (int i = 0; i < PROCFS_MAX_FILES; i++) {
         if (!procfs_files[i].in_use) {
+            /* Recycle fd numbers: a monotonically increasing counter
+             * runs into the sessions fd range after 1000 open/close
+             * cycles, corrupting VFS routing.  Wrap within our range,
+             * skipping numbers still held by open files. */
+            int fd = procfs_next_fd;
+            for (int guard = 0; guard < PROCFS_FD_LIMIT - PROCFS_FD_BASE; guard++) {
+                int taken = 0;
+                for (int j = 0; j < PROCFS_MAX_FILES; j++) {
+                    if (procfs_files[j].in_use && procfs_files[j].fd == fd) {
+                        taken = 1;
+                        break;
+                    }
+                }
+                if (!taken)
+                    break;
+                if (++fd >= PROCFS_FD_LIMIT)
+                    fd = PROCFS_FD_BASE;
+            }
+            procfs_files[i].fd = fd;
+            if (++procfs_next_fd >= PROCFS_FD_LIMIT)
+                procfs_next_fd = PROCFS_FD_BASE;
             procfs_files[i].in_use = true;
-            procfs_files[i].fd = procfs_next_fd++;
             procfs_files[i].read_offset = 0;
             return &procfs_files[i];
         }

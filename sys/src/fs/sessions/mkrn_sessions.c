@@ -30,11 +30,17 @@ typedef struct {
 static session_entry_t sessions[MAX_SESSIONS];
 static int sessions_next_fd = 2000;
 
+#define SESSIONS_FD_BASE  2000
+#define SESSIONS_FD_LIMIT 3000   /* device_tree range starts here */
+
 /* ── Session file tracking (for open files) ── */
 
 typedef struct {
     char path[SESSIONS_MAX_NAME];
     int session_idx;
+    int fd;                     /* fd handed out at open; close/find
+                                 * must match on it, not blindly grab
+                                 * the first in_use slot */
     bool in_use;
 } session_file_t;
 
@@ -128,7 +134,10 @@ int mkrn_sessions_open(const char *path, int flags, int *out_fd)
                     session_files[i].in_use = true;
                     strncpy(session_files[i].path, path, SESSIONS_MAX_NAME - 1);
                     session_files[i].session_idx = -2;
-                    *out_fd = sessions_next_fd++;
+                    session_files[i].fd = sessions_next_fd++;
+                    if (sessions_next_fd >= SESSIONS_FD_LIMIT)
+                        sessions_next_fd = SESSIONS_FD_BASE;
+                    *out_fd = session_files[i].fd;
                     return 0;
                 }
             }
@@ -141,7 +150,10 @@ int mkrn_sessions_open(const char *path, int flags, int *out_fd)
             session_files[i].in_use = true;
             strncpy(session_files[i].path, path, SESSIONS_MAX_NAME - 1);
             session_files[i].session_idx = idx;
-            *out_fd = sessions_next_fd++;
+            session_files[i].fd = sessions_next_fd++;
+            if (sessions_next_fd >= SESSIONS_FD_LIMIT)
+                sessions_next_fd = SESSIONS_FD_BASE;
+            *out_fd = session_files[i].fd;
             return 0;
         }
     }
@@ -150,9 +162,8 @@ int mkrn_sessions_open(const char *path, int flags, int *out_fd)
 
 int mkrn_sessions_close(int fd)
 {
-    (void)fd;
     for (int i = 0; i < 32; i++) {
-        if (session_files[i].in_use) {
+        if (session_files[i].in_use && session_files[i].fd == fd) {
             session_files[i].in_use = false;
             return 0;
         }
@@ -162,9 +173,8 @@ int mkrn_sessions_close(int fd)
 
 static session_file_t *sessions_find_by_fd(int fd)
 {
-    (void)fd;
     for (int i = 0; i < 32; i++) {
-        if (session_files[i].in_use)
+        if (session_files[i].in_use && session_files[i].fd == fd)
             return &session_files[i];
     }
     return NULL;

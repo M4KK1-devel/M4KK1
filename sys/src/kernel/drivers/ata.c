@@ -272,25 +272,46 @@ mkrn_ata_write_sectors(uint8_t u8Drive, uint32_t u32Lba,
     if (mkrn_ata_wait_bsy(100000) != 0)
         return -1;
 
-    outb(M4K_ATA_PRIMARY_SECCOUNT, (uint8_t)(u32Count & 0xFF));
-    outb(M4K_ATA_PRIMARY_LBA_LO, (uint8_t)(u32Lba & 0xFF));
-    outb(M4K_ATA_PRIMARY_LBA_MID, (uint8_t)((u32Lba >> 8) & 0xFF));
-    outb(M4K_ATA_PRIMARY_LBA_HI, (uint8_t)((u32Lba >> 16) & 0xFF));
-    outb(M4K_ATA_PRIMARY_DRIVE_HEAD,
-         (uint8_t)(0xE0 | ((u8Drive & 1) << 4)
-                   | ((u32Lba >> 24) & 0x0F)));
-    outb(M4K_ATA_PRIMARY_COMMAND, M4K_ATA_CMD_WRITE_PIO);
-    ata_delay_400ns();
-
+    /* Multi-sector write: one command per 256-sector batch.  The old
+     * single-command path wrote SECCOUNT = count & 0xFF, silently
+     * truncating any write larger than 255 sectors (count 300 → 44
+     * sectors written).  Mirrors the read path's batching. */
     const uint8_t *pIn = (const uint8_t *)pBuf;
-    for (uint32_t i = 0; i < u32Count; i++) {
-        if (mkrn_ata_wait_drq(100000) != 0)
+    uint32_t u32Done = 0;
+    while (u32Done < u32Count) {
+        uint32_t u32Batch = u32Count - u32Done;
+        if (u32Batch > 256)
+            u32Batch = 256;
+        uint32_t u32BatchLba = u32Lba + u32Done;
+
+        if (mkrn_ata_wait_bsy(100000) != 0)
             return -1;
-        outsw(M4K_ATA_PRIMARY_DATA,
-              pIn + i * M4K_ATA_SECTOR_SIZE, 256);
+        outb(M4K_ATA_PRIMARY_SECCOUNT,
+             (uint8_t)((u32Batch == 256) ? 0 : u32Batch));
+        outb(M4K_ATA_PRIMARY_LBA_LO,
+             (uint8_t)(u32BatchLba & 0xFF));
+        outb(M4K_ATA_PRIMARY_LBA_MID,
+             (uint8_t)((u32BatchLba >> 8) & 0xFF));
+        outb(M4K_ATA_PRIMARY_LBA_HI,
+             (uint8_t)((u32BatchLba >> 16) & 0xFF));
+        outb(M4K_ATA_PRIMARY_DRIVE_HEAD,
+             (uint8_t)(0xE0 | ((u8Drive & 1) << 4)
+                       | ((u32BatchLba >> 24) & 0x0F)));
+        outb(M4K_ATA_PRIMARY_COMMAND, M4K_ATA_CMD_WRITE_PIO);
+        ata_delay_400ns();
+
+        for (uint32_t i = 0; i < u32Batch; i++) {
+            if (mkrn_ata_wait_drq(100000) != 0)
+                return -1;
+            outsw(M4K_ATA_PRIMARY_DATA,
+                  pIn + (u32Done + i) * M4K_ATA_SECTOR_SIZE, 256);
+        }
+        /* Flush: wait for BSY to clear after the batch */
+        if (mkrn_ata_wait_bsy(100000) != 0)
+            return -1;
+        u32Done += u32Batch;
     }
-    /* Flush: wait for BSY to clear after last sector */
-    return mkrn_ata_wait_bsy(100000);
+    return 0;
 }
 
 const mkrn_ata_drive_t *
