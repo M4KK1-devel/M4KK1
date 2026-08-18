@@ -15,10 +15,16 @@ musr_cmd_beep(int ac, char **av)
     uint32_t u32Hz = 440;
     uint32_t u32Ms = 200;
 
-    if (ac > 1)
-        u32Hz = (uint32_t)musr_atoi(av[1]);
-    if (ac > 2)
-        u32Ms = (uint32_t)musr_atoi(av[2]);
+    if (ac > 1) {
+        int v = musr_atoi(av[1]);
+        if (v > 0)
+            u32Hz = (uint32_t)v;
+    }
+    if (ac > 2) {
+        int v = musr_atoi(av[2]);
+        if (v > 0)
+            u32Ms = (uint32_t)v;
+    }
 
     if (u32Hz == 0 || u32Ms == 0) {
         c_red();

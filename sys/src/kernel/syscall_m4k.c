@@ -365,6 +365,9 @@ static uint32_t m4k_syscall_kill_impl(uint32_t arg1, uint32_t arg2, uint32_t arg
     (void)arg3; (void)arg4; (void)arg5;
     pid_t pid = (pid_t)arg1;
     int sig = (int)arg2;
+#ifdef M4K_KILL_TRACE
+    /* Verbose kill diagnostics: off by default (spams the console on
+     * every kill).  Enable with -DM4K_KILL_TRACE for deadlock hunts. */
     mkrn_process_dump_sched();
     mkrn_console_write("KILL pid=");
     mkrn_console_write_dec((uint32_t)pid);
@@ -377,6 +380,7 @@ static uint32_t m4k_syscall_kill_impl(uint32_t arg1, uint32_t arg2, uint32_t arg
     mkrn_console_write(" esp=");
     mkrn_console_write_hex(mkrn_process_get_thread_esp(pid));
     mkrn_console_write("\n");
+#endif
     return (uint32_t)mkrn_kill(pid, sig);
 }
 

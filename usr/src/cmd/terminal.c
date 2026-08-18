@@ -105,6 +105,28 @@ static int term_row = 0;                 /* cursor row (screen space) */
 static int term_col = 0;                 /* cursor column */
 static int term_scrollback = 0;          /* >0: viewport raised rows */
 
+/* ── Row-granular damage tracking ──
+ * Which viewport rows changed since the last render.  -1 = none.
+ * The main loop turns this into a tight dmg rect so Copland
+ * re-composites one text row instead of the whole window per key. */
+static int dmg_lo = -1, dmg_hi = -1;     /* inclusive [lo, hi] */
+
+static void dmg_row(int r)
+{
+    if (r < 0)
+        return;
+    if (dmg_lo < 0 || r < dmg_lo)
+        dmg_lo = r;
+    if (dmg_hi < 0 || r > dmg_hi)
+        dmg_hi = r;
+}
+
+static void dmg_all_rows(void)
+{
+    dmg_lo = 0;
+    dmg_hi = TERM_ROWS - 1;
+}
+
 /* ── Child shell state ── */
 
 static int shell_pid = -1;
@@ -184,13 +206,15 @@ static void term_newline(void)
 {
     term_col = 0;
     if (term_row < TERM_ROWS - 1) {
+        dmg_row(term_row);
         term_row++;
+        dmg_row(term_row);
         return;
     }
     /* Bottom: push everything up one row in the scrollback window */
-    if (term_top > 0)
+    if (term_top > 0) {
         term_top--;
-    else {
+    } else {
         /* Scrollback exhausted: shift the whole array up.
          * Single overlap-safe block move (whole-array memmove,
          * aligned dword main loop).  Rows move up by one so
@@ -206,6 +230,8 @@ static void term_newline(void)
         term_lines[term_top + TERM_ROWS - 1][c].ch = ' ';
         term_lines[term_top + TERM_ROWS - 1][c].attr = ATTR_TEXT;
     }
+    /* Scroll shifted every viewport row: whole body is damaged */
+    dmg_all_rows();
 }
 
 static void term_putc_attr(char ch, uint8_t attr)
@@ -223,12 +249,14 @@ static void term_putc_attr(char ch, uint8_t attr)
             term_col--;
         term_lines[term_top + term_row][term_col].ch = ' ';
         term_lines[term_top + term_row][term_col].attr = ATTR_TEXT;
+        dmg_row(term_row);
         return;
     }
     if (ch == '\t') {
         int n = 8 - (term_col % 8);
         while (n-- > 0 && term_col < TERM_COLS)
             term_lines[term_top + term_row][term_col++].ch = ' ';
+        dmg_row(term_row);
         return;
     }
     if (ch < 0x20)
@@ -239,6 +267,7 @@ static void term_putc_attr(char ch, uint8_t attr)
     term_lines[term_top + term_row][term_col].ch = ch;
     term_lines[term_top + term_row][term_col].attr = attr;
     term_col++;
+    dmg_row(term_row);
 }
 
 /* ── ANSI escape filter ──
@@ -409,6 +438,7 @@ static void term_handle_key(unsigned char ch)
             term_scrollback += TERM_ROWS;
             if (term_scrollback > max_sb)
                 term_scrollback = max_sb;
+            dmg_all_rows();     /* whole viewport shifted */
         }
         return;
     }
@@ -417,12 +447,14 @@ static void term_handle_key(unsigned char ch)
             term_scrollback -= TERM_ROWS;
             if (term_scrollback < 0)
                 term_scrollback = 0;
+            dmg_all_rows();
         }
         return;
     }
     /* Any typed key snaps the viewport to the live bottom */
     if (term_scrollback) {
         term_scrollback = 0;
+        dmg_all_rows();
         term_render();
     }
     term_forward_key(ch);
@@ -512,14 +544,32 @@ void _start(void)
                 need_render = 1;
             if (need_render) {
                 term_render();
-                /* Incremental damage: only this window's rect needs
-                 * re-compositing — Copland unions pending dmg rects
-                 * and re-renders just that region (no full-screen
-                 * gradient + all-surface blit per keystroke). */
-                shm->surfaces[my_slot].dmg_x = shm->surfaces[my_slot].x;
-                shm->surfaces[my_slot].dmg_y = shm->surfaces[my_slot].y;
-                shm->surfaces[my_slot].dmg_w = shm->surfaces[my_slot].w;
-                shm->surfaces[my_slot].dmg_h = shm->surfaces[my_slot].h;
+                /* Row-granular damage: only the text rows that actually
+                 * changed since the last render are re-composited (one
+                 * 16-px row per keystroke instead of the whole window).
+                 * Falls back to the full window when the damage tracker
+                 * is empty (first frame) or the viewport scrolled. */
+                if (dmg_lo >= 0 && term_scrollback == 0) {
+                    shm->surfaces[my_slot].dmg_x =
+                        shm->surfaces[my_slot].x;
+                    shm->surfaces[my_slot].dmg_y =
+                        shm->surfaces[my_slot].y + TERM_ORIGIN_Y +
+                        dmg_lo * TERM_CHAR_H;
+                    shm->surfaces[my_slot].dmg_w =
+                        shm->surfaces[my_slot].w;
+                    shm->surfaces[my_slot].dmg_h =
+                        (dmg_hi - dmg_lo + 1) * TERM_CHAR_H;
+                } else {
+                    shm->surfaces[my_slot].dmg_x =
+                        shm->surfaces[my_slot].x;
+                    shm->surfaces[my_slot].dmg_y =
+                        shm->surfaces[my_slot].y;
+                    shm->surfaces[my_slot].dmg_w =
+                        shm->surfaces[my_slot].w;
+                    shm->surfaces[my_slot].dmg_h =
+                        shm->surfaces[my_slot].h;
+                }
+                dmg_lo = dmg_hi = -1;
             }
         }
 

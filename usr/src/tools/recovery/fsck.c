@@ -113,19 +113,22 @@ void _start(void)
         }
     }
 
-    if (musr_sc_open("/bin/login", 0) >= 0) {
+    int fd_login = musr_sc_open("/bin/login", 0);
+    if (fd_login >= 0) {
         ser_puts("fsck: OK     /bin/login present\n");
+        musr_sc_close(fd_login);
     } else {
         ser_puts("fsck: WARN   /bin/login missing\n");
         errors++;
     }
-    if (musr_sc_open("/bin/m4sh", 0) >= 0) {
+    int fd_m4sh = musr_sc_open("/bin/m4sh", 0);
+    if (fd_m4sh >= 0) {
         ser_puts("fsck: OK     /bin/m4sh present\n");
+        musr_sc_close(fd_m4sh);
     } else {
         ser_puts("fsck: WARN   /bin/m4sh missing\n");
         errors++;
     }
-
     ser_puts("----------------------------------------\n");
     if (errors == 0) {
         ser_puts("fsck: NO ERRORS FOUND\n");

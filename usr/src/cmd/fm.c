@@ -257,7 +257,8 @@ static void fm_render(void)
                fm_entries[i].is_dir ? 0x002040A0 : FM_COL_TEXT);
     }
 
-    /* Status bar: "N items, M selected" */
+    /* Status bar: "items: N  tab M" — N printed with a generic digit
+     * loop (the old /10 %10 form broke beyond 99 entries). */
     int sy = FM_H - 14;
     fm_rect(fm_buf, FM_W, 0, sy, FM_W, 14, 0x00D0D0D8);
     char st[48];
@@ -265,8 +266,15 @@ static void fm_render(void)
     const char *a = "items: ";
     while (*a && k < 40)
         st[k++] = *a++;
-    st[k++] = '0' + (char)(fm_count / 10);
-    st[k++] = '0' + (char)(fm_count % 10);
+    char digits[12];
+    int nd = 0;
+    int cnt = fm_count;
+    do {
+        digits[nd++] = (char)('0' + cnt % 10);
+        cnt /= 10;
+    } while (cnt > 0 && nd < 11);
+    while (nd > 0 && k < 42)
+        st[k++] = digits[--nd];
     const char *b = "  tab ";
     while (*b && k < 46)
         st[k++] = *b++;
@@ -436,7 +444,12 @@ void _start(void)
     print_u32((uint32_t)my_slot);
     ser_puts(")\n");
 
-    /* Main loop: poll mailbox keys, render, keep dirty */
+    /* Main loop: poll mailbox keys; render ONLY on input (full-frame
+     * repaint at 50 FPS wasted a composite every tick for a static
+     * UI — see skill perf rule #1).  Damage is reported as the FM
+     * window's own rect so Copland re-composites incrementally
+     * instead of dirty-ing the whole screen. */
+    int need_render = 1;   /* first frame */
     for (;;) {
         if (!(shm->surfaces[my_slot].flags & COPLAND_SURF_VISIBLE))
             m4k_exit(0);   /* WM hid/closed us */
@@ -445,11 +458,18 @@ void _start(void)
             unsigned char ch = fm_mb->buf[fm_mb->read_idx];
             fm_mb->read_idx = (fm_mb->read_idx + 1) % 64;
             fm_key(ch);
+            need_render = 1;
         }
 
-        fm_render();
-        shm->surfaces[my_slot].buffer_ptr = (uint32_t)(uintptr_t)fm_buf;
-        shm->dirty = 1;
+        if (need_render) {
+            fm_render();
+            shm->surfaces[my_slot].buffer_ptr = (uint32_t)(uintptr_t)fm_buf;
+            shm->surfaces[my_slot].dmg_x = shm->surfaces[my_slot].x;
+            shm->surfaces[my_slot].dmg_y = shm->surfaces[my_slot].y;
+            shm->surfaces[my_slot].dmg_w = shm->surfaces[my_slot].w;
+            shm->surfaces[my_slot].dmg_h = shm->surfaces[my_slot].h;
+            need_render = 0;
+        }
         m4k_yield();
     }
 }

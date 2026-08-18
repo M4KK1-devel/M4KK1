@@ -718,12 +718,6 @@ void sprach_draw_menubar(struct sprach_ctx *ctx)
     time_str[7] = '0' + (char)(seconds % 10);
     time_str[8] = '\0';
 
-    /* Debug: log once per second so the per-second update is verifiable
-     * on serial without flooding (1 line/s). */
-    ser_puts("[SPRACH] clock ");
-    ser_puts(time_str);
-    ser_puts("\n");
-
     int tx = SCREEN_W - 8 * 7 - 8;
     int ty = 4;
     for (int i = 0; i < 8; i++)
@@ -1107,7 +1101,16 @@ static void sprach_launchpad_activate(struct sprach_ctx *ctx)
             ser_puts("[SPRACH] launchpad: launching ");
             ser_puts(lp_apps[a].path);
             ser_puts("\n");
-            if (lp_apps[a].path[5] == 't' && lp_apps[a].path[6] == 'e') {
+            if (lp_apps[a].path[0] == '/' &&
+                lp_apps[a].path[1] == 'b' &&
+                lp_apps[a].path[2] == 'i' &&
+                lp_apps[a].path[3] == 'n' &&
+                lp_apps[a].path[4] == '/' &&
+                lp_apps[a].path[5] == 't' &&
+                lp_apps[a].path[6] == 'e' &&
+                lp_apps[a].path[7] == 'r' &&
+                lp_apps[a].path[8] == 'm' &&
+                lp_apps[a].path[9] == '\0') {
                 /* /bin/terminal: the WM-owned emulator */
                 sprach_spawn_terminal(ctx);
             } else {
@@ -1173,14 +1176,12 @@ void sprach_launchpad_toggle(struct sprach_ctx *ctx, int open)
         /* sprach_raise_surface(ctx, ctx->lp_slot); */
         sprach_draw_launchpad(ctx);
         ser_puts("[SPRACH] launchpad open\n");
-        ser_puts("[SPRACH] LPDBG: toggle-open done\n");
     } else {
         ctx->shm->surfaces[ctx->lp_slot].flags &=
             ~COPLAND_SURF_VISIBLE;
         ser_puts("[SPRACH] launchpad closed\n");
     }
     ctx->shm->dirty = 1;
-    ser_puts("[SPRACH] LPDBG: dirty set, toggle returning\n");
 }
 
 /* Rule+N: activate the Nth Dock entry (0-based idx).  Dock layout is
@@ -1363,7 +1364,27 @@ void sprach_raise_window(struct sprach_ctx *ctx, int idx)
     struct sprach_window *w = &ctx->wins[idx];
     if (w->slot < 0)
         return;
-    sprach_raise_surface(ctx, w->slot);
+    int slot = w->slot;
+    if (slot < 0 || slot >= COPLAND_MAX_SURFACES)
+        return;
+    if (!ctx->shm->surfaces[slot].in_use)
+        return;
+
+    /* Mirror raise_surface's top-slot scan: if the raise actually
+     * swaps, OUR surface ends up at `top` — but raise_surface cannot
+     * re-slot us because it doesn't know which window we are.  Leaving
+     * w->slot stale would make later MOVE/MIN/CLOSE act on the
+     * displaced (someone else's) surface. */
+    int top = -1;
+    for (int i = 0; i < COPLAND_MAX_SURFACES; i++)
+        if (ctx->shm->surfaces[i].in_use &&
+            i != ctx->taskbar_slot &&
+            i != ctx->menubar_slot)
+            top = i;
+
+    sprach_raise_surface(ctx, slot);
+    if (top >= 0 && top != slot)
+        w->slot = top;
 }
 
 /* ── Mouse input ──
@@ -1536,8 +1557,56 @@ static void sprach_terminal_key(struct sprach_ctx *ctx, unsigned char ch)
     mb->write_idx = next;
 }
 
-/* Chrome click on the terminal window.  (sx,sy,sw,sh) is the surface
- * rect; (lx,ly) is the click position relative to the surface. */
+/* ── File-manager key forwarding ──
+ * The FM client (/bin/fm) registers a key mailbox at 0x610000 on
+ * startup (same ring protocol as the terminal mailbox; see fm.c).
+ * We forward keystrokes when the FM window is the top-most surface.
+ * It is identified by its 560-px width — the same convention fm.c
+ * itself uses to claim its slot. */
+#define FM_MAILBOX_BASE     0x00610000
+#define FM_MAILBOX_MAGIC    0x464D4B31u   /* "FMK1" */
+#define FM_MAILBOX_SIZE     64
+#define FM_SURF_W           560           /* fm.c FM_W */
+
+struct sprach_fm_mailbox {
+    uint32_t magic;
+    uint32_t write_idx;
+    uint32_t read_idx;
+    unsigned char buf[FM_MAILBOX_SIZE];
+};
+
+/* Forward one keystroke to the FM if it runs and owns the top-most
+ * surface.  Returns 1 when the key was consumed (or dropped on a full
+ * ring), 0 when the FM should not receive it. */
+static int sprach_fm_key(struct sprach_ctx *ctx, unsigned char ch)
+{
+    volatile struct sprach_fm_mailbox *mb =
+        (volatile struct sprach_fm_mailbox *)FM_MAILBOX_BASE;
+    if (mb->magic != FM_MAILBOX_MAGIC)
+        return 0;                     /* FM not running */
+
+    /* Top-most non-chrome surface must be a foreign FM-sized window */
+    int top = -1;
+    for (int i = 0; i < COPLAND_MAX_SURFACES; i++)
+        if (ctx->shm->surfaces[i].in_use &&
+            i != ctx->taskbar_slot && i != ctx->menubar_slot)
+            top = i;
+    if (top < 0 || ctx->shm->surfaces[top].w != FM_SURF_W)
+        return 0;
+    if (top == ctx->term_slot || top == ctx->clock_slot ||
+        top == ctx->menu_slot || top == ctx->lp_slot)
+        return 0;
+    for (int i = 0; i < SPRACH_WINDOW_COUNT; i++)
+        if (ctx->wins[i].slot == top)
+            return 0;
+
+    uint32_t next = (mb->write_idx + 1) % FM_MAILBOX_SIZE;
+    if (next == mb->read_idx)
+        return 1;                     /* ring full: drop keystroke */
+    mb->buf[mb->write_idx] = ch;
+    mb->write_idx = next;
+    return 1;
+}
 void sprach_handle_terminal_click(struct sprach_ctx *ctx, int sx, int sy,
                                   int sw, int sh, int lx, int ly)
 {
@@ -1701,7 +1770,6 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                         ctx->mouse_x < DOCK_PAD + DOCK_ICON_SIZE) {
                         sprach_launchpad_toggle(ctx, !ctx->lp_open);
                         hit = 1;
-                        ser_puts("[SPRACH] LPDBG: click toggle returned\n");
                     }
                     int bx = DOCK_PAD + DOCK_ICON_PITCH;
                     for (int i = 0; i < SPRACH_WINDOW_COUNT; i++) {
@@ -1802,7 +1870,8 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                             w->btn_clicked = 1;
                             w->click_tick = ctx->tick;
                             ctx->shm->surfaces[w->slot].in_use = 0;
-                            ctx->shm->surface_count--;
+                            if (ctx->shm->surface_count > 0)
+                                ctx->shm->surface_count--;
                             ctx->shm->dirty = 1;
                             w->slot = -1;
                             ser_puts("[SPRACH] CLOSE ");
@@ -2142,8 +2211,14 @@ void _start(void)
                 continue;
             }
 
-            if (ev.ascii_char == 'q' || ev.ascii_char == 'Q') {
-                ser_puts("[SPRACH] quitting (key pressed)\n");
+            /* Ctrl+Alt+Q → quit the WM (bare 'q' used to kill the
+             * whole desktop whenever the terminal/FM had focus and
+             * the user typed a q — check AFTER the focus-forward
+             * paths below would have consumed it). */
+            if ((ev.modifiers & (M4K_MOD_CTRL | M4K_MOD_ALT)) ==
+                    (M4K_MOD_CTRL | M4K_MOD_ALT) &&
+                (ev.ascii_char == 'q' || ev.ascii_char == 'Q')) {
+                ser_puts("[SPRACH] quitting (Ctrl+Alt+Q)\n");
                 m4k_exit(0);
             }
 
@@ -2151,6 +2226,13 @@ void _start(void)
             if (ctx.active < 0 && ctx.term_slot >= 0 &&
                 !ctx.term_hidden) {
                 sprach_terminal_key(&ctx, ev.ascii_char);
+                continue;
+            }
+
+            /* File manager running and on top → forward there too.
+             * The FM registers its key mailbox at FM_MAILBOX_BASE on
+             * startup; if the magic isn't there it isn't running. */
+            if (sprach_fm_key(&ctx, ev.ascii_char)) {
                 continue;
             }
 

@@ -56,8 +56,8 @@ void musr_cmd_dd(int ac, char **av)
     }
 
     char in_abs[256], out_abs[256];
-    cwd_to_abs(in_path, in_abs, 256);
-    cwd_to_abs(out_path, out_abs, 256);
+    cwd_to_abs(in_path, in_abs, sizeof(in_abs));
+    cwd_to_abs(out_path, out_abs, sizeof(out_abs));
 
     int in_fd = musr_sc_open(in_abs, O_RDONLY);
     if (in_fd < 0) {

@@ -190,28 +190,66 @@ mkrn_ata_read_sectors(uint8_t u8Drive, uint32_t u32Lba,
         return -1;
     if (u32Count == 0 || pBuf == NULL)
         return -1;
-    if (u32Lba >= 0x0FFFFFFF)
+    /* LBA28 addresses 28 bits: last valid sector is 0x0FFFFFFF. */
+    if (u32Lba > 0x0FFFFFFF
+        || u32Count > 0x0FFFFFFF - u32Lba)
         return -1;
 
-    if (mkrn_ata_wait_bsy(100000) != 0)
-        return -1;
-
-    outb(M4K_ATA_PRIMARY_SECCOUNT, (uint8_t)(u32Count & 0xFF));
-    outb(M4K_ATA_PRIMARY_LBA_LO, (uint8_t)(u32Lba & 0xFF));
-    outb(M4K_ATA_PRIMARY_LBA_MID, (uint8_t)((u32Lba >> 8) & 0xFF));
-    outb(M4K_ATA_PRIMARY_LBA_HI, (uint8_t)((u32Lba >> 16) & 0xFF));
-    outb(M4K_ATA_PRIMARY_DRIVE_HEAD,
-         (uint8_t)(0xE0 | ((u8Drive & 1) << 4)
-                   | ((u32Lba >> 24) & 0x0F)));
-    outb(M4K_ATA_PRIMARY_COMMAND, M4K_ATA_CMD_READ_PIO);
-    ata_delay_400ns();
-
-    uint8_t *pOut = (uint8_t *)pBuf;
-    for (uint32_t i = 0; i < u32Count; i++) {
+    /* Single-sector fast path (MBR probe, RMW partials). */
+    if (u32Count == 1) {
+        if (mkrn_ata_wait_bsy(100000) != 0)
+            return -1;
+        outb(M4K_ATA_PRIMARY_SECCOUNT, 1);
+        outb(M4K_ATA_PRIMARY_LBA_LO, (uint8_t)(u32Lba & 0xFF));
+        outb(M4K_ATA_PRIMARY_LBA_MID,
+             (uint8_t)((u32Lba >> 8) & 0xFF));
+        outb(M4K_ATA_PRIMARY_LBA_HI,
+             (uint8_t)((u32Lba >> 16) & 0xFF));
+        outb(M4K_ATA_PRIMARY_DRIVE_HEAD,
+             (uint8_t)(0xE0 | ((u8Drive & 1) << 4)
+                       | ((u32Lba >> 24) & 0x0F)));
+        outb(M4K_ATA_PRIMARY_COMMAND, M4K_ATA_CMD_READ_PIO);
+        ata_delay_400ns();
         if (mkrn_ata_wait_drq(100000) != 0)
             return -1;
-        insw(M4K_ATA_PRIMARY_DATA,
-             pOut + i * M4K_ATA_SECTOR_SIZE, 256);
+        insw(M4K_ATA_PRIMARY_DATA, pBuf, 256);
+        return 0;
+    }
+
+    /* Multi-sector read: one command per 256-sector batch. */
+    uint8_t *pOut = (uint8_t *)pBuf;
+    uint32_t u32Done = 0;
+    while (u32Done < u32Count) {
+        uint32_t u32Batch = u32Count - u32Done;
+        if (u32Batch > 256)
+            u32Batch = 256;
+        uint32_t u32BatchLba = u32Lba + u32Done;
+
+        if (mkrn_ata_wait_bsy(100000) != 0)
+            return -1;
+        outb(M4K_ATA_PRIMARY_SECCOUNT,
+             (uint8_t)((u32Batch == 256) ? 0 : u32Batch));
+        outb(M4K_ATA_PRIMARY_LBA_LO,
+             (uint8_t)(u32BatchLba & 0xFF));
+        outb(M4K_ATA_PRIMARY_LBA_MID,
+             (uint8_t)((u32BatchLba >> 8) & 0xFF));
+        outb(M4K_ATA_PRIMARY_LBA_HI,
+             (uint8_t)((u32BatchLba >> 16) & 0xFF));
+        outb(M4K_ATA_PRIMARY_DRIVE_HEAD,
+             (uint8_t)(0xE0 | ((u8Drive & 1) << 4)
+                       | ((u32BatchLba >> 24) & 0x0F)));
+        outb(M4K_ATA_PRIMARY_COMMAND, M4K_ATA_CMD_READ_PIO);
+        ata_delay_400ns();
+
+        for (uint32_t i = 0; i < u32Batch; i++) {
+            if (mkrn_ata_wait_drq(100000) != 0)
+                return -1;
+            insw(M4K_ATA_PRIMARY_DATA,
+                 pOut + u32Done * M4K_ATA_SECTOR_SIZE
+                     + i * M4K_ATA_SECTOR_SIZE,
+                 256);
+        }
+        u32Done += u32Batch;
     }
     return 0;
 }
@@ -225,7 +263,10 @@ mkrn_ata_write_sectors(uint8_t u8Drive, uint32_t u32Lba,
         return -1;
     if (u32Count == 0 || pBuf == NULL)
         return -1;
-    if (u32Lba >= 0x0FFFFFFF)
+    /* LBA28 addresses 28 bits: last valid sector is 0x0FFFFFFF.
+     * Mirrors the read path's overflow-aware bounds check. */
+    if (u32Lba > 0x0FFFFFFF
+        || u32Count > 0x0FFFFFFF - u32Lba)
         return -1;
 
     if (mkrn_ata_wait_bsy(100000) != 0)
