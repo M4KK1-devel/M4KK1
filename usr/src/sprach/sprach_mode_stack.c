@@ -28,9 +28,12 @@ static void sprach_raise(struct sprach_ctx *ctx, int idx)
     if (w->slot < 0)
         return;
 
+    /* Find the highest window slot (skip menubar + taskbar) */
     int top = -1;
     for (int i = 0; i < COPLAND_MAX_SURFACES; i++)
-        if (ctx->shm->surfaces[i].in_use)
+        if (ctx->shm->surfaces[i].in_use &&
+            i != ctx->taskbar_slot &&
+            i != ctx->menubar_slot)
             top = i;
     if (top < 0 || top == w->slot)
         return;
@@ -49,8 +52,7 @@ static void sprach_activate(struct sprach_ctx *ctx, int idx)
 
 void sprach_mode_tick(struct sprach_ctx *ctx)
 {
-    if (ctx->tick % 60 == 0)
-        sprach_activate(ctx, (ctx->active + 1) % SPRACH_WINDOW_COUNT);
+    (void)ctx;
 }
 
 void sprach_mode_key(struct sprach_ctx *ctx, unsigned char key)

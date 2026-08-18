@@ -772,6 +772,84 @@ uint32_t m4k_syscall_gfx_blit_impl(
     return 0;
 }
 
+/* ── Syscall: fill a rect with a vertical gradient ──
+ * The wallpaper repaint used to issue one m4k_draw_rect syscall per
+ * scanline (600 syscalls + scheduler yields per full-screen fill, h
+ * per damage region).  Do the whole gradient in one kernel-side pass:
+ * compute the row color here, then rep stosl the row.  Gradient span
+ * (top color at y=0, bottom at screen height-1) matches the
+ * user-space gui_draw_gradient/copland_wallpaper_rect math. */
+uint32_t m4k_syscall_fill_gradient_impl(
+    uint32_t arg1, uint32_t arg2, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5)
+{
+    struct m4k_gradient_params {
+        uint32_t top;
+        uint32_t bottom;
+    };
+    const struct m4k_gradient_params *gp =
+        (const struct m4k_gradient_params *)arg5;
+
+    int x = (int)arg1;
+    int y = (int)arg2;
+    int w = (int)arg3;
+    int h = (int)arg4;
+
+    if (!fb_info.initialized || !back_buffer || !gp)
+        return (uint32_t)-1;
+    if (w <= 0 || h <= 0)
+        return 0;
+
+    int scr_w = (int)fb_info.width;
+    int scr_h = (int)fb_info.height;
+
+    /* Clip to screen */
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > scr_w) w = scr_w - x;
+    if (y + h > scr_h) h = scr_h - y;
+    if (w <= 0 || h <= 0)
+        return 0;
+
+    /* Gradient coefficients: color(y) = c0 + (c1-c0)*y/(scr_h-1).
+     * Precompute the per-channel steps in 16.16 fixed point so the
+     * row loop needs no divides.  Signed steps: downward gradients
+     * (e.g. 0xFF->0x00) would underflow unsigned subtraction. */
+    uint32_t fh = (uint32_t)(scr_h > 1 ? scr_h - 1 : 1);
+    uint32_t r0 = (gp->top    >> 16) & 0xFF;
+    uint32_t g0 = (gp->top    >>  8) & 0xFF;
+    uint32_t b0 =  gp->top          & 0xFF;
+    uint32_t r1 = (gp->bottom >> 16) & 0xFF;
+    uint32_t g1 = (gp->bottom >>  8) & 0xFF;
+    uint32_t b1 =  gp->bottom       & 0xFF;
+    int32_t rstep = ((int32_t)(r1 - r0) << 16) / (int32_t)fh;
+    int32_t gstep = ((int32_t)(g1 - g0) << 16) / (int32_t)fh;
+    int32_t bstep = ((int32_t)(b1 - b0) << 16) / (int32_t)fh;
+    int32_t racc = (int32_t)(r0 << 16);
+    int32_t gacc = (int32_t)(g0 << 16);
+    int32_t bacc = (int32_t)(b0 << 16);
+    /* Advance to the first destination row */
+    for (int i = 0; i < y; i++) {
+        racc += rstep; gacc += gstep; bacc += bstep;
+    }
+
+    uint32_t *dst = back_buffer + (uint32_t)y * (uint32_t)scr_w
+                  + (uint32_t)x;
+    for (int row = 0; row < h; row++) {
+        uint32_t color = (((uint32_t)(racc >> 16) & 0xFFu) << 16)
+                       | (((uint32_t)(gacc >> 16) & 0xFFu) <<  8)
+                       | ( (uint32_t)(bacc >> 16) & 0xFFu);
+        uint32_t *d = dst + (uint32_t)row * (uint32_t)scr_w;
+        uint32_t cnt = (uint32_t)w;
+        __asm__ volatile("cld; rep stosl"
+            : "+c"(cnt), "+D"(d)
+            : "a"(color)
+            : "memory");
+        racc += rstep; gacc += gstep; bacc += bstep;
+    }
+    return 0;
+}
+
 /* ── Syscall: flip a partial region of back_buffer to LFB ── */
 uint32_t m4k_syscall_flip_rect_impl(
     uint32_t arg1, uint32_t arg2, uint32_t arg3,

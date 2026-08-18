@@ -5,7 +5,7 @@ set -e
 
 export PATH="$HOME/.local/bin:$PATH"
 
-LIBC_DIR="/mnt/f/M4KK1/usr/src/lib/m4k_libc"
+LIBC_DIR="$(cd "$(dirname "$0")" && pwd)/../lib/m4k_libc"
 PREFIX="$HOME/.local"
 LIB_DIR="$PREFIX/lib/pcc/i386-pc-m4kk1/1.2.0.DEVEL/lib"
 

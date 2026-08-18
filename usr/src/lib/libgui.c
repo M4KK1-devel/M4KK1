@@ -95,27 +95,11 @@ int gui_clear(uint32_t color) {
 int gui_draw_gradient(uint32_t color_top, uint32_t color_bottom) {
     if (gui_get_fb_info() < 0)
         return -1;
-    
-    int h = fb_cache.height;
-    int w = fb_cache.width;
-    
-    for (int y = 0; y < h; y++) {
-        uint8_t r1 = (color_top >> 16) & 0xFF;
-        uint8_t g1 = (color_top >> 8) & 0xFF;
-        uint8_t b1 = color_top & 0xFF;
-        
-        uint8_t r2 = (color_bottom >> 16) & 0xFF;
-        uint8_t g2 = (color_bottom >> 8) & 0xFF;
-        uint8_t b2 = color_bottom & 0xFF;
-        
-        uint8_t r = r1 + (r2 - r1) * y / h;
-        uint8_t g = g1 + (g2 - g1) * y / h;
-        uint8_t b = b1 + (b2 - b1) * y / h;
-        
-        uint32_t color = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
-        gui_draw_rect(0, y, w, 1, color);
-    }
-    return 0;
+
+    /* Kernel-side fill: one syscall for the whole gradient (the old
+     * per-scanline loop paid a syscall + scheduler yield per row). */
+    return m4k_fill_gradient(0, 0, fb_cache.width, fb_cache.height,
+                             color_top, color_bottom);
 }
 
 /* Present back buffer to screen */
@@ -136,4 +120,19 @@ int gui_get_keyboard_event(struct m4k_keyboard_event *ev) {
 /* Check if point is inside rectangle */
 int gui_point_in_rect(int px, int py, int x, int y, int w, int h) {
     return (px >= x && px < x + w && py >= y && py < y + h);
+}
+
+/* Copy a 32x32 ARGB icon into a caller-owned buffer (alpha 0 skips) */
+int gui_draw_icon(uint32_t *dst, int bw, int x, int y,
+                  const uint32_t *icon) {
+    if (!dst || !icon)
+        return -1;
+    for (int row = 0; row < 32; row++)
+        for (int col = 0; col < 32; col++) {
+            uint32_t c = icon[row * 32 + col];
+            if (c == 0x00000000)
+                continue;   /* transparent */
+            dst[(y + row) * bw + (x + col)] = c;
+        }
+    return 0;
 }

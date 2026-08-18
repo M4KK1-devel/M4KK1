@@ -41,10 +41,25 @@ static char password[64] = "";
 static int current_field = FIELD_USERNAME;
 static int login_button_pressed = 0;
 
+/* Red error line shown after a failed attempt (cleared on typing).
+ * NOTE: PCC is a single-pass compiler — these must precede their
+ * first use in draw_login_form(). */
+static int login_failed = 0;
+
+/* 1 while a desktop session (copland child) is running */
+static int session_active = 0;
+
+#define ERRMSG_X 250
+#define ERRMSG_Y 375
+
+/* Cached passwd entry from last successful lookup */
+static passwd_entry_t cached_entry;
+static int cached_entry_valid = 0;
+
 /* Draw the login form */
 static void draw_login_form(void) {
-    /* Draw gradient background */
-    gui_draw_gradient(0x002040A0, 0x00102050);
+    /* Draw gradient background (default blue wallpaper 0x000044→0x0066FF) */
+    gui_draw_gradient(0x00000044, 0x000066FF);
     
     /* Draw form background */
     gui_draw_rect(FORM_X, FORM_Y, FORM_WIDTH, FORM_HEIGHT, GUI_COLOR_WHITE);
@@ -73,16 +88,20 @@ static void draw_login_form(void) {
                        masked, current_field == FIELD_PASSWORD);
     
     /* Draw login button */
-    gui_draw_button(BUTTON_X, BUTTON_Y, BUTTON_WIDTH, BUTTON_HEIGHT, 
+    gui_draw_button(BUTTON_X, BUTTON_Y, BUTTON_WIDTH, BUTTON_HEIGHT,
                     "Login", login_button_pressed);
-    
+
+    /* Red error message after failed login */
+    if (login_failed)
+        gui_draw_text(ERRMSG_X, ERRMSG_Y, "Login failed!",
+                      GUI_COLOR_RED, GUI_COLOR_LIGHT);
+
     /* Present to screen */
     gui_flip();
 }
 
-/* Cached passwd entry from last successful lookup */
-static passwd_entry_t cached_entry;
-static int cached_entry_valid = 0;
+/* Cached passwd entry: declared above draw_login_form (single-pass
+ * compiler ordering). */
 
 /* Authenticate user via passwd.db */
 static int authenticate_user(void) {
@@ -102,12 +121,17 @@ static int authenticate_user(void) {
     return 0;  /* Success */
 }
 
-/* Launch shell after successful login */
-static void launch_shell(void) {
+/* Launch the desktop after successful login: fork a child that
+ * becomes Copland (which spawns Sprach itself); MDM then WAITS for
+ * the session to end (Copland exits when the WM requests shutdown or
+ * dies) and returns to the caller, which redraws the login form. */
+static int session_copland_pid = -1;
+
+static void launch_desktop(void) {
     if (!cached_entry_valid)
         return;
 
-    /* Set user identity */
+    /* Set user identity (inherited by the Copland child) */
     m4k_setuid(cached_entry.uid);
     m4k_setgid(cached_entry.gid);
     m4k_chdir(cached_entry.home);
@@ -115,8 +139,34 @@ static void launch_shell(void) {
     /* Register session */
     m4k_register_session("tty0", m4k_getpid(), username);
 
-    /* Launch shell */
-    m4k_spawn("/bin/m4sh", 0);
+    ser_puts("[MDM] login OK for '");
+    ser_puts(username);
+    ser_puts("', starting desktop (Copland+Sprach)...\n");
+
+    int pid = musr_sc_fork();
+    if (pid == 0) {
+        int r = m4k_spawn("/bin/copland", 0);
+        ser_puts("[MDM] copland spawn failed (ret=");
+        print_u32((uint32_t)(r < 0 ? -r : r));
+        ser_puts(")\n");
+        m4k_exit(1);
+    }
+    if (pid < 0) {
+        ser_puts("[MDM] fork failed\n");
+        return;
+    }
+    session_copland_pid = pid;
+
+    /* Wait for the desktop session to end (non-blocking poll loop) */
+    for (;;) {
+        int st;
+        int r = m4k_waitpid(pid, &st, 1 /* WNOHANG */);
+        if (r == pid || r < 0)
+            break;   /* copland exited: session over */
+        for (volatile int i = 0; i < 2000000; i++);
+    }
+    session_copland_pid = -1;
+    ser_puts("[MDM] desktop session ended, back to login screen\n");
 }
 
 /* Handle keyboard input */
@@ -133,16 +183,19 @@ static void handle_keyboard(void) {
         } else if (ch == '\r' || ch == '\n') {
             /* Enter: try login */
             if (authenticate_user() == 0) {
-                launch_shell();
-                /* If spawn returns, clear password and retry */
+                login_failed = 0;
+                session_active = 1;   /* exit event loop after launch */
+                launch_desktop();
                 password[0] = '\0';
             } else {
-                /* Login failed, clear password */
+                /* Login failed: red hint, clear password */
+                login_failed = 1;
                 password[0] = '\0';
             }
             draw_login_form();
         } else if (ch == '\b' || ch == 0x7F) {
             /* Backspace: delete last character */
+            login_failed = 0;
             char *field = (current_field == FIELD_USERNAME) ? username : password;
             int len = musr_strlen(field);
             if (len > 0) {
@@ -151,6 +204,7 @@ static void handle_keyboard(void) {
             }
         } else if (ch >= 0x20 && ch < 0x7F) {
             /* Printable character: add to current field */
+            login_failed = 0;
             char *field = (current_field == FIELD_USERNAME) ? username : password;
             int len = musr_strlen(field);
             if (len < 63) {
@@ -204,9 +258,12 @@ static void handle_mouse(void) {
                 
                 /* Try login */
                 if (authenticate_user() == 0) {
-                    launch_shell();
+                    login_failed = 0;
+                    session_active = 1;
+                    launch_desktop();
                     password[0] = '\0';
                 } else {
+                    login_failed = 1;
                     password[0] = '\0';
                 }
                 
@@ -234,61 +291,29 @@ static void handle_mouse(void) {
 
 /* Main entry point */
 void _start(void) {
-    /* Debug: output to serial */
     ser_puts("[MDM] Starting M4KK1 Display Manager...\n");
-    
-    /* Test framebuffer info */
-    struct m4k_framebuffer_info fb;
-    int ret = m4k_get_framebuffer_info(&fb);
-    ser_puts("[MDM] m4k_get_framebuffer_info returned: ");
-    print_u32((uint32_t)ret);
-    ser_puts("\n");
-    if (ret == 0) {
-        ser_puts("[MDM] FB struct fields:\n");
-        ser_puts("  phys_addr = 0x");
-        print_u32(fb.phys_addr);
-        ser_puts("\n");
-        ser_puts("  width = ");
-        print_u32(fb.width);
-        ser_puts("\n");
-        ser_puts("  height = ");
-        print_u32(fb.height);
-        ser_puts("\n");
-        ser_puts("  bpp = ");
-        print_u32(fb.bpp);
-        ser_puts("\n");
-        ser_puts("  pitch = ");
-        print_u32(fb.pitch);
-        ser_puts("\n");
-    } else {
-        ser_puts("[MDM] ERROR: Cannot get framebuffer info!\n");
-    }
-    
-    /* Test simple draw */
-    ser_puts("[MDM] Testing m4k_draw_rect...\n");
-    ret = m4k_draw_rect(0, 0, 800, 600, 0x00FF0000);  /* Red screen */
-    ser_puts("[MDM] m4k_draw_rect returned: ");
-    print_u32((uint32_t)ret);
-    ser_puts("\n");
-    
-    /* Test flip */
-    ser_puts("[MDM] Testing m4k_flip...\n");
-    ret = m4k_flip();
-    ser_puts("[MDM] m4k_flip returned: ");
-    print_u32((uint32_t)ret);
-    ser_puts("\n");
-    
-    /* Initialize display */
-    ser_puts("[MDM] Drawing login form...\n");
-    draw_login_form();
-    ser_puts("[MDM] Login form drawn, entering event loop\n");
-    
-    /* Main event loop */
+
+    /* Session loop: draw login form → run event loop → (on success)
+     * wait for the desktop session → back to the login form. */
     for (;;) {
-        handle_keyboard();
-        handle_mouse();
-        
-        /* Small delay to prevent busy-waiting */
-        for (volatile int i = 0; i < 100000; i++);
+        username[0] = '\0';
+        password[0] = '\0';
+        current_field = FIELD_USERNAME;
+        login_failed = 0;
+        session_active = 0;
+
+        draw_login_form();
+        ser_puts("[MDM] Login form drawn, entering event loop\n");
+
+        while (!session_active) {
+            handle_keyboard();
+            handle_mouse();
+
+            /* Small delay to prevent busy-waiting */
+            for (volatile int i = 0; i < 100000; i++);
+        }
+
+        /* Session ran and ended (launch_desktop blocks until Copland
+         * exits); loop back to a fresh login form. */
     }
 }

@@ -39,4 +39,10 @@ int gui_get_keyboard_event(struct m4k_keyboard_event *ev);
 /* Utility */
 int gui_point_in_rect(int px, int py, int x, int y, int w, int h);
 
+/* Icon blit: copy a 32x32 ARGB icon (alpha 0 = transparent) into a
+ * caller-owned pixel buffer (dst, width bw) at (x, y).  This is the
+ * surface-buffer side; MDM uses m4k_gfx_blit for full-screen icons. */
+int gui_draw_icon(uint32_t *dst, int bw, int x, int y,
+                  const uint32_t *icon);
+
 #endif /* LIBGUI_H */

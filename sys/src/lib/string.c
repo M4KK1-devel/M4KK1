@@ -129,9 +129,11 @@ mkrn_strncmp(const char *pS1, const char *pS2, size_t n)
 char *
 mkrn_strdup(const char *pS)
 {
+    if (!pS)
+        return NULL;
+
     size_t len = mkrn_strlen(pS) + 1;
-    (void)len;
-    char *pNewStr = (char *)0x100000;
+    char *pNewStr = (char *)mkrn_alloc(len);
 
     if (pNewStr)
         mkrn_memcpy(pNewStr, pS, len);

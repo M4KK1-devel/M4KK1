@@ -220,11 +220,15 @@ idt_init:
     ; 设置前32个异常处理函数
     mov edx, 0                  ; 从向量0开始
 .loop_exceptions:
+    mov eax, isr_default
+    mov ebx, KERNEL_CODE_SEG
+    mov ecx, IDT_PRESENT | IDT_DPL_0 | IDT_GATE_386
     push ecx
     push ebx
     push eax
     push edx
     call idt_set_gate
+    mov edx, [esp]              ; 恢复循环计数器 (idt_set_gate 会修改 EDX)
     add esp, 16
 
     inc edx
@@ -232,28 +236,26 @@ idt_init:
     jl .loop_exceptions
 
     ; 设置IRQ处理函数
-    mov eax, irq_default
-    mov ecx, IDT_PRESENT | IDT_DPL_0 | IDT_GATE_386
-
-    ; 设置IRQ 0-15
     mov edx, IRQ_BASE           ; 从IRQ_BASE开始
 .loop_irqs:
+    ; 每轮重新加载参数 (idt_set_gate 会修改 EAX/EBX/ECX/EDX)
+    mov eax, irq_default
+    mov ebx, KERNEL_CODE_SEG
+    mov ecx, IDT_PRESENT | IDT_DPL_0 | IDT_GATE_386
+
     ; 为定时器中断（IRQ0）使用专用处理函数
     cmp edx, IRQ0_TIMER
     jne .use_default
 
     mov eax, irq_timer
-    jmp .set_gate
 
 .use_default:
-    mov eax, irq_default
-
-.set_gate:
     push ecx
     push ebx
     push eax
     push edx
     call idt_set_gate
+    mov edx, [esp]              ; 恢复循环计数器 (idt_set_gate 会修改 EDX)
     add esp, 16
 
     inc edx
@@ -274,26 +276,28 @@ GLOBAL isr_default
 isr_default:
     pusha
 
-    ; 获取中断向量号
-    mov eax, [esp + 32]         ; 从栈中获取向量号
-
-    push eax
+    ; ── Minimal exception dump (keep tiny: a broken dump here loops) ──
     mov eax, dbg_msg_x
     push eax
     call mkrn_console_write
     add esp, 4
-    pop eax
-
+    mov eax, [esp + 36]        ; EIP (no-err layout) or SS (priv-change)
     push eax
     call mkrn_console_write_hex
     add esp, 4
-
+    mov eax, dbg_msg_cr2
     push eax
+    call mkrn_console_write
+    add esp, 4
+    mov eax, cr2
+    push eax
+    call mkrn_console_write_hex
+    add esp, 4
     mov eax, dbg_msg_y
     push eax
     call mkrn_console_write
     add esp, 4
-    pop eax
+
     popa
 
     ; 停止系统
@@ -354,8 +358,12 @@ GLOBAL irq_timer
 irq_timer:
     pusha
 
-
+    ; 传递中断帧指针（pusha 保存的 edi 槽位）给 C 处理函数，
+    ; 帧内 [0..7]=edi,esi,ebp,esp,ebx,edx,ecx,eax [8]=eip [9]=cs [10]=eflags
+    mov eax, esp
+    push eax
     call mkrn_timer_handler
+    add esp, 4
 
     ; 发送EOI到主PIC
     mov al, 0x20
@@ -399,6 +407,17 @@ isr_syscall:
     ; from EAX at entry.
     mov eax, [esp+24]
 
+    ; Restore user argument registers: the frame capture above used
+    ; ECX as scratch, so the user's ECX (syscall arg2) was lost and
+    ; mkrn_syscall_handler would read the user's EBP as arg2.  Restore
+    ; all argument registers from the saved block before calling the
+    ; handler (which reads args from EBX/ECX/EDX/ESI/EDI).
+    mov ebx, [esp+20]
+    mov ecx, [esp+16]
+    mov edx, [esp+12]
+    mov esi, [esp+8]
+    mov edi, [esp+4]
+
     call mkrn_syscall_handler
 
     ; Cooperative scheduling: give other ready processes (e.g. a forked
@@ -419,7 +438,6 @@ isr_syscall:
     pop ebx
     add esp, 4              ; skip saved EAX (syscall number, bottom of block)
     iret
-
 ; M4KK1 系统调用中断处理函数 (int 0x4D)
 ; Push order: reversed so saved_regs[0..4] = {EBX, ECX, EDX, ESI, EDI}
 ; Stack layout (low→high): EAX, EBX, ECX, EDX, ESI, EDI, EBP
@@ -520,7 +538,7 @@ pic_unmask_irq:
     sub eax, 8
     mov ecx, eax
     in al, 0xA1
-    btc eax, ecx                ; 清除屏蔽位
+    btr eax, ecx                ; 清除屏蔽位 (bit RESET, not toggle!)
     out 0xA1, al
     jmp .done
 
@@ -528,7 +546,7 @@ pic_unmask_irq:
     ; 取消屏蔽主PIC的IRQ
     mov ecx, eax
     in al, 0x21
-    btc eax, ecx                ; 清除屏蔽位
+    btr eax, ecx                ; 清除屏蔽位 (bit RESET, not toggle!)
     out 0x21, al
 
 .done:
@@ -546,6 +564,13 @@ exception_msg   db "Exception occurred! Vector: 0x", 0
 vector_msg      db "0x", 0
 newline         db 13, 10, 0
 dbg_msg_x       db "[EXC] vec=", 0
+dbg_exc         db "[EXC] ", 0
+dbg_msg_eip     db " eip=", 0
+dbg_msg_eip2    db " eip2=", 0
+dbg_msg_sp      db " ", 0
+dbg_msg_eip3    db " eip3=", 0
+dbg_msg_cr2     db " cr2=", 0
+dbg_msg_cs      db " cs=", 0
 dbg_msg_y       db "\r\n", 0
 idt_msg         db "M4KK1 IDT Information:", 13, 10, 0
 idt_base_msg    db "  Base: 0x", 0

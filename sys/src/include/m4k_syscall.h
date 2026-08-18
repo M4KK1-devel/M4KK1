@@ -56,8 +56,24 @@
 #define M4K_SYS_BRK                   0x4D000040
 #define M4K_SYS_REGISTER_SESSION      0x4D000041
 #define M4K_SYS_GET_SESSION_LIST      0x4D000042
+#define M4K_SYS_YIELD                 0x4D000043
 #define M4K_SYS_SETRLIMIT   0x4D000030
 #define M4K_SYS_GETRLIMIT   0x4D000031
+
+/* ── Graphics (§6.12 continued) ── */
+
+#define M4K_SYS_GET_FRAMEBUFFER_INFO  0x4D000050
+#define M4K_SYS_DRAW_TEST_PATTERN     0x4D000051
+#define M4K_SYS_GET_MOUSE_EVENT       0x4D000052
+#define M4K_SYS_FLIP                  0x4D000053
+#define M4K_SYS_GET_KEYBOARD_EVENT    0x4D000056
+#define M4K_SYS_GFX_BLIT              0x4D000057
+#define M4K_SYS_FLIP_RECT             0x4D000058
+#define M4K_SYS_UPDATE_CURSOR         0x4D000059
+#define M4K_SYS_BEEP                  0x4D00005A
+#define M4K_SYS_SLEEP                 0x4D00005B
+#define M4K_SYS_GET_MOUSE_POS         0x4D00005C
+#define M4K_SYS_FILL_GRADIENT         0x4D00005D
 
 /* ── Process cloning flags ── */
 

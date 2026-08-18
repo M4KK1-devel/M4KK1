@@ -65,36 +65,16 @@ void _start(void)
             ser_puts("Password: ");
             read_pass(pass, sizeof(pass));
 
-            uint32_t login_uid = 1001;
-            uint32_t login_gid = 1001;
-            const char *login_home = "/home/testuser";
-            const char *login_shell = "/bin/m4sh";
-            const char *login_user = "testuser";
+            /* 认证完全依赖 /export/cfg/passwd.db，无硬编码凭据 */
+            passwd_entry_t entry;
             int auth_ok = 0;
-
-            if (musr_strcmp(user, "root") == 0 &&
-                musr_strcmp(pass, "123456") == 0) {
-                login_uid = 0;
-                login_gid = 0;
-                login_home = "/export/root";
-                login_user = "root";
-                auth_ok = 1;
-            }
-            if (musr_strcmp(user, "testuser") == 0 &&
-                musr_strcmp(pass, "yakumakki") == 0) {
-                login_uid = 1001;
-                login_gid = 1001;
-                login_home = "/home/testuser";
-                login_user = "testuser";
-                auth_ok = 1;
-            }
-
-            if (auth_ok) {
+            if (musr_getpwnam(user, &entry) == 0 &&
+                musr_verify_password(pass, entry.password_hash)) {
                 ser_puts("Login successful\n");
-                m4k_setuid(login_uid);
-                m4k_setgid(login_gid);
-                m4k_chdir(login_home);
-                m4k_register_session("ttyS0", m4k_getpid(), login_user);
+                m4k_setuid(entry.uid);
+                m4k_setgid(entry.gid);
+                m4k_chdir(entry.home);
+                m4k_register_session("ttyS0", m4k_getpid(), entry.username);
 
                 /* 记录登录日志 */
                 musr_sc_mkdir("/var/log");
@@ -114,18 +94,17 @@ void _start(void)
                         tbuf[ti] = '\0';
                         musr_strncpy(lbuf, tbuf, sizeof(lbuf)-1);
                         musr_strncat(lbuf, "  ", sizeof(lbuf)-musr_strlen(lbuf)-1);
-                        musr_strncat(lbuf, login_user, sizeof(lbuf)-musr_strlen(lbuf)-1);
+                        musr_strncat(lbuf, entry.username, sizeof(lbuf)-musr_strlen(lbuf)-1);
                         musr_strncat(lbuf, "  login  success  ttyS0\n", sizeof(lbuf)-musr_strlen(lbuf)-1);
                         musr_sc_write(lfd, lbuf, musr_strlen(lbuf));
                         musr_sc_close(lfd);
                     }
                 }
 
-                m4k_spawn(login_shell, 0);
+                m4k_spawn(entry.shell, 0);
                 ser_puts("login: spawn failed\n");
                 break;
             }
-
             ser_puts("Login incorrect\n");
             attempts++;
         }

@@ -470,11 +470,13 @@ struct m4k_rlimit {
 #define M4K_SYS_BRK         0x4D000040
 #define M4K_SYS_REGISTER_SESSION   0x4D000041
 #define M4K_SYS_GET_SESSION_LIST   0x4D000042
+#define M4K_SYS_YIELD      0x4D000043
 #define M4K_SYS_MMAP        0x4D00000E
 #define M4K_SYS_MUNMAP      0x4D00000F
 #define M4K_SYS_MEMINFO     0x4D000010
 
 static inline int m4k_getpid(void)    { return (int)m4k_sc0(M4K_SYS_GETPID); }
+static inline int m4k_yield(void)     { return (int)m4k_sc0(M4K_SYS_YIELD); }
 static inline int m4k_getppid(void)   { return (int)m4k_sc0(M4K_SYS_GETPPID); }
 static inline int m4k_exit(uint32_t status) { return (int)m4k_sc1(M4K_SYS_EXIT, status); }
 static inline int m4k_getuid(void)    { return (int)m4k_sc0(M4K_SYS_GETUID); }
@@ -505,6 +507,12 @@ static inline int m4k_getrlimit(int r, struct m4k_rlimit *l) { return (int)m4k_s
 #define M4K_SYS_DRAW_TEXT            0x4D000055
 #define M4K_SYS_GET_KEYBOARD_EVENT   0x4D000056
 #define M4K_SYS_GFX_BLIT             0x4D000057
+#define M4K_SYS_FLIP_RECT            0x4D000058
+#define M4K_SYS_UPDATE_CURSOR        0x4D000059
+#define M4K_SYS_BEEP                  0x4D00005A
+#define M4K_SYS_SLEEP                 0x4D00005B
+#define M4K_SYS_GET_MOUSE_POS         0x4D00005C
+#define M4K_SYS_FILL_GRADIENT         0x4D00005D
 struct m4k_framebuffer_info {
     uint32_t phys_addr;
     uint32_t width;
@@ -526,6 +534,12 @@ struct m4k_keyboard_event {
     uint8_t reserved;
 };
 
+/* Keyboard modifier bits returned in m4k_keyboard_event.modifiers
+ * (mirrors the kernel's KEYBOARD_MOD_* low byte). */
+#define M4K_MOD_SHIFT  0x01
+#define M4K_MOD_CTRL   0x02
+#define M4K_MOD_ALT    0x04
+
 static inline int m4k_get_framebuffer_info(struct m4k_framebuffer_info *fb) {
     return (int)m4k_sc1(M4K_SYS_GET_FRAMEBUFFER_INFO, (uint32_t)fb);
 }
@@ -538,6 +552,19 @@ static inline int m4k_get_mouse_event(struct m4k_mouse_event *ev) {
 static inline int m4k_flip(void) {
     return (int)m4k_sc0(M4K_SYS_FLIP);
 }
+static inline int m4k_flip_rect(int x, int y, int w, int h) {
+    return (int)m4k_sc4(M4K_SYS_FLIP_RECT, (uint32_t)x, (uint32_t)y,
+                        (uint32_t)w, (uint32_t)h);
+}
+static inline int m4k_update_cursor(void) {
+    return (int)m4k_sc0(M4K_SYS_UPDATE_CURSOR);
+}
+static inline int m4k_beep(uint32_t hz, uint32_t ms) {
+    return (int)m4k_sc2(M4K_SYS_BEEP, hz, ms);
+}
+static inline int m4k_sleep(uint32_t ms) {
+    return (int)m4k_sc1(M4K_SYS_SLEEP, ms);
+}
 static inline int m4k_draw_rect(int x, int y, int w, int h, uint32_t color) {
     return (int)m4k_sc5(M4K_SYS_DRAW_RECT, (uint32_t)x, (uint32_t)y, (uint32_t)w, (uint32_t)h, color);
 }
@@ -547,8 +574,30 @@ static inline int m4k_draw_text(int x, int y, const char *str, uint32_t fg, uint
 static inline int m4k_get_keyboard_event(struct m4k_keyboard_event *ev) {
     return (int)m4k_sc1(M4K_SYS_GET_KEYBOARD_EVENT, (uint32_t)ev);
 }
+/* Absolute cursor position as the kernel mouse driver sees it
+ * (2x ballistics + screen clamp) — identical to the visible cursor. */
+static inline int m4k_get_mouse_pos(int32_t *x, int32_t *y) {
+    int32_t pos[2];
+    int r = (int)m4k_sc1(M4K_SYS_GET_MOUSE_POS, (uint32_t)pos);
+    if (x) *x = pos[0];
+    if (y) *y = pos[1];
+    return r;
+}
 static inline int m4k_gfx_blit(int x, int y, int w, int h, const void *src) {
     return (int)m4k_sc5(M4K_SYS_GFX_BLIT, (uint32_t)x, (uint32_t)y, (uint32_t)w, (uint32_t)h, (uint32_t)src);
+}
+/* Kernel-side vertical gradient fill: one syscall replaces the
+ * per-scanline m4k_draw_rect loop (which paid a syscall + scheduler
+ * yield per row).  Colors span the full screen height (top at y=0,
+ * bottom at height-1) regardless of the clip rect, matching the old
+ * gui_draw_gradient / copland_wallpaper_rect math. */
+static inline int m4k_fill_gradient(int x, int y, int w, int h,
+                                    uint32_t top, uint32_t bottom) {
+    uint32_t params[2];
+    params[0] = top;
+    params[1] = bottom;
+    return (int)m4k_sc5(M4K_SYS_FILL_GRADIENT, (uint32_t)x, (uint32_t)y,
+                        (uint32_t)w, (uint32_t)h, (uint32_t)params);
 }
 
 #define M4K_SESSION_MAX 16
@@ -580,19 +629,33 @@ static inline int m4k_chdir(const char *p) {
 
 static inline void outb(uint16_t p, uint8_t v)
 {
+#ifdef __PCC__
+    __asm__ volatile("outb %b0, %w1" : : "a"(v), "d"(p));
+#else
     __asm__ volatile("outb %0, %1" : : "a"(v), "Nd"(p));
+#endif
 }
 static inline uint8_t inb(uint16_t p)
 {
     uint8_t r;
+#ifdef __PCC__
+    __asm__ volatile("inb %w1, %b0" : "=a"(r) : "d"(p));
+#else
     __asm__ volatile("inb %1, %0" : "=a"(r) : "Nd"(p));
+#endif
     return r;
 }
 static void ser_putc(char c)
 {
+#ifdef M4SH_GRAPHICAL
+    /* Graphical terminal (m4shg): stdout is a pipe owned by the
+     * terminal emulator process — never touch the COM1 hardware. */
+    musr_sc_write(1, &c, 1);
+#else
     while (!(inb(COM1_DATA + 5) & LSR_THR_EMPTY))
         ;
     outb(COM1_DATA, c);
+#endif
 }
 static void ser_puts(const char *s)
 {
@@ -601,9 +664,23 @@ static void ser_puts(const char *s)
 }
 static int ser_getc(void)
 {
+#ifdef M4SH_GRAPHICAL
+    /* Graphical terminal (m4shg): stdin is a pipe fed by the terminal
+     * emulator forwarding keystrokes.  Pipe reads are non-blocking
+     * (return 0 when empty) — same contract as the serial variant,
+     * yield so the WM keeps compositing while we poll. */
+    char c;
+    int n = musr_sc_read(0, &c, 1);
+    if (n == 1)
+        return (unsigned char)c;
+    m4k_yield();
+    return -1;
+#else
     if (inb(COM1_LSR) & LSR_DR)
         return inb(COM1_DATA);
+    m4k_yield();
     return -1;
+#endif
 }
 
 /* Colours */
@@ -837,6 +914,8 @@ void musr_cmd_at(int, char **);
 void musr_cmd_batch(int, char **);
 void musr_cmd_calc(int, char **);
 void musr_cmd_blkid(int, char **);
+void musr_cmd_dd(int, char **);
+void musr_cmd_beep(int, char **);
 void musr_cmd_cal(int, char **);
 void musr_cmd_diff(int, char **);
 void musr_cmd_sead(int, char **);
@@ -850,6 +929,8 @@ void musr_cmd_groupmod(int, char **);
 void musr_cmd_cu(int, char **);
 void musr_cmd_userlog(int, char **);
 void musr_cmd_gfx_test(int, char **);
+void musr_cmd_pcc(int, char **);
+void musr_cmd_cc(int, char **);
 void musr_boot_setup(void);
 void musr_setup_env(void);
 extern int musr_login_ok;

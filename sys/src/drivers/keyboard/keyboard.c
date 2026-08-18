@@ -215,10 +215,10 @@ mkrn_keyboard_handler(void)
         keyboard_state.shift_pressed = bPressed;
         break;
     case 0x1D:
-    case 0x38:
         keyboard_state.ctrl_pressed = bPressed;
         break;
-    case 0x64:
+    case 0x38:   /* set-1 left Alt */
+    case 0x64:   /* set-2 right Alt (extended) */
         keyboard_state.alt_pressed = bPressed;
         break;
     case 0x3A:
@@ -271,8 +271,32 @@ mkrn_keyboard_handler(void)
         break;
     }
 
-    if (u8KeyCode >= 128)
+    if (u8KeyCode >= 128) {
+        /* E0-extended keys that the desktop needs: PageUp / PageDown
+         * (terminal scrollback).  Push private control codes into the
+         * ASCII buffer so m4k_get_keyboard_event() delivers them;
+         * 0x01/0x02 never collide with printable ASCII or Ctrl+C. */
+        if (bPressed) {
+            uint8_t ext = u8Scancode;   /* base code, no make/break bit */
+            char ch = 0;
+            if (ext == 0x49)      ch = 0x01;   /* PageUp   */
+            else if (ext == 0x51) ch = 0x02;   /* PageDown */
+            if (ch) {
+                uint32_t u32NextTail =
+                    (keyboard_state.buffer_tail + 1)
+                    % KEYBOARD_BUFFER_SIZE;
+                if (u32NextTail
+                    != keyboard_state.buffer_head)
+                {
+                    keyboard_state.buffer
+                        [keyboard_state.buffer_tail] = ch;
+                    keyboard_state.buffer_tail =
+                        u32NextTail;
+                }
+            }
+        }
         return;
+    }
 
     char ch = 0;
     if (keyboard_state.shift_pressed
@@ -281,7 +305,11 @@ mkrn_keyboard_handler(void)
     else
         ch = keymap_lower[u8KeyCode];
 
-    if (ch != 0) {
+    /* Push ONLY on make (press).  Key release used to push the same
+     * char again, doubling every keystroke ("root" became "rrooott")
+     * and toggling two-state handlers (Tab switched fields twice and
+     * landed back where it started). */
+    if (ch != 0 && bPressed) {
         uint32_t u32NextTail =
             (keyboard_state.buffer_tail + 1)
             % KEYBOARD_BUFFER_SIZE;

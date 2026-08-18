@@ -81,13 +81,36 @@ There is no Makefile for the kernel build — the build script is the source of 
 ```bash
 git clone https://github.com/makkichan947/M4KK1.git
 cd M4KK1
-bash tools/build/build_krn.sh
+bash tools/build/build_krn.sh           # default: full desktop system
 ```
+
+### Build modes
+
+`tools/build/build_krn.sh` supports four build modes, selected by a CLI flag:
+
+| Mode | Flag | Contents |
+| :--- | :--- | :--- |
+| Full (default) | `--full` | Everything: graphics drivers, Copland display server, Sprach window manager (stack/tiling/scroll), PCC self-hosted compiler, all tools |
+| Command-line | `--cmd-only` | No graphics. Kernel + VFS + YAFS + `m4sh` shell + text tools (`ls`, `cat`, `echo`, `grep`, `wc`, ...). Boots straight to a serial login |
+| Minimal | `--minimal` | Boot + serial banner only; prints `[MINIMAL] System ready` and halts. For boot smoke tests |
+| Recovery | `--recovery` | Like `--cmd-only`, plus `/bin/fsck` and `/bin/reset-passwd`; runs `fsck` at init before the forced serial login |
+
+Common flags:
+
+```bash
+./tools/build/build_krn.sh --help          # list all modes
+./tools/build/build_krn.sh --version       # print build version
+./tools/build/build_krn.sh --cmd-only --output dist   # custom ISO directory
+```
+
+ISO files are mode-tagged, e.g. `m4kk1_0.0.1_build1-alpha1-full.iso`,
+`m4kk1_0.0.1_build1-alpha1-cmd-only.iso`, `m4kk1_0.0.1_build1-alpha1-minimal.iso`.
 
 ### Test in QEMU
 
 ```bash
-qemu-system-x86_64 -cdrom m4kk1-test.iso -serial stdio
+qemu-system-i386 -cdrom output/m4kk1_*_cmd-only.iso -m 512 -serial stdio
+qemu-system-i386 -cdrom output/m4kk1_*_full.iso -m 512 -vga std -serial stdio
 ```
 
 (The `-cdrom` flag is used because the ISO is a CD image; the kernel itself is

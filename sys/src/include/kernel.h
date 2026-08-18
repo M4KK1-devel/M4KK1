@@ -203,6 +203,7 @@ void *mkrn_memset(void *dest, int value, size_t n);
 #define M4K_ESRCH       0x4D000015
 #define M4K_EEXEC       0x4D000016
 #define M4K_EMFILEPROC  0x4D000017
+#define M4K_ERANGE      0x4D000018
 
 #define M4K_CLI() __asm__ volatile ("cli")
 #define M4K_STI() __asm__ volatile ("sti")

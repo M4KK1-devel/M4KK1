@@ -30,6 +30,28 @@
 #define COPLAND_MAX_SURFACES  16
 #define COPLAND_CMD_RING_SIZE 32
 
+/* ── Terminal input mailbox ──
+ *
+ * The Sprach WM owns the keyboard (it polls m4k_get_keyboard_event in
+ * its main loop, which is the only sane routing point in a single
+ * address-space kernel without a TTY layer).  When the active window
+ * is the terminal, Sprach forwards every keystroke into this fixed
+ * shared ring; the /bin/terminal process consumes it.  Single
+ * producer (Sprach) / single consumer (terminal) under cooperative
+ * scheduling, so no locks are required.  Address sits just above the
+ * Copland shared region, in free user RAM. */
+
+#define TERM_MAILBOX_BASE   0x00710000u
+#define TERM_MAILBOX_MAGIC  0x5445524Du   /* 'TERM' */
+#define TERM_MAILBOX_SIZE   256
+
+struct term_mailbox {
+    uint32_t magic;        /* TERM_MAILBOX_MAGIC when the terminal lives */
+    uint32_t write_idx;    /* producer: Sprach */
+    uint32_t read_idx;     /* consumer: /bin/terminal */
+    uint8_t  buf[TERM_MAILBOX_SIZE];
+};
+
 /* ── Surface flags ── */
 
 #define COPLAND_SURF_VISIBLE  0x00000001u
@@ -43,7 +65,14 @@ struct copland_surface {
     uint32_t buffer_ptr;  /* client pixel buffer (flat addr), 0 = none */
     uint32_t color;       /* fill color (BGRA) */
     uint32_t flags;       /* COPLAND_SURF_* */
-    uint32_t reserved[2];
+    /* Incremental damage rect (screen coords, half-open union/
+     * intersect rectangle semantics).  Set by the client after
+     * writing its
+     * buffer; Copland unions all pending damage and re-composites
+     * only that region (m4k_flip_rect), then clears it.  dmg_w = 0
+     * means no pending damage. */
+    int32_t  dmg_x, dmg_y;
+    int32_t  dmg_w, dmg_h;
 };
 
 /* ── IPC commands ── */
@@ -71,6 +100,10 @@ struct copland_shm {
     uint32_t ready;               /* 1 = server initialized */
     uint32_t heartbeat;           /* bumped by the WM client (watchdog) */
     uint32_t surface_count;       /* number of live surfaces */
+    uint32_t dirty;               /* 1 = scene changed, composite+flip needed */
+    uint32_t shutdown;            /* 1 = WM requests session end: the
+                                     server exits so MDM regains the
+                                     screen (lock/logout/shutdown) */
 
     struct copland_surface
         surfaces[COPLAND_MAX_SURFACES];

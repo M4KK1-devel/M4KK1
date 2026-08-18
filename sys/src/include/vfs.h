@@ -313,3 +313,14 @@ int mkrn_procfs_write(int fd, const void *buf, uint32_t count);
 int mkrn_procfs_getdents(int fd, struct mkrn_vfs_dirent *buf, uint32_t max);
 int mkrn_procfs_is_procfs_fd(int fd);
 void mkrn_procfs_init(void);
+
+/* ── DevFS hooks ── */
+
+int mkrn_devfs_open(const char *path, int flags, int *out_fd);
+int mkrn_devfs_close(int fd);
+int mkrn_devfs_read(int fd, void *buf, uint32_t count);
+int mkrn_devfs_write(int fd, const void *buf, uint32_t count);
+int mkrn_devfs_getdents(int fd, struct mkrn_vfs_dirent *buf, uint32_t max);
+int mkrn_devfs_is_devfs_fd(int fd);
+int mkrn_devfs_lseek(int fd, int offset, int whence);
+void mkrn_devfs_init(void);

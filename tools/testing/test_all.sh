@@ -30,7 +30,7 @@ check_fail() {
 
 # 测试1: 检查ISO文件
 echo "=== 测试1: ISO文件检查 ==="
-if [ -f "output/m4kk1_0.0.1_build1-alpha1.iso" ]; then
+if ls output/m4kk1_*.iso >/dev/null 2>&1; then
     check_pass "ISO文件存在"
 else
     check_fail "ISO文件不存在"
@@ -104,7 +104,7 @@ fi
 # 测试5: QEMU启动测试（串口模式）
 echo ""
 echo "=== 测试5: QEMU启动测试 ==="
-timeout 20 qemu-system-i386 -cdrom output/m4kk1_0.0.1_build1-alpha1.iso \
+timeout 20 qemu-system-i386 -cdrom $(ls output/m4kk1_*.iso | head -1) \
     -nographic -serial mon:stdio -no-reboot -display none 2>&1 | \
     tee /tmp/qemu_test.log &
 QEMU_PID=$!
@@ -127,7 +127,7 @@ else
 fi
 
 # 检查MDM是否成功加载
-if grep -q "spawn:.*mdm" /tmp/qemu_test.log && grep -q "ELF loaded" /tmp/qemu_test.log; then
+if grep -q "Starting M4KK1 Display Manager" /tmp/qemu_test.log && grep -q "ELF loaded" /tmp/qemu_test.log; then
     check_pass "MDM ELF成功加载并执行"
 else
     check_fail "MDM加载失败"

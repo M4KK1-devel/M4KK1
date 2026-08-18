@@ -97,9 +97,24 @@ uint32_t m4k_syscall_draw_text_impl(
 uint32_t m4k_syscall_gfx_blit_impl(
     uint32_t arg1, uint32_t arg2, uint32_t arg3,
     uint32_t arg4, uint32_t arg5);
+/* Fill a rect in back_buffer with a vertical gradient (kernel-side
+ * per-row color, one syscall instead of one draw_rect per row).
+ * arg5 points at struct m4k_gradient_params { top, bottom } in the
+ * caller's memory (flat address space, gfx_blit-style). */
+uint32_t m4k_syscall_fill_gradient_impl(
+    uint32_t arg1, uint32_t arg2, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5);
+uint32_t m4k_syscall_flip_rect_impl(
+    uint32_t arg1, uint32_t arg2, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5);
+uint32_t m4k_syscall_update_cursor_impl(
+    uint32_t arg1, uint32_t arg2, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5);
 
 /* Phase 1: Double buffering */
 void mkrn_vesa_flip(void);
+void mkrn_vesa_flip_rect(int x, int y, int w, int h);
+void mkrn_vesa_update_cursor(void);
 void mkrn_vesa_clear(uint32_t color);
 
 /* Phase 2: Drawing primitives */

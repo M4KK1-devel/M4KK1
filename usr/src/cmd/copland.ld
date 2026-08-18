@@ -5,15 +5,20 @@
  * Copyright (c) 2026 Yaku Makki
  * SPDX-License-Identifier: 4P1-Custom
  *
- * Copland loads at 0x800000 (same zone as m4sh).  Sprach will link at
- * 0x900000 so the two images can coexist in the flat address space
- * after Copland forks and execs Sprach.
+ * Copland loads at 0x600000.  The flat address space has no paging,
+ * so each live image needs its own zone:
+ *   0x600000  Copland (display server)
+ *   0x700000  Copland shared region (COPLAND_SHM_BASE)
+ *   0x800000  init / login / m4sh / mdm (shell zone)
+ *   0x900000  Sprach (window manager)
+ * Copland forks and execs Sprach; init forks Copland and stays in
+ * the 0x800000 zone for the serial login chain.
  */
 
 ENTRY(_start)
 
 SECTIONS {
-    . = 0x800000;
+    . = 0x600000;
 
     .text ALIGN(4096) : {
         *(.text)

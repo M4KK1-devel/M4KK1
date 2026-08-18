@@ -11,6 +11,7 @@
 #include "../../include/console.h"
 #include "../../include/memory.h"
 #include "../../include/string.h"
+#include "../../include/kstrtox.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -40,26 +41,42 @@ uint32_t
 mkrn_net_string_to_ip(const char *pString)
 {
     uint32_t u32Ip = 0;
-    uint32_t u32Octet = 0;
     int dots = 0;
+    const char *p = pString;
 
-    while (*pString) {
-        if (*pString >= '0' && *pString <= '9')
-            u32Octet =
-                u32Octet * 10 + (*pString - '0');
-        else if (*pString == '.') {
-            u32Ip = (u32Ip << 8) | u32Octet;
-            u32Octet = 0;
-            dots++;
-        } else
-            return 0;
-        pString++;
+    while (*p) {
+        unsigned int octet = 0;
+        const char *q = p;
+        while (*q >= '0' && *q <= '9')
+            q++;
+        if (q == p)
+            return 0;           /* no digits */
+        {
+            char seg[4];
+            size_t len = (size_t)(q - p);
+            if (len > 3)
+                return 0;
+            for (size_t i = 0; i < len; i++)
+                seg[i] = p[i];
+            seg[len] = '\0';
+            if (mkrn_kstrtouint(seg, 10, &octet) < 0 ||
+                octet > 255)
+                return 0;
+        }
+        u32Ip = (u32Ip << 8) | octet;
+        dots++;
+        p = q;
+        if (*p == '.') {
+            p++;
+            if (!*p)
+                return 0;       /* trailing dot */
+        } else if (*p) {
+            return 0;           /* garbage */
+        }
     }
 
-    if (dots == 3) {
-        u32Ip = (u32Ip << 8) | u32Octet;
+    if (dots == 4)
         return u32Ip;
-    }
     return 0;
 }
 

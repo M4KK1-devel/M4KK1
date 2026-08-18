@@ -29,3 +29,18 @@ Thumbs.db
 
 # Build output directory
 output/
+
+# Test/run artifacts — keep the tree root clean
+/*.ppm
+/*.png
+/*.log
+/verify_ocr.txt
+
+# Vibe
+AGENTS.md
+CLAUDE.md
+
+# Local debug/temp artifacts
+/diagnosis_report.txt
+/docs/real.patch
+__pycache__/

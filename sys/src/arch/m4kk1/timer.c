@@ -13,6 +13,7 @@
 #include "../../include/stdint.h"
 #include "../../include/console.h"
 #include "../../include/kernel.h"
+#include "../../include/process.h"
 #include "../../include/string.h"
 
 static void
@@ -240,9 +241,14 @@ mkrn_timer_get_uptime(void)
 /**
  * @brief  Timer interrupt handler — called on each
  *         PIT tick.
+ *
+ * @param  frame  pointer to the interrupt frame pushed by
+ *         irq_timer: [0..7] = pusha regs (edi,esi,ebp,esp,
+ *         ebx,edx,ecx,eax), [8] = interrupted eip,
+ *         [9] = interrupted cs, [10] = eflags.
  */
 void
-mkrn_timer_handler(void)
+mkrn_timer_handler(uint32_t *frame)
 {
     u32TimerTicks++;
     u64TimerNanoseconds +=

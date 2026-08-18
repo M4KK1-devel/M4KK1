@@ -42,19 +42,20 @@ SECTIONS {
     /* 内核结束标记 */
     __kernel_end = .;
 
-    /* 内核栈空间（由entry.asm定义） */
-    /* .bootstrap_stack ALIGN(4096) (NOLOAD) : */
-    /* { */
-    /*     __stack_bottom = .; */
-    /*     . += 16384; */  /* 16KB栈 */
-    /*     __stack_top = .; */
-    /* } */
-
     /* 内核堆空间 */
     .kernel_heap ALIGN(4096) : {
         __heap_start = .;
         . += 0x400000;  /* 4MB堆 */
         __heap_end = .;
+    }
+
+    /* 内核栈空间（必须位于堆之后，避免与 .bss 重叠：
+       32KB 栈紧邻 .bss 尾部时，深层调用会压入
+       cursor_bg/back_buffer 等静态区，破坏 VESA 显存缓冲） */
+    .bootstrap_stack ALIGN(4096) (NOLOAD) : {
+        __stack_bottom = .;
+        *(.bootstrap_stack)
+        __stack_top = .;
     }
 
     /* 丢弃不需要的段 */

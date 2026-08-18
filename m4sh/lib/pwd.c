@@ -184,8 +184,14 @@ int musr_verify_password(const char *password, const char *stored_hash)
 void musr_make_password_hash(const char *password, char *hash_out)
 {
     uint8_t salt[SALT_SIZE];
-    for (int i = 0; i < SALT_SIZE; i++)
-        salt[i] = (uint8_t)(i * 17 + 37);
+    uint32_t t = (uint32_t)musr_sc_time();
+    uint32_t u = musr_sc_uptime();
+    uint32_t a = (uint32_t)(uintptr_t)&hash_out;
+    for (int i = 0; i < SALT_SIZE; i++) {
+        salt[i] = (uint8_t)((t ^ u ^ a ^ (t << (i & 7)) ^ (u >> (i & 7))) & 0xFF);
+        t = t * 1103515245u + 12345u;
+        u = u * 1664525u + 1013904223u;
+    }
     musr_hash_password(password, salt, hash_out);
 }
 
@@ -231,16 +237,8 @@ static int parse_passwd_line(const char *line, passwd_entry_t *entry)
 int musr_read_passwd_db(passwd_entry_t *entries, int max)
 {
     int fd = musr_sc_open("/export/cfg/passwd.db", 0);
-    if (fd < 0) {
-        entries[0].uid = 0;
-        entries[0].gid = 0;
-        musr_strncpy(entries[0].username, "root", sizeof(entries[0].username)-1);
-        musr_strncpy(entries[0].home, "/root", sizeof(entries[0].home)-1);
-        musr_strncpy(entries[0].shell, "/bin/m4sh", sizeof(entries[0].shell)-1);
-        musr_strncpy(entries[0].gecos, "System Administrator", sizeof(entries[0].gecos)-1);
-        musr_make_password_hash("123456", entries[0].password_hash);
-        return 1;
-    }
+    if (fd < 0)
+        return 0;
     char buf[2048];
     int n = musr_sc_read(fd, buf, sizeof(buf) - 1);
     musr_sc_close(fd);
@@ -264,16 +262,8 @@ int musr_read_passwd_db(passwd_entry_t *entries, int max)
             line[li++] = buf[i];
         }
     }
-    if (count == 0) {
-        entries[0].uid = 0;
-        entries[0].gid = 0;
-        musr_strncpy(entries[0].username, "root", sizeof(entries[0].username)-1);
-        musr_strncpy(entries[0].home, "/root", sizeof(entries[0].home)-1);
-        musr_strncpy(entries[0].shell, "/bin/m4sh", sizeof(entries[0].shell)-1);
-        musr_strncpy(entries[0].gecos, "System Administrator", sizeof(entries[0].gecos)-1);
-        musr_make_password_hash("123456", entries[0].password_hash);
-        return 1;
-    }
+    if (count == 0)
+        return 0;
     return count;
 }
 

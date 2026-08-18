@@ -47,6 +47,8 @@ musr_cmd_t musr_cmd_table[] = {
     {"batch",  musr_cmd_batch,  "Batch schedule"},
     {"calc",   musr_cmd_calc,   "Full bc-replacement calculator"},
     {"blkid",  musr_cmd_blkid,  "Block device info"},
+    {"dd",     musr_cmd_dd,     "Copy raw data (if=/of=/bs=/count=)"},
+    {"beep",   musr_cmd_beep,   "Play a tone (beep [hz [ms]])"},
     {"cal",    musr_cmd_cal,    "Calendar"},
     {"diff",   musr_cmd_diff,   "Compare files"},
     {"sead",   musr_cmd_sead,   "Stream editor (sed/awk replacement)"},
@@ -60,6 +62,8 @@ musr_cmd_t musr_cmd_table[] = {
     {"cu",     musr_cmd_cu,     "Change user (switch account)"},
     {"userlog",musr_cmd_userlog,"Show login history"},
     {"gfx_test",musr_cmd_gfx_test,"Draw graphics test pattern"},
+    {"pcc",    musr_cmd_pcc,     "Self-hosted C compiler"},
+    {"cc",     musr_cmd_cc,      "C compiler (alias for pcc)"},
     {NULL, NULL, NULL}
 };
 
@@ -662,6 +666,14 @@ void _start(void)
     cmd_buf[0] = '\0';
     hist_count = hist_cur = 0;
     cwd_init();
+#ifdef M4SH_GRAPHICAL
+    /* Graphical terminal child (spawned by /bin/terminal via
+     * fork + exec): we already run with inherited credentials from
+     * the logged-in session — skip the serial login gate and the
+     * boot-setup path entirely; go straight to the prompt on the
+     * pipe. */
+    musr_login_ok = 1;
+#else
     if (m4k_geteuid() == 0) {
         musr_boot_setup();
         if (musr_sc_getpid() == 1) {
@@ -672,6 +684,7 @@ void _start(void)
             musr_cmd_login(1, login_argv);
         }
     }
+#endif
     musr_setup_env();
     render_line();
     while (1) {

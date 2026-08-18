@@ -10,12 +10,15 @@
 #include <vfs.h>
 #include <video.h>
 #include <mouse.h>
+#include <sb16.h>
 #include <console.h>
+#include <keyboard.h>
 #include <idt.h>
 #include <kernel.h>
 #include <ldso.h>
 #include <process.h>
 #include <signal.h>
+#include <timer.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -181,6 +184,7 @@ const char *m4k_syscall_get_name(uint32_t num)
         case M4K_SYS_BRK: return "m4k_brk";
         case M4K_SYS_REGISTER_SESSION: return "m4k_register_session";
         case M4K_SYS_GET_SESSION_LIST: return "m4k_get_session_list";
+        case M4K_SYS_YIELD: return "m4k_yield";
         case M4K_SYS_GET_FRAMEBUFFER_INFO: return "m4k_get_framebuffer_info";
         case M4K_SYS_DRAW_TEST_PATTERN: return "m4k_draw_test_pattern";
         case M4K_SYS_GET_MOUSE_EVENT: return "m4k_get_mouse_event";
@@ -189,6 +193,9 @@ const char *m4k_syscall_get_name(uint32_t num)
         case M4K_SYS_DRAW_TEXT: return "m4k_draw_text";
         case M4K_SYS_GET_KEYBOARD_EVENT: return "m4k_get_keyboard_event";
         case M4K_SYS_GFX_BLIT: return "m4k_gfx_blit";
+        case M4K_SYS_FILL_GRADIENT: return "m4k_fill_gradient";
+        case M4K_SYS_BEEP: return "m4k_beep";
+        case M4K_SYS_SLEEP: return "m4k_sleep";
         default: return "unknown";
     }
 }
@@ -224,10 +231,68 @@ static uint32_t m4k_syscall_keyboard_event_impl(
         char ch = mkrn_keyboard_get_char();
         ev->ascii_char = (uint8_t)ch;
         ev->keycode = 0;
-        ev->modifiers = 0;
+        /* Expose the live shift/ctrl/alt state so window managers can
+         * detect chord shortcuts (e.g. Ctrl+Alt+T).  The low byte
+         * carries SHIFT=1, CTRL=2, ALT=4. */
+        ev->modifiers = (uint8_t)(mkrn_keyboard_get_modifiers() & 0xFFu);
         ev->reserved = 0;
         return 1;
     }
+    return 0;
+}
+
+/* -- Syscall: get absolute mouse position (kernel-accumulated) --
+ * Lets the WM hit-test with the exact coordinates the visible cursor
+ * uses (mouse driver accumulation + 2x ballistics + screen clamp). */
+static uint32_t m4k_syscall_mouse_pos_impl(
+    uint32_t buf_ptr, uint32_t arg2, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5)
+{
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+
+    int32_t *pos = (int32_t *)buf_ptr;
+    if (!pos)
+        return (uint32_t)-1;
+
+    if (!mkrn_mouse_is_initialized()) {
+        pos[0] = 0;
+        pos[1] = 0;
+        return 0;
+    }
+    mkrn_mouse_get_position(&pos[0], &pos[1]);
+    return 1;
+}
+
+/* -- Syscall: beep (SB16 square-wave tone) -- */
+static uint32_t m4k_syscall_beep_impl(
+    uint32_t u32Hz, uint32_t u32Ms, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5)
+{
+    (void)arg3; (void)arg4; (void)arg5;
+
+    if (!mkrn_sb16_available())
+        return 1;
+    if (mkrn_sb16_beep(u32Hz, u32Ms) != 0)
+        return 1;
+    return 0;
+}
+
+/* -- Syscall: sleep (busy-wait N ms; used for frame pacing) --
+ *
+ * Called from the int 0x4D interrupt gate, which clears IF on entry,
+ * so re-enable interrupts before the hlt-based wait or the PIT IRQ
+ * would never wake it.  The ISR yields to other processes right after
+ * this handler returns (cooperative scheduling). */
+static uint32_t m4k_syscall_sleep_impl(uint32_t arg1, uint32_t arg2,
+                                       uint32_t arg3, uint32_t arg4,
+                                       uint32_t arg5)
+{
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    uint32_t ms = arg1;
+    if (ms > 10000)
+        ms = 10000;
+    __asm__ volatile("sti");
+    mkrn_timer_wait(ms);
     return 0;
 }
 
@@ -300,6 +365,18 @@ static uint32_t m4k_syscall_kill_impl(uint32_t arg1, uint32_t arg2, uint32_t arg
     (void)arg3; (void)arg4; (void)arg5;
     pid_t pid = (pid_t)arg1;
     int sig = (int)arg2;
+    mkrn_process_dump_sched();
+    mkrn_console_write("KILL pid=");
+    mkrn_console_write_dec((uint32_t)pid);
+    mkrn_console_write(" sig=");
+    mkrn_console_write_dec((uint32_t)sig);
+    mkrn_console_write(" inq=");
+    mkrn_console_write_dec((uint32_t)mkrn_process_is_ready(pid));
+    mkrn_console_write(" tags=");
+    mkrn_console_write_hex(mkrn_process_get_tags(pid));
+    mkrn_console_write(" esp=");
+    mkrn_console_write_hex(mkrn_process_get_thread_esp(pid));
+    mkrn_console_write("\n");
     return (uint32_t)mkrn_kill(pid, sig);
 }
 
@@ -315,6 +392,16 @@ static uint32_t m4k_syscall_getpid_impl(uint32_t arg1, uint32_t arg2, uint32_t a
 {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     return mkrn_process_get_pid();
+}
+
+/* -- Syscall: yield -- */
+/* The m4k syscall ISR runs mkrn_process_yield() after every handler,
+ * so a no-op handler is all that is needed for cooperative handoff. */
+static uint32_t m4k_syscall_yield_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                                       uint32_t arg4, uint32_t arg5)
+{
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return 0;
 }
 
 static uint32_t m4k_syscall_setns_impl(uint32_t arg1, uint32_t arg2, uint32_t arg3,
@@ -542,6 +629,7 @@ void m4k_syscall_init_handlers(void)
     m4k_syscall_register(M4K_SYS_KILL, m4k_syscall_kill_impl);
     m4k_syscall_register(M4K_SYS_GETPPID, m4k_syscall_getppid_impl);
     m4k_syscall_register(M4K_SYS_GETPID, m4k_syscall_getpid_impl);
+    m4k_syscall_register(M4K_SYS_YIELD, m4k_syscall_yield_impl);
     m4k_syscall_register(M4K_SYS_SETNS, m4k_syscall_setns_impl);
     m4k_syscall_register(M4K_SYS_GETPROCS, m4k_syscall_getprocs_impl);
     m4k_syscall_register(M4K_SYS_GETUID, m4k_syscall_getuid_impl);
@@ -560,14 +648,22 @@ void m4k_syscall_init_handlers(void)
     m4k_syscall_register(M4K_SYS_BRK, m4k_syscall_brk_impl);
     m4k_syscall_register(M4K_SYS_REGISTER_SESSION, m4k_syscall_register_session_impl);
     m4k_syscall_register(M4K_SYS_GET_SESSION_LIST, m4k_syscall_get_session_list_impl);
+#ifdef M4K_FULL
     m4k_syscall_register(M4K_SYS_GET_FRAMEBUFFER_INFO, m4k_syscall_get_framebuffer_info_impl);
     m4k_syscall_register(M4K_SYS_DRAW_TEST_PATTERN, m4k_syscall_draw_test_pattern_impl);
-    m4k_syscall_register(M4K_SYS_GET_MOUSE_EVENT, m4k_syscall_mouse_event_impl);
     m4k_syscall_register(M4K_SYS_FLIP, m4k_syscall_flip_impl);
+    m4k_syscall_register(M4K_SYS_FLIP_RECT, m4k_syscall_flip_rect_impl);
+    m4k_syscall_register(M4K_SYS_UPDATE_CURSOR, m4k_syscall_update_cursor_impl);
     m4k_syscall_register(M4K_SYS_DRAW_RECT, m4k_syscall_draw_rect_impl);
     m4k_syscall_register(M4K_SYS_DRAW_TEXT, m4k_syscall_draw_text_impl);
-    m4k_syscall_register(M4K_SYS_GET_KEYBOARD_EVENT, m4k_syscall_keyboard_event_impl);
     m4k_syscall_register(M4K_SYS_GFX_BLIT, m4k_syscall_gfx_blit_impl);
+    m4k_syscall_register(M4K_SYS_FILL_GRADIENT, m4k_syscall_fill_gradient_impl);
+#endif
+    m4k_syscall_register(M4K_SYS_GET_MOUSE_EVENT, m4k_syscall_mouse_event_impl);
+    m4k_syscall_register(M4K_SYS_GET_MOUSE_POS, m4k_syscall_mouse_pos_impl);
+    m4k_syscall_register(M4K_SYS_GET_KEYBOARD_EVENT, m4k_syscall_keyboard_event_impl);
+    m4k_syscall_register(M4K_SYS_BEEP, m4k_syscall_beep_impl);
+    m4k_syscall_register(M4K_SYS_SLEEP, m4k_syscall_sleep_impl);
 
     M4K_LOG_INFO("M4KK1 system call handlers registered");
 }

@@ -3,7 +3,7 @@
 
 set -e
 
-PCC_DIR="/mnt/f/M4KK1/usr/src/tools/pcc-20220331"
+PCC_DIR="$(cd "$(dirname "$0")" && pwd)/pcc-20220331"
 PREFIX="$HOME/.local"
 
 echo "Installing PCC to $PREFIX..."

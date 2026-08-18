@@ -137,7 +137,7 @@ void mkrn_timer_set_rtc(mkrn_time_t *time);
  *
  * Return: void
  */
-void mkrn_timer_handler(void);
+void mkrn_timer_handler(uint32_t *frame);
 
 /**
  * mkrn_timer_usleep - Sleep for specified microseconds

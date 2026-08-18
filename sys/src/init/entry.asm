@@ -107,5 +107,5 @@ SECTION .rodata
 ; Stack space
 SECTION .bootstrap_stack, nobits
     align 4096
-    resb 32768          ; 32KB stack space
+    resb 65536          ; 64KB stack space (deep yafs btree recursion uses ~33KB)
 __stack_top:

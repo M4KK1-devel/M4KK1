@@ -213,6 +213,8 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap)
             } else if (*format == 'c') {
                 int c = va_arg(ap, int);
                 if (pos < size - 1) str[pos++] = c;
+            } else if (*format == '%') {
+                if (pos < size - 1) str[pos++] = '%';
             }
             format++;
         } else {

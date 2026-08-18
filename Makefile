@@ -67,7 +67,7 @@ iso:
 # Test target
 .PHONY: test
 test:
-	@$(MAKE) -C test all
+	@bash tools/testing/test_all.sh
 
 # Compiler targets
 .PHONY: compilers

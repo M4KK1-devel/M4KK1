@@ -465,7 +465,15 @@ mkrn_free(void *pPtr)
     if (pPtr == NULL)
         return;
 
-    mkrn_mem_block_t *pBlock = pKernelHeapBlocks;
+    /* O(1) fast path: every mkrn_alloc hands out
+     * (block + sizeof(mkrn_mem_block_t)), so the owning header sits
+     * directly below the returned pointer.  Validate the back-computed
+     * header and fall back to the full-list scan if it does not match
+     * (defensive against foreign pointers). */
+    mkrn_mem_block_t *pBlock =
+        (mkrn_mem_block_t *)pPtr - 1;
+    if ((void *)pBlock->start != pPtr || !pBlock->used)
+        pBlock = pKernelHeapBlocks;
     while (pBlock != NULL) {
         if ((void *)pBlock->start == pPtr
             && pBlock->used)

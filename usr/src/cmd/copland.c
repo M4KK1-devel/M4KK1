@@ -19,6 +19,7 @@
 
 #include "../lib/libgui.h"
 #include "../lib/libcopland.h"
+#include "../lib/mkrn_rect.h"
 
 /* Global variables required by m4sh.h functions */
 int out_fd = 1;
@@ -82,16 +83,74 @@ static void copland_render_surface(const struct copland_surface *s)
     gui_draw_rect(s->x + s->w - 1, s->y, 1, s->h, COPLAND_COLOR_DARK);
 }
 
+/* Wallpaper gradient fill clipped to a region (incremental path).
+ * One kernel fill_gradient syscall paints the clipped rect with the
+ * same full-screen gradient math (top at y=0, bottom at fb height-1)
+ * the boot composite uses. */
+static void copland_wallpaper_rect(int x, int y, int w, int h)
+{
+    struct m4k_framebuffer_info fb;
+    if (m4k_get_framebuffer_info(&fb) != 0 || fb.height <= 1)
+        return;
+    /* Same palette as the boot composite's gui_draw_gradient call —
+     * the old code used top green=0x44 here vs 0x00 in the full
+     * composite, leaving a visible color seam on incremental
+     * repaints.  Unified now that both paths share the kernel
+     * gradient primitive. */
+    m4k_fill_gradient(x, y, w, h, 0x00000044, 0x000066FF);
+}
+
+static void copland_composite_region(struct copland_shm *shm,
+                                     const struct mkrn_rect *r)
+{
+    int i;
+    int rx = r->left, ry = r->top;
+    int rw = r->right - r->left, rh = r->bottom - r->top;
+
+    copland_wallpaper_rect(rx, ry, rw, rh);
+
+    for (i = 0; i < COPLAND_MAX_SURFACES; i++) {
+        const struct copland_surface *s = &shm->surfaces[i];
+        if (!s->in_use || !(s->flags & COPLAND_SURF_VISIBLE))
+            continue;
+        if (s->w <= 0 || s->h <= 0)
+            continue;
+        /* intersect surface rect with the damage region
+         * (mkrn_rect_intersect semantics) */
+        struct mkrn_rect isect = { s->x, s->y, s->x + s->w, s->y + s->h };
+        mkrn_rect_intersect(&isect, r);
+        if (mkrn_rect_is_empty(&isect))
+            continue;
+        if (s->buffer_ptr) {
+            /* STRIDE CONTRACT (see m4kk1-graphics-stack skill): the
+             * kernel derives the source row stride from the PASSED w.
+             * Passing the clipped sub-rect width made it read the
+             * client buffer with the wrong pitch (skewed/torn rows
+             * for any partially off-screen surface).  Pass the FULL
+             * surface rect from its origin instead — the kernel clips
+             * to the screen itself, keeping the source stride equal
+             * to s->w.  Overdraw past the damage region is bounded
+             * by the surface size and composited in slot order, so
+             * occlusion stays correct. */
+            m4k_gfx_blit(s->x, s->y, s->w, s->h,
+                         (const void *)(uintptr_t)s->buffer_ptr);
+        } else {
+            gui_draw_rect(isect.left, isect.top,
+                          isect.right - isect.left,
+                          isect.bottom - isect.top, s->color);
+        }
+    }
+
+    m4k_flip_rect(rx, ry, rw, rh);
+}
+
 static void copland_composite(struct copland_shm *shm)
 {
     int i;
 
-    /* Desktop background */
-    gui_draw_gradient(0x002040A0, 0x00102050);
-
-    /* Status bar */
-    gui_draw_rect(0, 0, 800, 22, 0x00101030);
-    gui_draw_text(10, 4, "Copland ready", 0x00FFFFFF, 0x00101030);
+    /* Desktop background: default blue gradient wallpaper
+     * (0x000044 → 0x0066FF), same palette as the MDM login screen. */
+    gui_draw_gradient(0x00000044, 0x000066FF);
 
     /* All live surfaces, back to front */
     for (i = 0; i < COPLAND_MAX_SURFACES; i++) {
@@ -224,13 +283,76 @@ void _start(void)
     int stale_ticks = 0;
     int wm_pid = copland_spawn_wm(shm);
 
-    /* Server loop: consume IPC commands and recompose the screen */
+    /* Server loop: consume IPC commands and recompose the screen
+     * only when the dirty flag is set.  Cursor updates are handled
+     * separately by the kernel (m4k_update_cursor) and do not need
+     * a full composite+flip. */
     for (;;) {
-        copland_handle_commands(shm);
-        copland_composite(shm);
+        /* Session shutdown request from the WM (menu Lock/Shut Down):
+         * tear everything down and exit — MDM is waiting on our pid
+         * and will redraw the login screen. */
+        if (shm->shutdown) {
+            ser_puts("[COPLAND] shutdown requested, exiting...\n");
+            if (wm_pid > 0)
+                m4k_kill(wm_pid, COPLAND_SIGKILL);
+            m4k_exit(0);
+        }
+
+        int had_commands = 0;
+        {
+            uint32_t saved_r = shm->cmd_read_idx;
+            copland_handle_commands(shm);
+            had_commands = (shm->cmd_read_idx != saved_r);
+        }
+
+        if (shm->dirty || had_commands) {
+            copland_composite(shm);
+            shm->dirty = 0;
+            /* full-frame composite consumed all pending damage */
+            for (int i = 0; i < COPLAND_MAX_SURFACES; i++)
+                shm->surfaces[i].dmg_w = 0;
+        } else {
+            /* Incremental path: union every pending per-surface damage
+             * rect (union-bounds semantics) and
+             * re-composite only that region, then flip it. */
+            struct mkrn_rect total;
+            int incr = 0;
+            total.left = 1; total.top = 1;
+            total.right = 0; total.bottom = 0;   /* empty */
+            for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
+                struct copland_surface *s = &shm->surfaces[i];
+                if (s->dmg_w > 0 && s->dmg_h > 0) {
+                    struct mkrn_rect r;
+                    r.left = s->dmg_x; r.top = s->dmg_y;
+                    r.right = s->dmg_x + s->dmg_w;
+                    r.bottom = s->dmg_y + s->dmg_h;
+                    mkrn_rect_union(&total, &r);
+                    incr = 1;
+                }
+                s->dmg_w = 0;
+            }
+            if (incr) {
+                struct mkrn_rect clip;
+                clip.left = 0; clip.top = 0;
+                clip.right = 800; clip.bottom = 600;
+                mkrn_rect_intersect(&total, &clip);
+                if (!mkrn_rect_is_empty(&total))
+                    copland_composite_region(shm, &total);
+            } else {
+                /* The clean path performs no syscalls; without an
+                 * explicit yield, Sprach never gets CPU to re-set the
+                 * dirty flag, the heartbeat freezes, and the watchdog
+                 * kills a healthy WM.  Yield here so Sprach can
+                 * repaint and beat its heart. */
+                m4k_yield();
+            }
+        }
 
         /* WM watchdog: if the window manager stops beating its heart,
-         * tear it down and relaunch it. */
+         * tear it down and relaunch it.  The WM owns every client
+         * surface, so clear the whole table before relaunching;
+         * otherwise a crashed WM leaks surfaces and the next instance
+         * can never allocate a slot (COPLAND_MAX_SURFACES=16). */
         if (shm->heartbeat != last_beat) {
             last_beat = shm->heartbeat;
             stale_ticks = 0;
@@ -238,12 +360,18 @@ void _start(void)
             ser_puts("[COPLAND] WM heartbeat stalled, restarting Sprach...\n");
             if (wm_pid > 0)
                 m4k_kill(wm_pid, COPLAND_SIGKILL);
+            for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
+                if (shm->surfaces[i].in_use)
+                    shm->surfaces[i].in_use = 0;
+            }
+            shm->surface_count = 0;
+            shm->dirty = 1;
             wm_pid = copland_spawn_wm(shm);
             last_beat = shm->heartbeat;
             stale_ticks = 0;
         }
 
         /* Coarse frame pacing (no sleep syscall in 4P1) */
-        for (volatile int i = 0; i < 150000; i++);
+        for (volatile int i = 0; i < 5000; i++);
     }
 }

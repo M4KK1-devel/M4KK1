@@ -24,6 +24,9 @@
 #include <video.h>
 #include <mouse.h>
 #include <keyboard.h>
+#include <pci.h>
+#include <ata.h>
+#include <sb16.h>
 #include <yafs.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -35,12 +38,16 @@ int yafs_dev_write(u64 lba, const void *buf);
 void m4k_syscall_init(void);
 void mkrn_shell_main(void);
 
+#ifndef M4K_MINIMAL
 extern unsigned char init_init_elf[];
 extern unsigned int init_init_elf_len;
 extern unsigned char login_init_elf[];
 extern unsigned int login_init_elf_len;
 extern unsigned char m4sh_init_elf[];
 extern unsigned int m4sh_init_elf_len;
+extern unsigned char m4shg_init_elf[];
+extern unsigned int m4shg_init_elf_len;
+#ifdef M4K_FULL
 extern unsigned char mdm_init_elf[];
 extern unsigned int mdm_init_elf_len;
 extern unsigned char mdm_mini_init_elf[];
@@ -49,12 +56,26 @@ extern unsigned char flip_test_init_elf[];
 extern unsigned int flip_test_init_elf_len;
 extern unsigned char copland_init_elf[];
 extern unsigned int copland_init_elf_len;
+extern unsigned char terminal_init_elf[];
+extern unsigned int terminal_init_elf_len;
+extern unsigned char fm_init_elf[];
+extern unsigned int fm_init_elf_len;
 extern unsigned char sprach_stack_init_elf[];
 extern unsigned int sprach_stack_init_elf_len;
 extern unsigned char sprach_tiling_init_elf[];
 extern unsigned int sprach_tiling_init_elf_len;
 extern unsigned char sprach_scroll_init_elf[];
 extern unsigned int sprach_scroll_init_elf_len;
+extern unsigned char pcc_init_elf[];
+extern unsigned int pcc_init_elf_len;
+#endif
+#ifdef M4K_RECOVERY
+extern unsigned char fsck_init_elf[];
+extern unsigned int fsck_init_elf_len;
+extern unsigned char reset_passwd_init_elf[];
+extern unsigned int reset_passwd_init_elf_len;
+#endif
+#endif
 
 void mkrn_yafs_test(void);
 int mkrn_yafs_create_fhs(u64 *root_lba);
@@ -92,6 +113,18 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
             "ERROR: Invalid bootloader magic! Halting.\n");
         mkrn_panic("Invalid bootloader magic");
     }
+
+#ifdef M4K_MINIMAL
+    /* Minimal build: boot banner only, then halt. No filesystem,
+     * no drivers, no userspace. Used for boot smoke tests. */
+    mkrn_console_write("=====================================\n");
+    mkrn_console_write("[MINIMAL] System ready\n");
+    mkrn_console_write("Minimal build - halting (no interaction).\n");
+    mkrn_console_write("=====================================\n");
+    for (;;) {
+        M4K_HLT();
+    }
+#endif
 
     mkrn_console_write("Kernel Version: ");
     mkrn_console_write_dec((kernel_info.version >> 16) & 0xFF);
@@ -154,6 +187,7 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
     mkrn_procfs_init();
     mkrn_sessions_init();
     mkrn_device_tree_init();
+#ifdef M4K_FULL
     mkrn_vesa_init();
     /* Graphics test: draw a pattern on screen */
     mkrn_vesa_clear(VESA_COLOR_BLACK);
@@ -164,9 +198,20 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
     mkrn_vesa_put_string(50, 250, "Hello M4KK1 GUI!", VESA_COLOR_WHITE, VESA_COLOR_BLACK);
     mkrn_vesa_put_string(50, 270, "Framebuffer 800x600x32", VESA_COLOR_YELLOW, VESA_COLOR_BLACK);
     mkrn_vesa_flip();
+#endif
 
     mkrn_console_write(
         "   Standard and M4KK1 system calls initialized.\n");
+
+    mkrn_console_write("6.3. Scanning PCI Bus...\n");
+    int pci_count = mkrn_pci_scan_bus();
+    if (pci_count > 0) {
+        mkrn_console_write("   PCI bus scanned, ");
+        mkrn_console_write_dec((u32)pci_count);
+        mkrn_console_write(" device(s) detected.\n");
+    } else {
+        mkrn_console_write("   WARNING: No PCI devices found!\n");
+    }
 
     mkrn_console_write("6.4. Initializing PS/2 Keyboard...\n");
     mkrn_kbd_init();
@@ -181,9 +226,31 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
     mkrn_idt_enable_interrupts();
     if (mkrn_mouse_is_initialized()) {
         mkrn_console_write("   PS/2 mouse driver initialized.\n");
+#ifdef M4K_FULL
         mkrn_vesa_cursor_enable(1);
+#endif
     } else
         mkrn_console_write("   PS/2 mouse not detected.\n");
+
+    mkrn_console_write("6.6. Initializing ATA/IDE storage...\n");
+    int ata_count = mkrn_ata_init();
+    if (ata_count > 0) {
+        mkrn_devfs_init();
+        mkrn_console_write("   DevFS initialized (/dev/hda).\n");
+    } else {
+        mkrn_console_write("   No ATA drives detected.\n");
+    }
+
+    mkrn_console_write("6.7. Initializing SB16 audio...\n");
+    if (mkrn_sb16_init() == 0) {
+        mkrn_console_write("   Playing 440Hz boot beep...\n");
+        if (mkrn_sb16_beep(440, 200) == 0)
+            mkrn_console_write("   Boot beep complete.\n");
+        else
+            mkrn_console_write("   WARNING: boot beep failed.\n");
+    } else {
+        mkrn_console_write("   No SB16 audio device found.\n");
+    }
 
     mkrn_console_write("7. Initializing Dynamic Linker...\n");
     if (mkrn_ll_init() != 0) {
@@ -267,6 +334,7 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
     }
 
     mkrn_console_write("9. Writing userspace ELFs and user DB to YAFS...\n");
+#ifndef M4K_MINIMAL
     {
         int fd = mkrn_vfs_open("/bin/login",
             M4K_O_CREAT | M4K_O_WRONLY);
@@ -295,6 +363,23 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
             mkrn_console_write("   WARNING: failed to create /bin/m4sh\n");
         }
     }
+    {
+        int fd = mkrn_vfs_open("/bin/m4shg",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, m4shg_init_elf,
+                m4shg_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/m4shg written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/m4shg\n");
+        }
+    }
+#endif /* M4K_MINIMAL */
+
+#ifdef M4K_FULL
     {
         int fd = mkrn_vfs_open("/bin/mdm",
             M4K_O_CREAT | M4K_O_WRONLY);
@@ -381,6 +466,35 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
         }
     }
     {
+        /* Terminal emulator: Sprach forks+execs this on Ctrl+Alt+T */
+        int fd = mkrn_vfs_open("/bin/terminal",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, terminal_init_elf,
+                terminal_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/terminal written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/terminal\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/fm",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, fm_init_elf,
+                fm_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/fm written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/fm\n");
+        }
+    }
+    {
         int fd = mkrn_vfs_open("/bin/sprach_stack",
             M4K_O_CREAT | M4K_O_WRONLY);
         if (fd >= 0) {
@@ -423,6 +537,69 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
         }
     }
     {
+        /* Self-hosted C compiler: installed as /bin/pcc and /bin/cc */
+        int fd = mkrn_vfs_open("/bin/pcc",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, pcc_init_elf,
+                pcc_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/pcc written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/pcc\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/cc",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, pcc_init_elf,
+                pcc_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/cc written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/cc\n");
+        }
+    }
+#endif /* M4K_FULL */
+
+#ifdef M4K_RECOVERY
+    {
+        /* Recovery tools: filesystem check and password reset */
+        int fd = mkrn_vfs_open("/bin/fsck",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, fsck_init_elf,
+                fsck_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/fsck written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/fsck\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/reset-passwd",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, reset_passwd_init_elf,
+                reset_passwd_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/reset-passwd written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/reset-passwd\n");
+        }
+    }
+#endif /* M4K_RECOVERY */
+
+    {
         mkrn_vfs_create_file_yafs("/export/home/testuser");
     }
     {
@@ -430,8 +607,10 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
         /* Format: username:uid:gid:home:shell:gecos:password_hash */
         /* Password hash format: salt_hex + "$" + sha256_hash_hex */
         /* Using deterministic salt: salt[i] = i * 17 + 37 */
-        static const char pw_root[]   = "root:0:0:/export/root:/bin/m4sh:System Administrator:25364758697a8b9cadbecfe0f1021324$8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92\n";
-        static const char pw_test[]   = "testuser:1001:1001:/home/testuser:/bin/m4sh:Test User:25364758697a8b9cadbecfe0f1021324$5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a188e7a6f1b5c4f\n";
+        /* root 哈希 = SHA-256("123456" + salt)，testuser = SHA-256("yakumakki" + salt)，
+           与 musr_verify_password 的加盐验证算法一致 */
+        static const char pw_root[]   = "root:0:0:/export/root:/bin/m4sh:System Administrator:25364758697a8b9cadbecfe0f1021324$5702872e7ea90f7450a2c8cb2e9d3aaf36a681a7f6ebc9905d21e4ef0093667b\n";
+        static const char pw_test[]   = "testuser:1001:1001:/home/testuser:/bin/m4sh:Test User:25364758697a8b9cadbecfe0f1021324$b624c9a08f61ef9adb36f92d22b6f090d5d7cc3e9b8078873ba3ed3c70db3240\n";
         static const char pw_nobody[] = "nobody:65534:65534:/export/srv/nobody:/sbin/nologin:Unprivileged:25364758697a8b9cadbecfe0f1021324$0000000000000000000000000000000000000000000000000000000000000000\n";
         int fd = mkrn_vfs_open("/export/cfg/passwd.db",
             M4K_O_CREAT | M4K_O_WRONLY);
@@ -471,6 +650,7 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
     }
 
     mkrn_console_write("10. Loading init...\n");
+#ifndef M4K_MINIMAL
     int exec_ret = mkrn_execve(
         init_init_elf, init_init_elf_len, "init");
     if (exec_ret != 0) {
@@ -495,6 +675,7 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
 
     mkrn_process_switch_first();
     __builtin_unreachable();
+#endif /* M4K_MINIMAL */
 }
 
 void mkrn_panic(const char *message)

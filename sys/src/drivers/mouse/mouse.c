@@ -55,8 +55,8 @@ static volatile uint32_t mouse_event_tail = 0;
 typedef struct {
     bool     initialized;
     bool     has_wheel;
-    int8_t   x_movement;
-    int8_t   y_movement;
+    int32_t  x_movement;
+    int32_t  y_movement;
     int8_t   z_movement;
     uint8_t  buttons;
     uint8_t  packet[MOUSE_PACKET_SIZE];
@@ -140,13 +140,42 @@ static void
 mouse_process_packet(uint8_t *pPacket)
 {
     mouse_state.buttons = pPacket[0] & 0x07;
-    mouse_state.x_movement = (int8_t)pPacket[1];
-    mouse_state.y_movement = (int8_t)pPacket[2];
 
-    if (pPacket[0] & MOUSE_X_SIGN)
-        mouse_state.x_movement -= 256;
-    if (pPacket[0] & MOUSE_Y_SIGN)
-        mouse_state.y_movement -= 256;
+    /* Overflow packets carry bogus deltas: QEMU's input-send-event with
+     * |delta| > 255 sets the overflow bits.  Clamp instead of trusting
+     * the wrapped magnitude so large jumps still land (direction
+     * preserved, magnitude capped at 255 per packet). */
+    int32_t xm, ym;
+    if (pPacket[0] & MOUSE_X_OVERFLOW)
+        xm = (pPacket[0] & MOUSE_X_SIGN) ? -255 : 255;
+    else
+        xm = (int8_t)pPacket[1];
+    if (pPacket[0] & MOUSE_Y_OVERFLOW)
+        ym = (pPacket[0] & MOUSE_Y_SIGN) ? -255 : 255;
+    else
+        ym = (int8_t)pPacket[2];
+
+    /* 9-bit two's-complement decode for the non-overflow case: the
+     * byte-0 sign bit adds -256 for values in [-256, -129]. */
+    if (!(pPacket[0] & MOUSE_X_OVERFLOW) &&
+        (pPacket[0] & MOUSE_X_SIGN) && !(pPacket[1] & 0x80))
+        xm -= 256;
+    if (!(pPacket[0] & MOUSE_Y_OVERFLOW) &&
+        (pPacket[0] & MOUSE_Y_SIGN) && !(pPacket[2] & 0x80))
+        ym -= 256;
+
+    /* PS/2 device Y grows UPWARD (button toward user = +y); screen
+     * coordinates grow downward — invert the axis. */
+    ym = -ym;
+
+    /* Raw deltas straight through (no ballistics multiplier): the
+     * QMP/QEMU pointer injects absolute-accurate relative deltas and
+     * automated tests expect a 1:1 move.  Human users can move the
+     * hardware mouse faster instead.  Keep the full 9-bit range:
+     * re-casting to int8_t would wrap |delta| > 127 packets and lose
+     * most of a large QMP jump. */
+    mouse_state.x_movement = xm;
+    mouse_state.y_movement = ym;
 
     if (mouse_state.has_wheel
         && mouse_state.packet_index > 3)
@@ -159,13 +188,17 @@ mouse_process_packet(uint8_t *pPacket)
 
     mouse_state.x_position +=
         mouse_state.x_movement;
-    mouse_state.y_position -=
+    mouse_state.y_position +=
         mouse_state.y_movement;
 
     if (mouse_state.x_position < 0)
         mouse_state.x_position = 0;
+    if (mouse_state.x_position > 799)
+        mouse_state.x_position = 799;
     if (mouse_state.y_position < 0)
         mouse_state.y_position = 0;
+    if (mouse_state.y_position > 599)
+        mouse_state.y_position = 599;
 
     uint32_t next_tail = (mouse_event_tail + 1) % MOUSE_EVENT_BUF_SIZE;
     if (next_tail != mouse_event_head) {
@@ -201,6 +234,8 @@ mkrn_mouse_init(void)
 {
     M4K_LOG_INFO("Initializing PS/2 mouse...\n");
     mkrn_memset(&mouse_state, 0, sizeof(mouse_state));
+    mouse_state.x_position = 400;
+    mouse_state.y_position = 300;
 
     mouse_wait_ready();
     __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0xA8), "d"((uint16_t)0x64));
@@ -224,9 +259,13 @@ mkrn_mouse_init(void)
     mouse_wait_ready();
     __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0x60), "d"((uint16_t)0x64));
     mouse_wait_ready();
-    /* Command byte: 0x07 = enable IRQ12 (mouse), keep translation, system flag
-     * Bit 5 = 0 means enable mouse interrupt (was 0x27 which disabled it) */
-    __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0x07), "d"((uint16_t)0x60));
+    /* Command byte: 0x47 = enable IRQ1 (keyboard) AND IRQ12 (mouse),
+     * system flag, and — critical — bit6 PS/2 port-1 TRANSLATION.
+     * Without bit6 (old value 0x07) the controller forwards raw
+     * Set-2 scancodes while the driver keymaps are indexed by Set-1
+     * codes, so every key lookup misses and the keyboard buffer stays
+     * empty (timer IRQ0 unaffected — only keys/mouse die). */
+    __asm__ volatile("outb %0, %1" : : "a"((uint8_t)0x47), "d"((uint16_t)0x60));
 
     mkrn_idt_register_handler(0x2C, (mkrn_int_handler_t)mkrn_mouse_handler);
     pic_unmask_irq(12);
