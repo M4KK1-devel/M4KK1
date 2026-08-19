@@ -31,6 +31,7 @@
  */
 
 #include "../lib/libcopland.h"
+#include "../lib/musr_inline.h"
 #include "../lib/musr_memmove.h"
 #include "m4sh.h"
 
@@ -144,9 +145,19 @@ static void px(int x, int y, uint32_t c)
 
 static void term_rect(int x, int y, int w, int h, uint32_t c)
 {
-    for (int r = y; r < y + h; r++)
-        for (int cc = x; cc < x + w; cc++)
-            px(cc, r, c);
+    /* Row-granular fill with clipping — the old per-pixel loop
+     * pushed every pixel through the px() bounds check call. */
+    int x0 = x > 0 ? x : 0;
+    int y0 = y > 0 ? y : 0;
+    int x1 = x + w;
+    int y1 = y + h;
+    if (x1 > TERM_BUF_W)
+        x1 = TERM_BUF_W;
+    if (y1 > TERM_BUF_H)
+        y1 = TERM_BUF_H;
+    for (int r = y0; r < y1; r++)
+        musr_fill32(&term_buf[(size_t)r * TERM_BUF_W + x0],
+                    (size_t)(x1 - x0), c);
 }
 
 static void term_glyph(int x, int y, char ch, uint32_t fg)

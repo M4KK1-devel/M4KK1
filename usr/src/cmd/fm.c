@@ -17,6 +17,7 @@
 
 #include "m4sh.h"
 #include "../lib/libcopland.h"
+#include "../lib/musr_inline.h"
 
 /* Globals required by m4sh.h */
 int out_fd = 1;
@@ -125,11 +126,9 @@ static void fm_rect(uint32_t *buf, int bw, int x, int y, int w, int h,
         x1 = FM_W;
     if (y1 > FM_H)
         y1 = FM_H;
-    for (int r = y0; r < y1; r++) {
-        uint32_t *px = buf + (size_t)r * bw + x0;
-        for (int cc = x0; cc < x1; cc++)
-            *px++ = c;
-    }
+    for (int r = y0; r < y1; r++)
+        musr_fill32(buf + (size_t)r * bw + x0,
+                    (size_t)(x1 - x0), c);
 }
 
 static void fm_char(uint32_t *buf, int bw, int x, int y, char ch,
@@ -138,10 +137,21 @@ static void fm_char(uint32_t *buf, int bw, int x, int y, char ch,
     if (ch < 0x20 || ch > 0x7F)
         return;
     const uint8_t *g = fm_font5x7[(int)ch - 0x20];
-    for (int col = 0; col < 5; col++)
-        for (int row = 0; row < 7; row++)
+    /* Clip glyph box once against the framebuffer; pixels are
+     * written directly — the old path made 35 fm_rect calls per
+     * character, each redoing the full clip walkthrough. */
+    int x0 = x > 0 ? x : 0;
+    int y0 = y > 0 ? y : 0;
+    int x1 = x + 5;
+    int y1 = y + 7;
+    if (x1 > FM_W)
+        x1 = FM_W;
+    if (y1 > FM_H)
+        y1 = FM_H;
+    for (int col = x0 - x; col < 5 && x + col < x1; col++)
+        for (int row = y0 - y; row < 7 && y + row < y1; row++)
             if (g[col] & (1u << row))
-                fm_rect(buf, bw, x + col, y + row, 1, 1, fg);
+                buf[(size_t)(y + row) * bw + x + col] = fg;
 }
 
 static void fm_str(uint32_t *buf, int bw, int x, int y, const char *s,
