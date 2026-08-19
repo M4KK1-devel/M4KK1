@@ -237,17 +237,26 @@ static void sp_buf_px(struct sprach_window *w, int x, int y, uint32_t c)
 
 static void sp_buf_fill(struct sprach_window *w, uint32_t c)
 {
-    int n = w->w * w->h;
-    for (int i = 0; i < n; i++)
-        w->buf[i] = c;
+    /* rep stosd bulk fill instead of a per-pixel C loop */
+    musr_fill32(w->buf, (size_t)(w->w * w->h), c);
 }
 
 static void sp_buf_rect(struct sprach_window *w, int x, int y,
                         int rw, int rh, uint32_t c)
 {
-    for (int yy = 0; yy < rh; yy++)
-        for (int xx = 0; xx < rw; xx++)
-            sp_buf_px(w, x + xx, y + yy, c);
+    /* Per-row bulk fill with clipping — sp_buf_px did a bounds check
+     * per pixel (35 ops per pixel where 1 dword store suffices). */
+    int x0 = x > 0 ? x : 0;
+    int y0 = y > 0 ? y : 0;
+    int x1 = x + rw;
+    int y1 = y + rh;
+    if (x1 > w->w)
+        x1 = w->w;
+    if (y1 > w->h)
+        y1 = w->h;
+    for (int yy = y0; yy < y1; yy++)
+        musr_fill32(w->buf + (size_t)yy * w->w + x0,
+                    (size_t)(x1 - x0), c);
 }
 
 /* ── Draw one 5×7 font character into a pixel buffer ── */

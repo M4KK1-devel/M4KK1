@@ -421,7 +421,9 @@ mkrn_console_write_dec(uint32_t u32Value)
     char buffer[10];
     int i = 0;
 
-    while (u32Value > 0 && i < 9) {
+    /* uint32_t max is 4294967295 — 10 digits.  The old `i < 9` cap
+     * silently truncated the top digit of every value >= 1000000000. */
+    while (u32Value > 0 && i < 10) {
         buffer[i++] = '0' + (u32Value % 10);
         u32Value /= 10;
     }

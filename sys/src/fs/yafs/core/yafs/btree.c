@@ -158,14 +158,14 @@ btree_insert_node(uint64_t u64NodeLba, uint64_t u64Key,
             *pInserted = true;
         }
 
-        uint64_t u64NewLba =
-            mkrn_yafs_node_write(&new_node);
-        if (u64NewLba == 0)
-            return 0;
-
         if (new_node.header.entry_count
             > YAFS_BTREE_MAX_KEYS)
         {
+            /* Split path: the pre-split write below would persist a
+             * node that is immediately re-written truncated — the
+             * first block was never freed (one leaked 4 KB block per
+             * split) and cost one extra dev_write.  Write only the
+             * two post-split halves; the caller points at this LBA. */
             uint32_t u32Mid = YAFS_BTREE_MAX_KEYS / 2;
 
             yafs_node_t right_node;
@@ -189,20 +189,25 @@ btree_insert_node(uint64_t u64NodeLba, uint64_t u64Key,
             if (u64RightLba == 0)
                 return 0;
 
-            uint64_t u64NewNewLba =
+            uint64_t u64LeftLba =
                 mkrn_yafs_node_write(&new_node);
-            if (u64NewNewLba == 0) {
+            if (u64LeftLba == 0) {
                 mkrn_yafs_dev_free_block(u64RightLba);
                 return 0;
             }
-            u64NewLba = u64NewNewLba;
 
             *pSplitKey = pRight->keys[0];
             *pSplitLba = u64RightLba;
-        } else {
-            *pSplitKey = 0;
-            *pSplitLba = 0;
+            return u64LeftLba;
         }
+
+        *pSplitKey = 0;
+        *pSplitLba = 0;
+
+        uint64_t u64NewLba =
+            mkrn_yafs_node_write(&new_node);
+        if (u64NewLba == 0)
+            return 0;
 
         return u64NewLba;
     } else {
@@ -260,14 +265,12 @@ btree_insert_node(uint64_t u64NodeLba, uint64_t u64Key,
                 *pInserted = true;
         }
 
-        uint64_t u64NewLba =
-            mkrn_yafs_node_write(&new_node);
-        if (u64NewLba == 0)
-            return 0;
-
         if (new_node.header.entry_count
             > YAFS_BTREE_MAX_KEYS)
         {
+            /* Same split-path fix as the leaf branch: skip the
+             * pre-split write entirely (it leaked one 4 KB block and
+             * burned one extra dev_write per internal split). */
             uint32_t u32Mid =
                 YAFS_BTREE_MAX_KEYS / 2;
 
@@ -299,20 +302,25 @@ btree_insert_node(uint64_t u64NodeLba, uint64_t u64Key,
             if (u64RightLba == 0)
                 return 0;
 
-            uint64_t u64NewNewLba =
+            uint64_t u64LeftLba =
                 mkrn_yafs_node_write(&new_node);
-            if (u64NewNewLba == 0) {
+            if (u64LeftLba == 0) {
                 mkrn_yafs_dev_free_block(u64RightLba);
                 return 0;
             }
-            u64NewLba = u64NewNewLba;
 
             *pSplitKey = u64PromoteKey;
             *pSplitLba = u64RightLba;
-        } else {
-            *pSplitKey = 0;
-            *pSplitLba = 0;
+            return u64LeftLba;
         }
+
+        *pSplitKey = 0;
+        *pSplitLba = 0;
+
+        uint64_t u64NewLba =
+            mkrn_yafs_node_write(&new_node);
+        if (u64NewLba == 0)
+            return 0;
 
         return u64NewLba;
     }
