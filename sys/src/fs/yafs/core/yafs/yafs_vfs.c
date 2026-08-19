@@ -96,7 +96,9 @@ readdir_cb(uint64_t u64Key, yafs_entry_t value,
         == 0)
     {
         uint64_t u64Lba = inode_lba_val;
-        uint8_t iv_buf[4096];
+        /* Shared BSS scratch, not a 4 KB stack frame — this callback
+         * runs for every entry of every readdir walk. */
+        uint8_t *iv_buf = g_inode_scratch;
         if (mkrn_yafs_dev_read(u64Lba, iv_buf) == 0) {
             struct yafs_inode_value *pIv =
                 (struct yafs_inode_value *)iv_buf;
@@ -569,6 +571,13 @@ mkrn_yafs_rename(uint64_t *pRoot,
     if (mkrn_yafs_btree_insert(pRoot, u64Nk, u64Child,
                                &bInserted)
         != 0)
+        return -1;
+    /* Same guard as create_link: bInserted == false means the new
+     * dir-entry key already exists (duplicate name or 16-bit hash
+     * collision).  Proceeding would silently overwrite the sibling
+     * entry and orphan its file.  Nothing has been deleted yet, so a
+     * plain refusal leaves both entries intact. */
+    if (!bInserted)
         return -1;
 
     uint64_t u64Oh = mkrn_yafs_name_hash(pOldName);

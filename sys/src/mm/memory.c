@@ -200,7 +200,15 @@ memory_add_region(uint32_t u32Start, uint32_t u32Size,
 void
 mkrn_memory_init(multiboot_info_t *pMbInfo)
 {
-    if (pMbInfo->flags & M4K_MULTIBOOT_INFO_MEMORY) {
+    /* mmap is the authoritative source when present: mem_lower/upper
+     * AND mmap describe the SAME physical RAM, and both branches used
+     * to run when both flags are set (QEMU sets both).  Seeding the
+     * buddy twice put already-linked blocks back on the free lists a
+     * second time — list self-loops, inflated free counts, and the
+     * same page handed to two owners.  Only fall back to the coarse
+     * mem_lower/upper values when no mmap exists. */
+    if (!(pMbInfo->flags & M4K_MULTIBOOT_INFO_MEM_MAP)
+        && (pMbInfo->flags & M4K_MULTIBOOT_INFO_MEMORY)) {
         if (pMbInfo->mem_lower > 0)
             memory_add_region(
                 0, pMbInfo->mem_lower * 1024,

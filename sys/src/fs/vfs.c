@@ -17,6 +17,10 @@
 #include <yafs.h>
 #include <yafs_btree.h>
 
+/* Forward decl: used by mkrn_vfs_open (O_APPEND EOF) well before the
+ * definition at the bottom of this file. */
+static int read_inode_raw(uint64_t inode_nr, struct yafs_inode_value *iv_out);
+
 #define PIPE_BUF_SIZE 4096
 #define MAX_PIPES 32
 
@@ -562,7 +566,18 @@ mkrn_vfs_open(const char *pPathname, int flags)
             if (!fd_table[i].in_use) {
                 fd_table[i].fd = i;
                 fd_table[i].file = &file_table[0];
+                /* O_APPEND must start at EOF, not 0 — otherwise every
+                 * ">>" append overwrites the file head.  The in-memory
+                 * file branch below got this right; the YAFS branch
+                 * silently ignored it. */
                 fd_table[i].offset = 0;
+                if (flags & M4K_O_APPEND) {
+                    struct yafs_inode_value iv;
+                    if (read_inode_raw(u64Inode, &iv)
+                        == 0)
+                        fd_table[i].offset =
+                            (uint32_t)iv.size;
+                }
                 fd_table[i].flags = flags;
                 fd_table[i].in_use = true;
                 fd_table[i].yafs_inode = u64Inode;
@@ -866,8 +881,6 @@ mkrn_vfs_close(int fd)
  * @param whence  M4K_SEEK_SET, M4K_SEEK_CUR, M4K_SEEK_END
  * @return new offset, or -1 on error.
  */
-static int read_inode_raw(uint64_t inode_nr, struct yafs_inode_value *iv_out);
-
 int
 mkrn_vfs_lseek(int fd, int offset, int whence)
 {
