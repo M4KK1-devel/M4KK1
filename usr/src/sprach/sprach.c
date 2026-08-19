@@ -52,6 +52,13 @@ static uint32_t sprach_bufs[SPRACH_WINDOW_COUNT]
                           [SPRACH_WIN_W * SPRACH_WIN_H]
     __attribute__((aligned(16)));
 
+/* Per-window maximize backing stores.  A single shared buffer let two
+ * maximized windows alias each other's pixels — the second MAX
+ * silently repainted the first window's content. */
+static uint32_t maximize_bufs[SPRACH_WINDOW_COUNT]
+                             [SCREEN_W * SCREEN_H]
+    __attribute__((aligned(16)));
+
 static uint32_t taskbar_buf[SCREEN_W * TASKBAR_H]
     __attribute__((aligned(16)));
 
@@ -189,9 +196,9 @@ static const unsigned char font5x7[95][7] = {
 
 /* ── Generic pixel helpers (into arbitrary buffer) ── */
 
-static void sp_px(uint32_t *buf, int bw, int x, int y, uint32_t c)
+static void sp_px(uint32_t *buf, int bw, int bh, int x, int y, uint32_t c)
 {
-    if (x >= 0 && x < bw && y >= 0 && y < SCREEN_H)
+    if (x >= 0 && x < bw && y >= 0 && y < bh)
         buf[y * bw + x] = c;
 }
 
@@ -200,25 +207,24 @@ static void sp_fill(uint32_t *buf, int n, uint32_t c)
     musr_fill32(buf, (size_t)n, c);
 }
 
-static void sp_rect(uint32_t *buf, int bw, int x, int y,
+static void sp_rect(uint32_t *buf, int bw, int bh, int x, int y,
                     int rw, int rh, uint32_t c)
 {
-    /* Per-row dword fill: y/x bounds are checked here (sp_px's
-     * SCREEN_H guard is wrong for short buffers); rows below
-     * clipping are skipped, x-clipping trims each row. */
-    for (int yy = 0; yy < rh; yy++) {
-        int py = y + yy;
-        if (py < 0)
-            continue;
-        int x0 = x > 0 ? x : 0;
-        int x1 = x + rw;
-        if (x1 > bw)
-            x1 = bw;
-        if (x0 >= x1)
-            continue;
-        uint32_t *row = buf + (size_t)py * bw + x0;
-        musr_fill32(row, (size_t)(x1 - x0), c);
-    }
+    /* Per-row dword fill with full clipping: (bw,bh) is the buffer's
+     * true geometry — never SCREEN_W/SCREEN_H, which are only correct
+     * for full-screen buffers (taskbar/menubar pass bigger bh on
+     * purpose; popups pass smaller). */
+    int x0 = x > 0 ? x : 0;
+    int y0 = y > 0 ? y : 0;
+    int x1 = x + rw;
+    int y1 = y + rh;
+    if (x1 > bw)
+        x1 = bw;
+    if (y1 > bh)
+        y1 = bh;
+    for (int py = y0; py < y1; py++)
+        musr_fill32(buf + (size_t)py * bw + x0,
+                    (size_t)(x1 - x0), c);
 }
 
 /* ── Window-buffer helpers (type-safe) ── */
@@ -246,7 +252,7 @@ static void sp_buf_rect(struct sprach_window *w, int x, int y,
 
 /* ── Draw one 5×7 font character into a pixel buffer ── */
 
-static void sp_draw_char(uint32_t *buf, int bw, int x, int y,
+static void sp_draw_char(uint32_t *buf, int bw, int bh, int x, int y,
                          char ch, uint32_t fg)
 {
     int idx;
@@ -259,40 +265,40 @@ static void sp_draw_char(uint32_t *buf, int bw, int x, int y,
         unsigned char bits = font5x7[idx][row];
         for (int col = 0; col < 5; col++) {
             if (bits & (1 << (4 - col)))
-                sp_px(buf, bw, x + col, y + row, fg);
+                sp_px(buf, bw, bh, x + col, y + row, fg);
         }
     }
 }
 
 /* Draw a NUL-terminated string, 6px advance per char (5 + 1 gap). */
-static void sp_draw_str(uint32_t *buf, int bw, int x, int y,
+static void sp_draw_str(uint32_t *buf, int bw, int bh, int x, int y,
                         const char *s, uint32_t fg)
 {
     if (!s)
         return;
     while (*s) {
-        sp_draw_char(buf, bw, x, y, *s, fg);
+        sp_draw_char(buf, bw, bh, x, y, *s, fg);
         x += 6;
         s++;
     }
 }
 
 /* Draw bold by double-striking: 1px right + 1px down offset. */
-static void sp_draw_char_bold(uint32_t *buf, int bw, int x, int y,
+static void sp_draw_char_bold(uint32_t *buf, int bw, int bh, int x, int y,
                               char ch, uint32_t fg)
 {
-    sp_draw_char(buf, bw, x, y, ch, fg);
-    sp_draw_char(buf, bw, x + 1, y, ch, fg);
-    sp_draw_char(buf, bw, x, y + 1, ch, fg);
+    sp_draw_char(buf, bw, bh, x, y, ch, fg);
+    sp_draw_char(buf, bw, bh, x + 1, y, ch, fg);
+    sp_draw_char(buf, bw, bh, x, y + 1, ch, fg);
 }
 
-static void sp_draw_str_bold(uint32_t *buf, int bw, int x, int y,
+static void sp_draw_str_bold(uint32_t *buf, int bw, int bh, int x, int y,
                              const char *s, uint32_t fg)
 {
     if (!s)
         return;
     while (*s) {
-        sp_draw_char_bold(buf, bw, x, y, *s, fg);
+        sp_draw_char_bold(buf, bw, bh, x, y, *s, fg);
         x += 7;
         s++;
     }
@@ -301,49 +307,49 @@ static void sp_draw_str_bold(uint32_t *buf, int bw, int x, int y,
 /* ── Dock icons (32x32, pixel-drawn) ── */
 
 /* Terminal icon: dark screen with a ">_" prompt, Mac-ish rounded top. */
-static void sp_icon_terminal(uint32_t *buf, int bw, int x, int y,
+static void sp_icon_terminal(uint32_t *buf, int bw, int bh, int x, int y,
                              uint32_t body_col)
 {
     int s = DOCK_ICON_SIZE;
     /* Frame */
-    sp_rect(buf, bw, x, y, s, s, 0x00202020);
-    sp_rect(buf, bw, x + 1, y + 1, s - 2, s - 2, body_col);
+    sp_rect(buf, bw, bh, x, y, s, s, 0x00202020);
+    sp_rect(buf, bw, bh, x + 1, y + 1, s - 2, s - 2, body_col);
     /* Screen inset */
-    sp_rect(buf, bw, x + 4, y + 8, s - 8, s - 14, 0x00080818);
+    sp_rect(buf, bw, bh, x + 4, y + 8, s - 8, s - 14, 0x00080818);
     /* Prompt glyph "> " + "_" */
-    sp_draw_char(buf, bw, x + 6, y + 12, '>', 0x0030E070);
-    sp_draw_char(buf, bw, x + 14, y + 12, '_', 0x00E0E0E0);
+    sp_draw_char(buf, bw, bh, x + 6, y + 12, '>', 0x0030E070);
+    sp_draw_char(buf, bw, bh, x + 14, y + 12, '_', 0x00E0E0E0);
     /* Title-bar dots row */
-    sp_rect(buf, bw, x + 4, y + 3, 4, 3, 0x00E05050);
-    sp_rect(buf, bw, x + 10, y + 3, 4, 3, 0x00E0C040);
-    sp_rect(buf, bw, x + 16, y + 3, 4, 3, 0x0040C040);
+    sp_rect(buf, bw, bh, x + 4, y + 3, 4, 3, 0x00E05050);
+    sp_rect(buf, bw, bh, x + 10, y + 3, 4, 3, 0x00E0C040);
+    sp_rect(buf, bw, bh, x + 16, y + 3, 4, 3, 0x0040C040);
 }
 
 /* Generic app-window icon: colored title bar over a doc body. */
-static void sp_icon_window(uint32_t *buf, int bw, int x, int y,
+static void sp_icon_window(uint32_t *buf, int bw, int bh, int x, int y,
                            uint32_t title_col)
 {
     int s = DOCK_ICON_SIZE;
-    sp_rect(buf, bw, x, y, s, s, 0x00202020);
-    sp_rect(buf, bw, x + 1, y + 1, s - 2, s - 2, 0x00E8E8E8);
-    sp_rect(buf, bw, x + 3, y + 3, s - 6, 8, title_col);
+    sp_rect(buf, bw, bh, x, y, s, s, 0x00202020);
+    sp_rect(buf, bw, bh, x + 1, y + 1, s - 2, s - 2, 0x00E8E8E8);
+    sp_rect(buf, bw, bh, x + 3, y + 3, s - 6, 8, title_col);
     /* fake text lines */
     for (int l = 0; l < 3; l++)
-        sp_rect(buf, bw, x + 5, y + 16 + l * 4,
+        sp_rect(buf, bw, bh, x + 5, y + 16 + l * 4,
                 s - 10 - l * 4, 2, 0x00808080);
 }
 
 /* Clock icon for the menubar popup: simple analog face. */
-static void sp_icon_clock(uint32_t *buf, int bw, int x, int y,
+static void sp_icon_clock(uint32_t *buf, int bw, int bh, int x, int y,
                           uint32_t face_col)
 {
     int s = DOCK_ICON_SIZE;
-    sp_rect(buf, bw, x, y, s, s, 0x00202020);
-    sp_rect(buf, bw, x + 1, y + 1, s - 2, s - 2, face_col);
+    sp_rect(buf, bw, bh, x, y, s, s, 0x00202020);
+    sp_rect(buf, bw, bh, x + 1, y + 1, s - 2, s - 2, face_col);
     /* hands at 10:09-ish */
-    sp_rect(buf, bw, x + 15, y + 8, 2, 9, 0x00101010);
-    sp_rect(buf, bw, x + 17, y + 15, 8, 2, 0x00101010);
-    sp_rect(buf, bw, x + 14, y + 14, 4, 4, 0x00101010);
+    sp_rect(buf, bw, bh, x + 15, y + 8, 2, 9, 0x00101010);
+    sp_rect(buf, bw, bh, x + 17, y + 15, 8, 2, 0x00101010);
+    sp_rect(buf, bw, bh, x + 14, y + 14, 4, 4, 0x00101010);
 }
 
 /* ── Wait helper: poll keyboard until Copland creates a surface ── */
@@ -546,15 +552,15 @@ void sprach_draw_taskbar(struct sprach_ctx *ctx)
     /* Far-left: the Launchpad grid icon (nine-square).  Opens the
      * app launcher overlay. */
     {
-        sp_rect(taskbar_buf, SCREEN_W, bx, icon_y,
+        sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, bx, icon_y,
                 DOCK_ICON_SIZE, DOCK_ICON_SIZE, 0x00506070);
-        sp_rect(taskbar_buf, SCREEN_W, bx + 1, icon_y + 1,
+        sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, bx + 1, icon_y + 1,
                 DOCK_ICON_SIZE - 2, DOCK_ICON_SIZE - 2, 0x0080A0B0);
         for (int gy = 0; gy < 3; gy++)
             for (int gx = 0; gx < 3; gx++) {
                 int c = bx + 6 + gx * 8;
                 int r = icon_y + 6 + gy * 8;
-                sp_rect(taskbar_buf, SCREEN_W, c, r, 5, 5,
+                sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, c, r, 5, 5,
                         ctx->lp_open ? 0x00FFFFFF : 0x00203040);
             }
         bx += DOCK_ICON_PITCH;
@@ -569,9 +575,9 @@ void sprach_draw_taskbar(struct sprach_ctx *ctx)
 
         int active = (i == ctx->active && ctx->term_slot < 0);
         if (active)
-            sp_rect(taskbar_buf, SCREEN_W, bx - 2, icon_y + DOCK_ICON_SIZE + 2,
+            sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, bx - 2, icon_y + DOCK_ICON_SIZE + 2,
                     DOCK_ICON_SIZE + 4, 3, SPRACH_COL_ACCENT);
-        sp_icon_window(taskbar_buf, SCREEN_W, bx, icon_y,
+        sp_icon_window(taskbar_buf, SCREEN_W, TASKBAR_H, bx, icon_y,
                        ctx->wins[i].title);
         bx += DOCK_ICON_PITCH;
     }
@@ -580,9 +586,9 @@ void sprach_draw_taskbar(struct sprach_ctx *ctx)
     if (ctx->term_slot >= 0) {
         int active = (ctx->active < 0);
         if (active)
-            sp_rect(taskbar_buf, SCREEN_W, bx - 2, icon_y + DOCK_ICON_SIZE + 2,
+            sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, bx - 2, icon_y + DOCK_ICON_SIZE + 2,
                     DOCK_ICON_SIZE + 4, 3, SPRACH_COL_ACCENT);
-        sp_icon_terminal(taskbar_buf, SCREEN_W, bx, icon_y, 0x006060A0);
+        sp_icon_terminal(taskbar_buf, SCREEN_W, TASKBAR_H, bx, icon_y, 0x006060A0);
         bx += DOCK_ICON_PITCH;
     }
 
@@ -592,14 +598,14 @@ void sprach_draw_taskbar(struct sprach_ctx *ctx)
         int lx = SCREEN_W - DOCK_ICON_SIZE - DOCK_PAD;
         int launcher_active = (ctx->term_slot >= 0 && ctx->active < 0);
         if (launcher_active)
-            sp_rect(taskbar_buf, SCREEN_W, lx - 2, icon_y + DOCK_ICON_SIZE + 2,
+            sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, lx - 2, icon_y + DOCK_ICON_SIZE + 2,
                     DOCK_ICON_SIZE + 4, 3, SPRACH_COL_ACCENT);
-        sp_icon_terminal(taskbar_buf, SCREEN_W, lx, icon_y, 0x00306030);
+        sp_icon_terminal(taskbar_buf, SCREEN_W, TASKBAR_H, lx, icon_y, 0x00306030);
     }
 
 
     /* Top highlight edge (1px light line) */
-    sp_rect(taskbar_buf, SCREEN_W, 0, 0, SCREEN_W, 1,
+    sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, 0, 0, SCREEN_W, 1,
             SPRACH_COL_TASKBAR_TOP);
 }
 
@@ -672,10 +678,10 @@ void sprach_draw_menubar(struct sprach_ctx *ctx)
     sp_fill(menubar_buf, SCREEN_W * MENUBAR_H, SPRACH_COL_MENUBAR_BG);
 
     /* Bottom separator */
-    sp_rect(menubar_buf, SCREEN_W, 0, MENUBAR_H - 1, SCREEN_W, 1, SPRACH_COL_BORDER);
+    sp_rect(menubar_buf, SCREEN_W, MENUBAR_H, 0, MENUBAR_H - 1, SCREEN_W, 1, SPRACH_COL_BORDER);
 
     /* Left: system name — bold (double-strike), black */
-    sp_draw_str_bold(menubar_buf, SCREEN_W, 8, (MENUBAR_H - 7) / 2,
+    sp_draw_str_bold(menubar_buf, SCREEN_W, MENUBAR_H, 8, (MENUBAR_H - 7) / 2,
                      "M4KK1", SPRACH_COL_MENUBAR_FG);
 
     /* Center: current desktop index ("Desktop 1"; future workspaces
@@ -694,7 +700,7 @@ void sprach_draw_menubar(struct sprach_ctx *ctx)
         int dw = 0;
         for (const char *p = desk; *p; p++)
             dw += 6;
-        sp_draw_str(menubar_buf, SCREEN_W, (SCREEN_W - dw) / 2,
+        sp_draw_str(menubar_buf, SCREEN_W, MENUBAR_H, (SCREEN_W - dw) / 2,
                     (MENUBAR_H - 7) / 2, desk, SPRACH_COL_MENUBAR_TXT);
     }
 
@@ -721,7 +727,7 @@ void sprach_draw_menubar(struct sprach_ctx *ctx)
     int tx = SCREEN_W - 8 * 7 - 8;
     int ty = 4;
     for (int i = 0; i < 8; i++)
-        sp_draw_char(menubar_buf, SCREEN_W, tx + i * 7, ty,
+        sp_draw_char(menubar_buf, SCREEN_W, MENUBAR_H, tx + i * 7, ty,
                      time_str[i], SPRACH_COL_MENUBAR_FG);
 
     /* Clock popup (toggled by clicking the clock area) is drawn on its
@@ -811,19 +817,19 @@ void sprach_draw_clock_popup(struct sprach_ctx *ctx)
         return;
 
     sp_fill(clock_popup_buf, CLOCK_POP_W * CLOCK_POP_H, 0x00E8E8E8);
-    sp_rect(clock_popup_buf, CLOCK_POP_W, 0, 0, CLOCK_POP_W, CLOCK_POP_H,
+    sp_rect(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 0, 0, CLOCK_POP_W, CLOCK_POP_H,
             SPRACH_COL_BORDER);
 
     if (ctx->clock_about) {
         /* "About This PC" panel: kernel version + uptime + memory */
-        sp_draw_str(clock_popup_buf, CLOCK_POP_W, 10, 8, "About This PC",
+        sp_draw_str(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 10, 8, "About This PC",
                     SPRACH_COL_MENUBAR_FG);
-        sp_rect(clock_popup_buf, CLOCK_POP_W, 8, 24, CLOCK_POP_W - 16, 1,
+        sp_rect(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 8, 24, CLOCK_POP_W - 16, 1,
                 SPRACH_COL_BORDER);
-        sp_draw_str(clock_popup_buf, CLOCK_POP_W, 10, 32,
+        sp_draw_str(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 10, 32,
                     "M4KK1 4P1 (build1 alpha1)",
                     SPRACH_COL_MENUBAR_FG);
-        sp_draw_str(clock_popup_buf, CLOCK_POP_W, 10, 44,
+        sp_draw_str(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 10, 44,
                     "Kernel: M4K i386 monolithic",
                     SPRACH_COL_MENUBAR_FG);
         char up[24] = "up ";
@@ -836,13 +842,13 @@ void sprach_draw_clock_popup(struct sprach_ctx *ctx)
         up[n++] = '0' + (char)((secs / 60) % 10);
         up[n++] = 'm';
         up[n] = '\0';
-        sp_draw_str(clock_popup_buf, CLOCK_POP_W, 10, 56, up,
+        sp_draw_str(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 10, 56, up,
                     SPRACH_COL_MENUBAR_FG);
         ctx->shm->dirty = 1;
         return;
     }
 
-    sp_icon_clock(clock_popup_buf, CLOCK_POP_W, 10, 16, 0x00F0F0F0);
+    sp_icon_clock(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 10, 16, 0x00F0F0F0);
 
     int epoch = musr_sc_time();
     if (epoch < 0)
@@ -851,7 +857,7 @@ void sprach_draw_clock_popup(struct sprach_ctx *ctx)
 
     char ds[11];
     clock_fmt_date(epoch, ds);
-    sp_draw_str(clock_popup_buf, CLOCK_POP_W, 48, 10, ds,
+    sp_draw_str(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 48, 10, ds,
                 SPRACH_COL_MENUBAR_FG);
 
     char ts[9];
@@ -864,10 +870,10 @@ void sprach_draw_clock_popup(struct sprach_ctx *ctx)
     ts[6] = '0' + (char)((total_sec % 60) / 10);
     ts[7] = '0' + (char)((total_sec % 60) % 10);
     ts[8] = '\0';
-    sp_draw_str_bold(clock_popup_buf, CLOCK_POP_W, 48, 26, ts,
+    sp_draw_str_bold(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 48, 26, ts,
                      SPRACH_COL_MENUBAR_FG);
 
-    sp_draw_str(clock_popup_buf, CLOCK_POP_W, 10, 50, "M4KK1 4P1",
+    sp_draw_str(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 10, 50, "M4KK1 4P1",
                 SPRACH_COL_MENUBAR_DIM);
 
     ctx->shm->surfaces[ctx->clock_slot].x = ctx->clock_x;
@@ -923,7 +929,7 @@ void sprach_draw_app_menu(struct sprach_ctx *ctx)
     if (ctx->menu_slot < 0 || !ctx->menu_open)
         return;
     sp_fill(app_menu_buf, APP_MENU_W * APP_MENU_H, 0x00E8E8E8);
-    sp_rect(app_menu_buf, APP_MENU_W, 0, 0, APP_MENU_W, APP_MENU_H,
+    sp_rect(app_menu_buf, APP_MENU_W, APP_MENU_H, 0, 0, APP_MENU_W, APP_MENU_H,
             SPRACH_COL_BORDER);
     for (int i = 0; i < 4; i++) {
         int iy = 4 + i * APP_MENU_ITEM_H;
@@ -931,9 +937,9 @@ void sprach_draw_app_menu(struct sprach_ctx *ctx)
                    ctx->mouse_y >= MENUBAR_H + iy &&
                    ctx->mouse_y < MENUBAR_H + iy + APP_MENU_ITEM_H - 4);
         if (sel)
-            sp_rect(app_menu_buf, APP_MENU_W, 3, iy - 2, APP_MENU_W - 6,
+            sp_rect(app_menu_buf, APP_MENU_W, APP_MENU_H, 3, iy - 2, APP_MENU_W - 6,
                     APP_MENU_ITEM_H - 4, 0x003060C0);
-        sp_draw_str(app_menu_buf, APP_MENU_W, 12, iy + 6,
+        sp_draw_str(app_menu_buf, APP_MENU_W, APP_MENU_H, 12, iy + 6,
                     app_menu_items[i],
                     sel ? 0x00FFFFFF : SPRACH_COL_MENUBAR_FG);
     }
@@ -989,13 +995,7 @@ static void sprach_app_menu_activate(struct sprach_ctx *ctx, int mi)
 
 #define LP_W  SCREEN_W
 #define LP_H  (SCREEN_H - MENUBAR_H - TASKBAR_H)
-/* Canary guards around lp_buf: detect buffer overflow from any sp_*
- * draw call (EXC after launchpad open showed EIP landing inside
- * lp_buf — a corrupted return address would be the classic cause). */
-static uint32_t lp_canary_lo[64];
 static uint32_t lp_buf[LP_W * LP_H];
-static uint32_t lp_canary_hi[64];
-#define LP_CANARY 0xC0FFEE42u
 
 struct lp_app {
     const char *name;
@@ -1045,14 +1045,10 @@ void sprach_draw_launchpad(struct sprach_ctx *ctx)
 {
     if (ctx->lp_slot < 0 || !ctx->lp_open)
         return;
-    for (int i = 0; i < 64; i++) {
-        lp_canary_lo[i] = LP_CANARY;
-        lp_canary_hi[i] = LP_CANARY;
-    }
     /* translucent-ish dark backdrop */
     for (int i = 0; i < LP_W * LP_H; i++)
         lp_buf[i] = 0x00C8203048;
-    sp_draw_str(lp_buf, LP_W, (LP_W - 7 * 9) / 2, 20, "Launchpad",
+    sp_draw_str(lp_buf, LP_W, LP_H, (LP_W - 7 * 9) / 2, 20, "Launchpad",
                 0x00FFFFFF);
     for (int a = 0; a < LP_APP_COUNT; a++) {
         int cx = LP_GRID_X + (a % LP_COLS) * LP_CELL_W;
@@ -1061,30 +1057,21 @@ void sprach_draw_launchpad(struct sprach_ctx *ctx)
                    ctx->mouse_y - MENUBAR_H >= cy &&
                    ctx->mouse_y - MENUBAR_H < cy + LP_CELL_H);
         if (sel)
-            sp_rect(lp_buf, LP_W, cx + 8, cy + 8, LP_CELL_W - 16,
+            sp_rect(lp_buf, LP_W, LP_H, cx + 8, cy + 8, LP_CELL_W - 16,
                     LP_CELL_H - 16, 0x004060A0);
         /* icon: simple app-window glyph */
-        sp_rect(lp_buf, LP_W, cx + 56, cy + 12, 48, 44, 0x003060C0);
-        sp_rect(lp_buf, LP_W, cx + 56, cy + 12, 48, 12, 0x005080E0);
-        sp_rect(lp_buf, LP_W, cx + 60, cy + 30, 40, 22, 0x00F0F0F0);
+        sp_rect(lp_buf, LP_W, LP_H, cx + 56, cy + 12, 48, 44, 0x003060C0);
+        sp_rect(lp_buf, LP_W, LP_H, cx + 56, cy + 12, 48, 12, 0x005080E0);
+        sp_rect(lp_buf, LP_W, LP_H, cx + 60, cy + 30, 40, 22, 0x00F0F0F0);
         /* name centered under the icon */
         int nl = 0;
         for (const char *p = lp_apps[a].name; *p; p++)
             nl++;
-        sp_draw_str(lp_buf, LP_W, cx + (LP_CELL_W - nl * 6) / 2,
+        sp_draw_str(lp_buf, LP_W, LP_H, cx + (LP_CELL_W - nl * 6) / 2,
                     cy + 64, lp_apps[a].name,
                     sel ? 0x00FFFFFF : 0x00D0D0D0);
     }
 
-    /* Canary check: any sp_* overflow past lp_buf trips this. */
-    for (int i = 0; i < 64; i++) {
-        if (lp_canary_lo[i] != LP_CANARY || lp_canary_hi[i] != LP_CANARY) {
-            ser_puts("[SPRACH] LP OVERFLOW at canary ");
-            print_u32((uint32_t)i);
-            ser_puts("\n");
-            break;
-        }
-    }
     ctx->shm->dirty = 1;
 }
 
@@ -1922,11 +1909,12 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                                 print_u32((uint32_t)i);
                                 ser_puts("\n");
                             } else {
+                                int idx = (int)(w - ctx->wins);
                                 w->normal_x = w->x;
                                 w->normal_y = w->y;
                                 w->normal_w = w->w;
                                 w->normal_h = w->h;
-                                w->buf = maximize_buf;
+                                w->buf = maximize_bufs[idx];
                                 w->w = SCREEN_W;
                                 w->h = WORK_AREA_H;
                                 w->x = 0;
@@ -2080,8 +2068,10 @@ void _start(void)
     for (;;) {
         ctx.tick++;
 
-        /* ── DIAG: frame timing + memory watchdog (every 100 loops,
-         * ≈2 s at 20 ms pacing) ── */
+        /* ── DIAG: frame timing + memory watchdog.  Off by default;
+         * build with -DSPRACH_DIAG to re-enable the ≈2 s serial
+         * telemetry. ── */
+#ifdef SPRACH_DIAG
         if ((ctx.tick % 100) == 0) {
             struct sysinfo si;
             uint32_t t0 = (uint32_t)musr_sc_time();
@@ -2098,6 +2088,7 @@ void _start(void)
             print_u32(shm->heartbeat);
             ser_puts("\n");
         }
+#endif
 
         /* ── Terminal client discovery (Ctrl+Alt+T spawns /bin/terminal;
          * the child registers its surface asynchronously) ── */

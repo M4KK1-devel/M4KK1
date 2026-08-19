@@ -56,7 +56,9 @@ struct fm_entry {
     int is_dir;
 };
 static struct fm_entry fm_entries[48];
+#define FM_MAX_ENTRIES 48
 static int fm_count = 0;
+static int fm_truncated = 0;  /* dir had ≥48 entries — list clipped */
 
 /* Address-bar edit buffer (Ctrl+L activates) */
 static int fm_addr_edit = 0;
@@ -112,10 +114,22 @@ static const uint8_t fm_font5x7[96][5] = {
 static void fm_rect(uint32_t *buf, int bw, int x, int y, int w, int h,
                     uint32_t c)
 {
-    for (int r = y; r < y + h; r++)
-        for (int cc = x; cc < x + w; cc++)
-            if (r >= 0 && r < FM_H && cc >= 0 && cc < bw)
-                buf[r * bw + cc] = c;
+    /* Clip against the framebuffer geometry (FM_W×FM_H).  bw is a
+     * *pitch*, never a width bound — callers may legitimately pass
+     * a stride that differs from the drawable width someday. */
+    int x0 = x > 0 ? x : 0;
+    int y0 = y > 0 ? y : 0;
+    int x1 = x + w;
+    int y1 = y + h;
+    if (x1 > FM_W)
+        x1 = FM_W;
+    if (y1 > FM_H)
+        y1 = FM_H;
+    for (int r = y0; r < y1; r++) {
+        uint32_t *px = buf + (size_t)r * bw + x0;
+        for (int cc = x0; cc < x1; cc++)
+            *px++ = c;
+    }
 }
 
 static void fm_char(uint32_t *buf, int bw, int x, int y, char ch,
@@ -154,9 +168,16 @@ static void fm_load_dir(struct fm_tab *t)
     int fd = musr_sc_open(t->path, O_RDONLY);
     if (fd < 0)
         return;
-    struct dirent dbuf[24];
-    int n = musr_sc_getdents(fd, dbuf, 24);
+    /* Single call, capacity-sized: kernel getdents has no cookie —
+     * repeated calls would re-walk the B-tree from entry 0 and
+     * duplicate every name.  FM_MAX_ENTRIES == 48 slots. */
+    struct dirent dbuf[48];
+    int n = musr_sc_getdents(fd, dbuf, 48);
     musr_sc_close(fd);
+    if (n < 0)
+        n = 0;
+    if (n > 48)
+        n = 48;
     for (int i = 0; i < n && fm_count < 48; i++) {
         if (dbuf[i].name[0] == '.' && !t->hidden_files)
             continue;
@@ -165,6 +186,9 @@ static void fm_load_dir(struct fm_tab *t)
         fm_entries[fm_count].is_dir = (dbuf[i].type == 2);
         fm_count++;
     }
+    /* Surface truncation in the status bar instead of failing silent:
+     * 48 shown of N means the dir is bigger than the cache. */
+    fm_truncated = (n == 48);
     t->sel = 0;
 }
 
@@ -275,6 +299,8 @@ static void fm_render(void)
     } while (cnt > 0 && nd < 11);
     while (nd > 0 && k < 42)
         st[k++] = digits[--nd];
+    if (fm_truncated && k < 43)
+        st[k++] = '+';   /* more than 48 entries — list is clipped */
     const char *b = "  tab ";
     while (*b && k < 46)
         st[k++] = *b++;

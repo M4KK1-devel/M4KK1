@@ -14,6 +14,7 @@
 #include <vfs.h>
 #include <kernel.h>
 #include <ata.h>
+#include <process.h>
 
 #define DEVFS_MAX_FILES     64
 #define DEVFS_MAX_NAME      32
@@ -134,8 +135,6 @@ devfs_parse_path(const char *path, uint8_t *pDrive, int *pPart)
 int
 mkrn_devfs_open(const char *path, int flags, int *out_fd)
 {
-    (void)flags;
-
     const char *p = path;
     while (*p == '/')
         p++;
@@ -153,6 +152,15 @@ mkrn_devfs_open(const char *path, int flags, int *out_fd)
         df->name[DEVFS_MAX_NAME - 1] = '\0';
         *out_fd = df->fd;
         return 0;
+    }
+
+    /* Raw disk nodes are block-device access — restrict writes to
+     * root.  Reads stay open to all (matches the /sys,/boot policy
+     * in mkrn_vfs_open).  flags was previously ignored entirely,
+     * letting any process open a raw disk O_RDWR. */
+    if ((flags & (M4K_O_WRONLY | M4K_O_RDWR))
+        && mkrn_process_get_euid() != M4K_UID_ROOT) {
+        return -1;
     }
 
     uint8_t drive;
