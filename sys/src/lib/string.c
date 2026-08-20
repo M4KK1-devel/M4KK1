@@ -10,13 +10,31 @@
 #include <stddef.h>
 #include "../include/memory.h"
 
+/*
+ * dword 粒度搬运 + 字节尾巴，同 usr 侧 musr_copy32 路线。
+ * 内联 rep movsl：dword 计数装入 ECX，方向标志由硬件 ABI 保证清除。
+ */
+static inline void
+mkrn_copy32(uint32_t *pDest, const uint32_t *pSrc, size_t n)
+{
+    __asm__ __volatile__(
+        "rep movsl"
+        : "+D"(pDest), "+S"(pSrc), "+c"(n)
+        :
+        : "memory");
+}
+
 void *
 mkrn_memcpy(void *pDest, const void *pSrc, size_t n)
 {
     uint8_t *pD = (uint8_t *)pDest;
     const uint8_t *pS = (const uint8_t *)pSrc;
+    size_t nD = n >> 2;
 
-    for (size_t i = 0; i < n; i++)
+    if (nD)
+        mkrn_copy32((uint32_t *)pD, (const uint32_t *)pS, nD);
+
+    for (size_t i = n & ~(size_t)3; i < n; i++)
         pD[i] = pS[i];
 
     return pDest;
@@ -29,22 +47,48 @@ mkrn_memmove(void *pDest, const void *pSrc, size_t n)
     const uint8_t *pS = (const uint8_t *)pSrc;
 
     if (pD < pS) {
-        for (size_t i = 0; i < n; i++)
+        size_t nD = n >> 2;
+
+        if (nD)
+            mkrn_copy32((uint32_t *)pD, (const uint32_t *)pS, nD);
+
+        for (size_t i = n & ~(size_t)3; i < n; i++)
             pD[i] = pS[i];
     } else if (pD > pS) {
+        /* 重叠且 dest 在高地址：反向逐字节，语义优先于速度 */
         for (size_t i = n; i > 0; i--)
             pD[i - 1] = pS[i - 1];
     }
     return pDest;
 }
 
+/* dword 粒度填充 + 字节尾巴，同 usr 侧 musr_fill32 路线 */
+static inline void
+mkrn_fill32(uint32_t *pDest, size_t n, uint32_t c)
+{
+    __asm__ __volatile__(
+        "rep stosl"
+        : "+D"(pDest), "+c"(n)
+        : "a"(c)
+        : "memory");
+}
+
 void *
 mkrn_memset(void *pS, int c, size_t n)
 {
     uint8_t *p = (uint8_t *)pS;
+    uint8_t v = (uint8_t)c;
+    size_t nD = n >> 2;
 
-    for (size_t i = 0; i < n; i++)
-        p[i] = (uint8_t)c;
+    if (nD) {
+        uint32_t pat = (uint32_t)v;
+        pat |= pat << 8;
+        pat |= pat << 16;
+        mkrn_fill32((uint32_t *)p, nD, pat);
+    }
+
+    for (size_t i = n & ~(size_t)3; i < n; i++)
+        p[i] = v;
 
     return pS;
 }

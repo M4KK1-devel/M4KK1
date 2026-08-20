@@ -473,7 +473,13 @@ void mkrn_process_wakeup(mkrn_process_t *p)
     if (p->state_tags & M4K_SCHED_SLEEPING) {
         p->state_tags &= ~M4K_SCHED_SLEEPING;
         p->state_tags |= M4K_SCHED_READY;
-        ready_enqueue(p);
+        if (ready_enqueue(p) != 0) {
+            /* Queue full: the PCB now claims READY but sits in no
+             * queue — nobody would ever reschedule or re-wake it.
+             * Roll back to SLEEPING so a later wakeup retries. */
+            p->state_tags &= ~M4K_SCHED_READY;
+            p->state_tags |= M4K_SCHED_SLEEPING;
+        }
     }
 }
 
