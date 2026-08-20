@@ -790,8 +790,10 @@ pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
         child->rlimits[ri].rlim_cur = parent->rlimits[ri].rlim_cur;
         child->rlimits[ri].rlim_max = parent->rlimits[ri].rlim_max;
     }
-    mkrn_strcpy(child->name, parent->name);
-    mkrn_strcpy(child->cwd, parent->cwd);
+       mkrn_strncpy(child->name, parent->name, sizeof(child->name) - 1);
+    child->name[sizeof(child->name) - 1] = '\0';
+    mkrn_strncpy(child->cwd, parent->cwd, sizeof(child->cwd) - 1);
+    child->cwd[sizeof(child->cwd) - 1] = '\0';
 
     /* State inheritance: only inherit requested bits */
     child->state_tags = parent->state_tags & inherit_mask;

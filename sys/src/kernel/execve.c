@@ -43,7 +43,9 @@ int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
         return -1;
     }
 
-    mkrn_strcpy(init->name, proc_name ? proc_name : "unknown");
+    mkrn_strncpy(init->name, proc_name ? proc_name : "unknown",
+                 sizeof(init->name) - 1);
+    init->name[sizeof(init->name) - 1] = '\0';
     mkrn_strcpy(init->cwd, "/");
 
     mkrn_elf32_ehdr_t *ehdr = (mkrn_elf32_ehdr_t *)elf_data;
