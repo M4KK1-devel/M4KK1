@@ -726,6 +726,12 @@ err:
 }
 
 #define YAFS_BLOCKS_PER_EXTENT 1
+/* Extent keys encode the block index in 16 bits
+ * ((inode << 16) | (blockIdx & 0xFFFF)), so a file can address at
+ * most 65536 * 4 KB = 256 MB.  Past that the index silently wraps to
+ * block 0 and the write path would clobber the file's own head —
+ * refuse instead of corrupting. */
+#define YAFS_MAX_FILE_BLOCKS 0x10000ULL
 
 int
 mkrn_yafs_read_file_data(struct yafs_mount *pM,
@@ -747,6 +753,12 @@ mkrn_yafs_read_file_data(struct yafs_mount *pM,
     uint64_t u64BlockIdx = u64Offset / u32BlockSize;
     uint32_t u32BlockOff =
         (uint32_t)(u64Offset % u32BlockSize);
+
+    /* Past the 16-bit block-index ceiling the key would wrap to
+     * block 0 and alias the file's head — stop with a short read
+     * instead of returning wrong data. */
+    if (u64BlockIdx >= YAFS_MAX_FILE_BLOCKS)
+        return 0;
 
     while (u32Remaining > 0) {
         uint64_t u64ExtentKey = mkrn_yafs_make_key(
@@ -825,6 +837,12 @@ mkrn_yafs_write_file_data(struct yafs_mount *pM,
     uint64_t u64BlockIdx = u64Offset / u32BlockSize;
     uint32_t u32BlockOff =
         (uint32_t)(u64Offset % u32BlockSize);
+
+    /* Same 16-bit block-index ceiling as the read path: a key past
+     * 0xFFFF wraps to block 0 and overwrites the file's head.  Stop
+     * with a short write so the caller sees the truncation. */
+    if (u64BlockIdx >= YAFS_MAX_FILE_BLOCKS)
+        return 0;
 
     while (u32Remaining > 0) {
         uint64_t u64ExtentKey = mkrn_yafs_make_key(

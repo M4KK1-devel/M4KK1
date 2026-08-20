@@ -788,6 +788,11 @@ mkrn_vfs_write(int fd, const void *pBuf, size_t count)
     mkrn_file_ent_t *pFile = pFdp->file;
     if (pFile->type != M4K_FILE_REGULAR)
         return -1;
+    /* offset + count must not wrap: a wrapped u32NewSize skips the
+     * capacity growth below and memcpy writes past the heap buffer.
+     * The kernel heap cannot back a >4 GB anon file anyway. */
+    if (pFdp->offset > UINT32_MAX - (uint32_t)count)
+        return -1;
     uint32_t u32NewSize =
         pFdp->offset + (uint32_t)count;
     if (u32NewSize > pFile->capacity) {

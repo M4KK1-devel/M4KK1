@@ -173,9 +173,13 @@ int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
     return 0;
 }
 
-static void setup_idle_stack(mkrn_process_t *proc)
+static int setup_idle_stack(mkrn_process_t *proc)
 {
     u32 *stack = (u32 *)mkrn_alloc(M4K_STACK_SIZE);
+    if (!stack) {
+        M4K_LOG_ERROR("idle: user stack alloc failed");
+        return -1;
+    }
     u32 *sp = (u32 *)((u32)stack + M4K_STACK_SIZE);
 
     /* Same ring-3 entry frame as execve (replaced before switch_first). */
@@ -198,7 +202,13 @@ static void setup_idle_stack(mkrn_process_t *proc)
      * context switch), so a process's pending ISR frame can never be
      * clobbered by another process entering the kernel. */
     u32 *kstack = (u32 *)mkrn_alloc(M4K_STACK_SIZE);
-    proc->kernel_stack = (u32)kstack + M4K_STACK_SIZE;
+    if (!kstack) {
+        M4K_LOG_ERROR("idle: kernel stack alloc failed");
+        mkrn_free(stack);
+        return -1;
+    }
+    proc->kernel_stack = (uint32_t)kstack + M4K_STACK_SIZE;
+    return 0;
 }
 
 mkrn_process_t *mkrn_execve_create_idle(void)
@@ -220,6 +230,9 @@ mkrn_process_t *mkrn_execve_create_idle(void)
     proc->rlimits[M4K_RLIMIT_NOFILE].rlim_cur = 128;
     proc->rlimits[M4K_RLIMIT_NOFILE].rlim_max = 128;
 
-    setup_idle_stack(proc);
+    if (setup_idle_stack(proc) != 0) {
+        mkrn_free(proc);
+        return NULL;
+    }
     return proc;
 }
