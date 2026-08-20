@@ -965,3 +965,56 @@ mkrn_yafs_write_file_data(struct yafs_mount *pM,
 
     return 0;
 }
+
+int
+mkrn_yafs_truncate_inode(uint64_t u64Inode)
+{
+    /* O_TRUNC support: free every data extent, then reset the inode's
+     * size/blocks to zero.  Walks by block index (0..blocks-1) using
+     * per-key lookup+delete instead of btree_walk_range — mutating
+     * the tree while a callback iterates it is unsafe.  inode->blocks
+     * is maintained by write_file_data, so it is an upper bound on
+     * live extent keys. */
+    if (u64Inode == 0)
+        return -1;
+    uint64_t u64InodeKey = mkrn_yafs_make_key(
+        YAFS_KS_INODE, u64Inode);
+    yafs_entry_t inode_lba_val;
+    if (mkrn_yafs_btree_lookup(
+            root_yafs_tree, u64InodeKey, &inode_lba_val)
+        != 0)
+        return -1;
+
+    uint8_t *iv_buf = g_inode_scratch;
+    if (mkrn_yafs_dev_read(inode_lba_val, iv_buf) != 0)
+        return -1;
+    struct yafs_inode_value *pIv =
+        (struct yafs_inode_value *)iv_buf;
+    if (pIv->file_type != YAFS_FT_REG_FILE)
+        return -1;
+
+    for (uint64_t u64B = 0;
+         u64B < pIv->blocks && u64B < YAFS_MAX_FILE_BLOCKS;
+         u64B++)
+    {
+        uint64_t u64ExtentKey = mkrn_yafs_make_key(
+            YAFS_KS_EXTENT,
+            (u64Inode << 16) | (u64B & 0xFFFF));
+        yafs_entry_t ext_val;
+        if (mkrn_yafs_btree_lookup(
+                root_yafs_tree, u64ExtentKey, &ext_val)
+            == 0)
+        {
+            mkrn_yafs_dev_free_block(
+                mkrn_yafs_extent_lba(ext_val));
+            bool bDeleted;
+            mkrn_yafs_btree_delete(&root_yafs_tree,
+                                   u64ExtentKey,
+                                   &bDeleted);
+        }
+    }
+
+    pIv->size = 0;
+    pIv->blocks = 0;
+    return mkrn_yafs_dev_write(inode_lba_val, iv_buf);
+}

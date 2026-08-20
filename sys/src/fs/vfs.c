@@ -562,6 +562,16 @@ mkrn_vfs_open(const char *pPathname, int flags)
         }
         if (u64Inode == 0)
             return -1;
+        /* O_TRUNC on YAFS: the in-memory branch below has always
+         * handled it, this branch silently ignored it — an
+         * open(f, O_WRONLY|O_TRUNC) then landed writes after/in the
+         * middle of the old contents instead of clearing the file. */
+        if (flags & M4K_O_TRUNC) {
+            extern int mkrn_yafs_truncate_inode(
+                uint64_t u64Inode);
+            if (mkrn_yafs_truncate_inode(u64Inode) != 0)
+                return -1;
+        }
         for (int i = 0; i < M4K_VFS_MAX_FDS; i++) {
             if (!fd_table[i].in_use) {
                 fd_table[i].fd = i;

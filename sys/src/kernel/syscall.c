@@ -763,22 +763,35 @@ static void mkrn_resolve_path(const char *pCwd,
         return;
     }
 
+    /* Overflow detection: when the concatenated path exceeds tmp or
+     * the 64-component parts[] budget, emit an EMPTY string so the
+     * caller's lookup fails — previously both cases silently
+     * truncated, so e.g. a 70-component path resolved to a wrong
+     * ancestor directory instead of failing. */
+    int truncated = 0;
     char tmp[512];
     int ti = 0;
     if (pIn[0] == '/') {
-        for (int iI = 0;
-             pIn[iI] && ti < 510; iI++)
+        for (int iI = 0; pIn[iI]; iI++) {
+            if (ti >= 510) { truncated = 1; break; }
             tmp[ti++] = pIn[iI];
+        }
     } else {
-        for (int iI = 0;
-             pCwd[iI] && ti < 510; iI++)
+        for (int iI = 0; pCwd[iI]; iI++) {
+            if (ti >= 510) { truncated = 1; break; }
             tmp[ti++] = pCwd[iI];
-        if (ti > 0 && tmp[ti - 1] != '/'
-            && ti < 510)
+        }
+        if (!truncated && ti > 0
+            && tmp[ti - 1] != '/' && ti < 510)
             tmp[ti++] = '/';
-        for (int iI = 0;
-             pIn[iI] && ti < 510; iI++)
+        for (int iI = 0; pIn[iI]; iI++) {
+            if (ti >= 510) { truncated = 1; break; }
             tmp[ti++] = pIn[iI];
+        }
+    }
+    if (truncated) {
+        pOut[0] = '\0';
+        return;
     }
     tmp[ti] = '\0';
 
@@ -802,7 +815,14 @@ static void mkrn_resolve_path(const char *pCwd,
             if (saved) pP++;
             continue;
         }
-        if (np < 64) parts[np++] = pStart;
+        if (np < 64) {
+            parts[np++] = pStart;
+        } else {
+            /* component budget exhausted — fail, don't drop the
+             * tail (dropping it resolved to a wrong directory). */
+            pOut[0] = '\0';
+            return;
+        }
         if (saved) pP++;
     }
 
@@ -1040,6 +1060,17 @@ static u32 mkrn_syscall_rtcwrite_impl(u32 uArg1, u32 uArg2,
     rtc.hour = pBuf[3];
     rtc.minute = pBuf[4];
     rtc.second = pBuf[5];
+    /* Range check before touching CMOS: out-of-range fields (e.g.
+     * month=99) used to be BCD-packed and written anyway, leaving
+     * the RTC holding garbage that rtc_to_epoch then reported as
+     * nonsense wall-clock values.  settimeofday is safe (values
+     * come from epoch_to_rtc) — this path takes raw user fields. */
+    if (rtc.month < 1 || rtc.month > 12
+        || rtc.day < 1 || rtc.day > 31
+        || rtc.hour > 23 || rtc.minute > 59
+        || rtc.second > 59
+        || rtc.year < 2000 || rtc.year > 2099)
+        return M4K_SC_ERROR;
     mkrn_timer_set_rtc(&rtc);
     return 0;
 }
