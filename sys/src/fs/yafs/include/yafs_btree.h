@@ -169,5 +169,12 @@ int mkrn_yafs_btree_walk(uint64_t u64RootLba,
                                    yafs_entry_t value,
                                    void *ctx),
                          void *pCtx);
+int mkrn_yafs_btree_walk_range(uint64_t u64RootLba,
+                               uint64_t u64Lo,
+                               uint64_t u64Hi,
+                               int (*cb)(uint64_t key,
+                                         yafs_entry_t value,
+                                         void *ctx),
+                               void *pCtx);
 uint64_t mkrn_yafs_btree_find_leaf(
     uint64_t u64RootLba, uint64_t u64Key);

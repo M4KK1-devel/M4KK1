@@ -584,8 +584,8 @@ mkrn_yafs_btree_delete(uint64_t *pRootLba,
 }
 
 static int
-btree_walk_recursive(
-    uint64_t u64NodeLba,
+btree_walk_range_recursive(
+    uint64_t u64NodeLba, uint64_t u64Lo, uint64_t u64Hi,
     int (*cb)(uint64_t key, yafs_entry_t value,
               void *ctx),
     void *pCtx, bool *pDone)
@@ -601,8 +601,17 @@ btree_walk_recursive(
         for (uint32_t i = 0; i < node.header.entry_count;
              i++)
         {
-            int ret = cb(node.payload.leaf.keys[i],
-                         node.payload.leaf.values[i],
+            uint64_t k = node.payload.leaf.keys[i];
+            if (k < u64Lo)
+                continue;
+            if (k >= u64Hi) {
+                /* Keys are sorted: nothing further in
+                 * this leaf (or any later subtree) can
+                 * fall inside [lo, hi). */
+                *pDone = true;
+                return 0;
+            }
+            int ret = cb(k, node.payload.leaf.values[i],
                          pCtx);
             if (ret != 0) {
                 *pDone = true;
@@ -612,16 +621,51 @@ btree_walk_recursive(
         return 0;
     }
 
+    /* child[i] holds keys in [keys[i-1], keys[i]) — the
+     * same invariant insert/delete/lookup rely on (exact
+     * separator matches descend RIGHT).  child[0] has no
+     * lower separator, the child after the last key has
+     * no upper separator. */
     for (uint32_t i = 0;
          i <= node.header.entry_count; i++)
     {
-        int ret = btree_walk_recursive(
-            node.payload.internal.children[i], cb,
-            pCtx, pDone);
+        uint64_t u64ChildLo =
+            (i > 0)
+                ? node.payload.internal.keys[i - 1]
+                : 0;
+        if (u64ChildLo > u64Hi)
+            break;  /* separators only grow from here */
+        uint64_t u64ChildHi =
+            (i < node.header.entry_count)
+                ? node.payload.internal.keys[i]
+                : UINT64_MAX;
+        if (u64ChildHi <= u64Lo)
+            continue;   /* entire subtree < lo */
+        int ret = btree_walk_range_recursive(
+            node.payload.internal.children[i],
+            u64Lo, u64ChildHi < u64Hi ? u64ChildHi
+                                       : u64Hi,
+            cb, pCtx, pDone);
         if (ret != 0 || *pDone)
             return ret;
     }
     return 0;
+}
+
+int
+mkrn_yafs_btree_walk_range(uint64_t u64RootLba,
+                           uint64_t u64Lo, uint64_t u64Hi,
+                           int (*cb)(uint64_t key,
+                                     yafs_entry_t value,
+                                     void *ctx),
+                           void *pCtx)
+{
+    if (u64RootLba == 0)
+        return 0;
+
+    bool bDone = false;
+    return btree_walk_range_recursive(
+        u64RootLba, u64Lo, u64Hi, cb, pCtx, &bDone);
 }
 
 int
@@ -634,11 +678,14 @@ mkrn_yafs_btree_walk(uint64_t u64RootLba,
 {
     if (u64RootLba == 0)
         return 0;
-    (void)u64StartKey;
 
+    /* u64StartKey is the inclusive lower bound — a resume
+     * cookie, not decoration.  Callers passing 0 get the
+     * full walk as before. */
     bool bDone = false;
-    return btree_walk_recursive(u64RootLba, cb, pCtx,
-                                &bDone);
+    return btree_walk_range_recursive(
+        u64RootLba, u64StartKey, UINT64_MAX, cb, pCtx,
+        &bDone);
 }
 
 uint64_t

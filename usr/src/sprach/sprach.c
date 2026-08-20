@@ -441,10 +441,30 @@ int sprach_create_window(struct sprach_ctx *ctx, int idx, int x, int y,
 static void sp_draw_circle(struct sprach_window *w, int cx, int cy,
                             int r, uint32_t c)
 {
-    for (int dy = -r; dy <= r; dy++)
-        for (int dx = -r; dx <= r; dx++)
-            if (dx * dx + dy * dy <= r * r)
-                sp_buf_px(w, cx + dx, cy + dy, c);
+    /* Per-row span fill: the old loop pushed every pixel through
+     * sp_buf_px's bounds check (r^2 calls for one button).  Here
+     * each scanline costs one clip check plus one contiguous fill;
+     * the half-width is derived by walking dx while dx^2 fits the
+     * remaining radius (buttons are small — this stays cheaper
+     * than linking a sqrt). */
+    for (int dy = -r; dy <= r; dy++) {
+        int yy = cy + dy;
+        if (yy < 0 || yy >= w->h)
+            continue;
+        int rem = r * r - dy * dy;
+        int dx = 0;
+        while ((dx + 1) * (dx + 1) <= rem)
+            dx++;
+        int x0 = cx - dx;
+        int x1 = cx + dx + 1;
+        if (x0 < 0)
+            x0 = 0;
+        if (x1 > w->w)
+            x1 = w->w;
+        if (x0 < x1)
+            musr_fill32(w->buf + (size_t)yy * w->w + x0,
+                        (size_t)(x1 - x0), c);
+    }
 }
 
 void sprach_paint_window(struct sprach_ctx *ctx, struct sprach_window *w)

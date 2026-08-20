@@ -171,8 +171,22 @@ mkrn_yafs_readdir(uint64_t u64RootTree,
     ctx.max = u32MaxEntries;
     ctx.written = 0;
 
-    mkrn_yafs_btree_walk(u64RootTree, 0, readdir_cb,
-                         &ctx);
+    /* Dir-entry keys are tag|(parent<<16)|hash — every entry
+     * of one directory sits in the contiguous half-open range
+     * [parent<<16, (parent+1)<<16) inside the DIR_ENTRY tag
+     * space.  Walking just that range touches only the btree
+     * nodes on the path plus the directory's leaves; the old
+     * full-tree walk read EVERY node block (INODE/EXTENT/
+     * SNAPSHOT subtrees included) once per getdents call. */
+    if (u64DirInode >= (UINT64_MAX >> 16))
+        return -1;
+    mkrn_yafs_btree_walk_range(
+        u64RootTree,
+        mkrn_yafs_make_key(YAFS_KS_DIR_ENTRY,
+                           u64DirInode << 16),
+        mkrn_yafs_make_key(YAFS_KS_DIR_ENTRY,
+                           (u64DirInode + 1) << 16),
+        readdir_cb, &ctx);
 
     return (int)ctx.written;
 }
@@ -385,8 +399,14 @@ lookup_parent(uint64_t u64RootTree,
     struct parent_ctx pc;
     pc.child_inode = u64ChildInode;
     pc.parent_inode = 0;
-    mkrn_yafs_btree_walk(u64RootTree, 0, parent_cb,
-                         &pc);
+    /* '..' resolution only needs DIR_ENTRY keys — restrict
+     * the walk to the tag-1 key space instead of reading
+     * the whole tree (INODE/EXTENT/SNAPSHOT blocks too). */
+    mkrn_yafs_btree_walk_range(
+        u64RootTree,
+        mkrn_yafs_make_key(YAFS_KS_DIR_ENTRY, 0),
+        mkrn_yafs_make_key(YAFS_KS_DIR_ENTRY + 1, 0),
+        parent_cb, &pc);
     return pc.parent_inode;
 }
 
