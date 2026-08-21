@@ -46,6 +46,29 @@ static struct yafs_mount *pRootYafsMount = NULL;
 uint64_t root_yafs_tree = 0;
 static uint64_t u64VfsNextIno = 1000;
 
+/* Free-fd search cursor: open() used to scan fd_table[0..4095] from
+ * slot 0 on every call, so a shell keeping a few long-lived fds paid
+ * a full-table walk per open (4096 in_use probes as a syscall hot
+ * path).  The cursor is a *hint* only: the scan still wraps over the
+ * whole table, so correctness never depends on it — a stale cursor
+ * costs performance, never a missed free slot. */
+static uint32_t u32FdSearchStart = 0;
+
+static int vfs_alloc_fd(uint32_t u32MinFd)
+{
+    for (uint32_t n = 0; n < M4K_VFS_MAX_FDS; n++) {
+        uint32_t i = (u32FdSearchStart + n) % M4K_VFS_MAX_FDS;
+        if (i < u32MinFd)
+            continue;
+        if (!fd_table[i].in_use) {
+            u32FdSearchStart =
+                (i + 1) % M4K_VFS_MAX_FDS;
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
 extern int mkrn_yafs_readdir(
     uint64_t u64RootTree, uint64_t u64DirInode,
     struct mkrn_vfs_dirent *pBuf, uint32_t u32MaxEntries);
@@ -87,7 +110,7 @@ mkrn_vfs_init(void)
 
     bVfsInitialized = true;
     mkrn_console_write(
-        "VFS: Initialized ramfs with 128 files, 256 FDs\n");
+        "VFS: Initialized ramfs with 128 files, 4096 FDs\n");
     return 0;
 }
 
@@ -209,17 +232,8 @@ mkrn_vfs_pipe(int fd[2])
     mkrn_memset(&pipe_buffers[pi], 0, sizeof(pipe_buffer_t));
     pipe_buffers[pi].in_use = true;
 
-    int rfd = -1, wfd = -1;
-    for (int i = 3; i < M4K_VFS_MAX_FDS; i++) {
-        if (!fd_table[i].in_use) {
-            if (rfd < 0)
-                rfd = i;
-            else if (wfd < 0) {
-                wfd = i;
-                break;
-            }
-        }
-    }
+    int rfd = vfs_alloc_fd(3);
+    int wfd = (rfd >= 0) ? vfs_alloc_fd(3) : -1;
     if (rfd < 0 || wfd < 0) {
         pipe_buffers[pi].in_use = false;
         return -1;
@@ -572,29 +586,29 @@ mkrn_vfs_open(const char *pPathname, int flags)
             if (mkrn_yafs_truncate_inode(u64Inode) != 0)
                 return -1;
         }
-        for (int i = 0; i < M4K_VFS_MAX_FDS; i++) {
-            if (!fd_table[i].in_use) {
-                fd_table[i].fd = i;
-                fd_table[i].file = &file_table[0];
-                /* O_APPEND must start at EOF, not 0 — otherwise every
-                 * ">>" append overwrites the file head.  The in-memory
-                 * file branch below got this right; the YAFS branch
-                 * silently ignored it. */
-                fd_table[i].offset = 0;
-                if (flags & M4K_O_APPEND) {
-                    struct yafs_inode_value iv;
-                    if (read_inode_raw(u64Inode, &iv)
-                        == 0)
-                        fd_table[i].offset =
-                            (uint32_t)iv.size;
-                }
-                fd_table[i].flags = flags;
-                fd_table[i].in_use = true;
-                fd_table[i].yafs_inode = u64Inode;
-                return i;
+        int i = vfs_alloc_fd(0);
+        if (i < 0)
+            return -1;
+        {
+            fd_table[i].fd = i;
+            fd_table[i].file = &file_table[0];
+            /* O_APPEND must start at EOF, not 0 — otherwise every
+             * ">>" append overwrites the file head.  The in-memory
+             * file branch below got this right; the YAFS branch
+             * silently ignored it. */
+            fd_table[i].offset = 0;
+            if (flags & M4K_O_APPEND) {
+                struct yafs_inode_value iv;
+                if (read_inode_raw(u64Inode, &iv)
+                    == 0)
+                    fd_table[i].offset =
+                        (uint32_t)iv.size;
             }
+            fd_table[i].flags = flags;
+            fd_table[i].in_use = true;
+            fd_table[i].yafs_inode = u64Inode;
+            return i;
         }
-        return -1;
     }
 
     mkrn_file_ent_t *pFile =
@@ -617,19 +631,17 @@ mkrn_vfs_open(const char *pPathname, int flags)
         pFile->size = 0;
         pFile->capacity = 0;
     }
-    for (int i = 0; i < M4K_VFS_MAX_FDS; i++) {
-        if (!fd_table[i].in_use) {
-            fd_table[i].fd = i;
-            fd_table[i].file = pFile;
-            fd_table[i].offset =
-                (flags & M4K_O_APPEND) ? pFile->size : 0;
-            fd_table[i].flags = flags;
-            fd_table[i].in_use = true;
-            fd_table[i].yafs_inode = 0;
-            return i;
-        }
-    }
-    return -1;
+    int i = vfs_alloc_fd(0);
+    if (i < 0)
+        return -1;
+    fd_table[i].fd = i;
+    fd_table[i].file = pFile;
+    fd_table[i].offset =
+        (flags & M4K_O_APPEND) ? pFile->size : 0;
+    fd_table[i].flags = flags;
+    fd_table[i].in_use = true;
+    fd_table[i].yafs_inode = 0;
+    return i;
 }
 
 /**
