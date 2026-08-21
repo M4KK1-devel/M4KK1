@@ -133,6 +133,7 @@ int mkrn_sessions_open(const char *path, int flags, int *out_fd)
                 if (!session_files[i].in_use) {
                     session_files[i].in_use = true;
                     strncpy(session_files[i].path, path, SESSIONS_MAX_NAME - 1);
+                    session_files[i].path[SESSIONS_MAX_NAME - 1] = '\0';
                     session_files[i].session_idx = -2;
                     session_files[i].fd = sessions_next_fd++;
                     if (sessions_next_fd >= SESSIONS_FD_LIMIT)
@@ -149,6 +150,7 @@ int mkrn_sessions_open(const char *path, int flags, int *out_fd)
         if (!session_files[i].in_use) {
             session_files[i].in_use = true;
             strncpy(session_files[i].path, path, SESSIONS_MAX_NAME - 1);
+            session_files[i].path[SESSIONS_MAX_NAME - 1] = '\0';
             session_files[i].session_idx = idx;
             session_files[i].fd = sessions_next_fd++;
             if (sessions_next_fd >= SESSIONS_FD_LIMIT)
@@ -190,9 +192,15 @@ int mkrn_sessions_read(int fd, void *buf, uint32_t count)
 
     /* Listing /sys/sessions/ directory */
     if (sf->session_idx == -2) {
-        for (int i = 0; i < MAX_SESSIONS && len < (int)count - 2; i++) {
+        /* Bound by BOTH the tmp buffer and the caller's count — the
+         * loop guard used to be count alone (user-controlled via the
+         * read syscall), letting 16 sessions x 32-char ttys overrun
+         * tmp[128]. */
+        int cap = (int)count;
+        if (cap > (int)sizeof(tmp)) cap = (int)sizeof(tmp);
+        for (int i = 0; i < MAX_SESSIONS && len < cap - 2; i++) {
             if (sessions[i].in_use) {
-                for (int j = 0; sessions[i].tty[j] && len < (int)count - 2; j++)
+                for (int j = 0; sessions[i].tty[j] && len < cap - 2; j++)
                     tmp[len++] = sessions[i].tty[j];
                 tmp[len++] = '\n';
             }
@@ -200,6 +208,7 @@ int mkrn_sessions_read(int fd, void *buf, uint32_t count)
         if (len == 0) {
             tmp[len++] = '\n';
         }
+        if (len > (int)count) len = (int)count;
         memcpy(buf, tmp, (uint32_t)len);
         return len;
     }

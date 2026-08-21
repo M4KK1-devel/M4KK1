@@ -260,16 +260,18 @@ int mkrn_procfs_read(int fd, void *buf, uint32_t count)
             while (j >= 0 && pids[j] > key) { pids[j + 1] = pids[j]; j--; }
             pids[j + 1] = key;
         }
-        for (uint32_t i = 0; i < np && len < (int)count - 12; i++) {
+        for (uint32_t i = 0; np > 0 && i < np && len < (int)sizeof(tmp) - 12
+             && len < (int)count - 12; i++) {
             char nbuf[16];
             int ni = 0;
             uint32_t n = pids[i];
             if (n == 0) { nbuf[ni++] = '0'; }
             else { char rev[16]; int ri = 0; while (n > 0) { rev[ri++] = '0' + (n % 10); n /= 10; } while (ri > 0) nbuf[ni++] = rev[--ri]; }
-            for (int j = 0; j < ni; j++) tmp[len++] = nbuf[j];
+            for (int j = 0; j < ni && len < (int)sizeof(tmp) - 1; j++) tmp[len++] = nbuf[j];
             tmp[len++] = '\n';
         }
         if (len == 0) { tmp[len++] = '\n'; }
+        if (len > (int)count) len = (int)count;
         mkrn_memcpy(buf, tmp, (uint32_t)len);
         pf->read_offset = len;
         return len;

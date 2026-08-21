@@ -21,10 +21,9 @@ static bool sb16_rate_set = false;
 
 static volatile int sb16_irq_pending = 0;
 
-/*
- * Static PCM buffer in kernel .bss (kernel base is 0x100000, so the
- * physical address is below 16 MB and DMA-addressable on channel 1).
- */
+/* 32 KB in kernel .bss below 16 MB (kernel base 0x100000).  The
+ * toolchain caps __attribute__((aligned)) at 8 KB, so boundary
+ * safety is enforced at runtime in play_8bit instead. */
 static uint8_t sb16_dma_buf[M4K_SB16_MAX_SINGLE] __attribute__((aligned(16)));
 
 static inline void outb(uint16_t u16Port, uint8_t u8Value)
@@ -215,8 +214,33 @@ mkrn_sb16_play_8bit(const uint8_t *pBuf, uint32_t u32Len)
             return -1;
     }
 
-    /* Flat address space: virtual == physical */
-    sb16_program_dma_ch1((uint32_t)(uintptr_t)pBuf, u32Len - 1);
+    /* Flat address space: virtual == physical.  ISA DMA channel 1 is
+     * limited to a 24-bit address (< 16 MB) and must not cross a 64 KB
+     * page boundary.  A caller buffer failing either check would be
+     * silently aliased to the wrong physical page; bounce through the
+     * static low-memory buffer instead. */
+    uint32_t u32Phys = (uint32_t)(uintptr_t)pBuf;
+    if (u32Phys >= 0x1000000u
+        || ((u32Phys ^ (u32Phys + u32Len - 1)) & 0xFFFF0000u) != 0) {
+        /* Bounce through the static low buffer.  It is only 16-aligned
+         * (the toolchain caps __attribute__((aligned)) at 8 KB), so it
+         * may itself straddle a 64 KB boundary — truncate to its first
+         * page run (audio is fire-and-forget; a shortened tail beats
+         * playing from the wrong physical page). */
+        uint32_t u32Bounce = (uint32_t)(uintptr_t)sb16_dma_buf;
+        uint32_t u32Run = 0x10000u - (u32Bounce & 0xFFFFu);
+        if (u32Run > M4K_SB16_MAX_SINGLE)
+            u32Run = M4K_SB16_MAX_SINGLE;
+        if (u32Run == 0)
+            return -1;      /* misconfigured .bss layout */
+        if (u32Len > u32Run)
+            u32Len = u32Run;
+        mkrn_memcpy(sb16_dma_buf, pBuf, u32Len);
+        pBuf = sb16_dma_buf;
+        u32Phys = u32Bounce;
+    }
+
+    sb16_program_dma_ch1(u32Phys, u32Len - 1);
 
     sb16_irq_pending = 0;
     if (sb16_dsp_write(M4K_SB16_CMD_OUT8_SINGLE) != 0)
