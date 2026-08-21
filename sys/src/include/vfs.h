@@ -16,7 +16,7 @@ struct yafs_inode_value;
 
 #define M4K_VFS_MAX_FILES   128
 #define M4K_VFS_MAX_FILENAME 128
-#define M4K_VFS_MAX_FDS     4096
+#define M4K_VFS_MAX_FDS     1024
 #define M4K_VFS_MAX_MOUNTS  16
 
 #define M4K_O_RDONLY        0x00000001

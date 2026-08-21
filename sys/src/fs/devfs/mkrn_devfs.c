@@ -18,8 +18,8 @@
 
 #define DEVFS_MAX_FILES     64
 #define DEVFS_MAX_NAME      32
-#define DEVFS_FD_BASE       4000
-#define DEVFS_FD_LIMIT      4096   /* == M4K_VFS_MAX_FDS boundary */
+#define DEVFS_FD_BASE       1000
+#define DEVFS_FD_LIMIT      1024  /* == M4K_VFS_MAX_FDS boundary */
 #define DEVFS_MAX_DRIVES    2
 #define DEVFS_MAX_PARTS     4
 

@@ -62,10 +62,6 @@ extern unsigned char fm_init_elf[];
 extern unsigned int fm_init_elf_len;
 extern unsigned char sprach_stack_init_elf[];
 extern unsigned int sprach_stack_init_elf_len;
-extern unsigned char sprach_tiling_init_elf[];
-extern unsigned int sprach_tiling_init_elf_len;
-extern unsigned char sprach_scroll_init_elf[];
-extern unsigned int sprach_scroll_init_elf_len;
 extern unsigned char pcc_init_elf[];
 extern unsigned int pcc_init_elf_len;
 #endif
@@ -506,34 +502,6 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
             mkrn_console_write(" bytes)\n");
         } else {
             mkrn_console_write("   WARNING: failed to create /bin/sprach_stack\n");
-        }
-    }
-    {
-        int fd = mkrn_vfs_open("/bin/sprach_tiling",
-            M4K_O_CREAT | M4K_O_WRONLY);
-        if (fd >= 0) {
-            int n = mkrn_vfs_write(fd, sprach_tiling_init_elf,
-                sprach_tiling_init_elf_len);
-            mkrn_vfs_close(fd);
-            mkrn_console_write("   /bin/sprach_tiling written (");
-            mkrn_console_write_dec(n);
-            mkrn_console_write(" bytes)\n");
-        } else {
-            mkrn_console_write("   WARNING: failed to create /bin/sprach_tiling\n");
-        }
-    }
-    {
-        int fd = mkrn_vfs_open("/bin/sprach_scroll",
-            M4K_O_CREAT | M4K_O_WRONLY);
-        if (fd >= 0) {
-            int n = mkrn_vfs_write(fd, sprach_scroll_init_elf,
-                sprach_scroll_init_elf_len);
-            mkrn_vfs_close(fd);
-            mkrn_console_write("   /bin/sprach_scroll written (");
-            mkrn_console_write_dec(n);
-            mkrn_console_write(" bytes)\n");
-        } else {
-            mkrn_console_write("   WARNING: failed to create /bin/sprach_scroll\n");
         }
     }
     {

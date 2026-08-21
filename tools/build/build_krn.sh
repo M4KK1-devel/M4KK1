@@ -318,7 +318,7 @@ echo "   File Manager ELF: usr/src/cmd/fm.elf ($(stat -c%s usr/src/cmd/fm.elf) b
 
 echo "=== Building Sprach (window manager) ELFs ==="
 $UCC $M4SH_CFLAGS -c usr/src/sprach/sprach.c -o usr/src/sprach/sprach.o
-for m in stack tiling scroll; do
+for m in stack; do
     $UCC $M4SH_CFLAGS -c "usr/src/sprach/sprach_mode_${m}.c" -o "usr/src/sprach/sprach_mode_${m}.o"
     $LD -m elf_i386 -T usr/src/sprach/sprach.ld -nostdlib -z max-page-size=0x1000 \
         -o "usr/src/sprach/sprach_${m}" \
@@ -400,7 +400,7 @@ sed 's/usr_src_cmd_fm_elf/fm_init_elf/g; s/usr_src_cmd_fm_elf_len/fm_init_elf_le
 rm -f init/fm_elf_.c
 echo "   Generated init/fm_elf.c"
 
-for m in stack tiling scroll; do
+for m in stack; do
     xxd -i "usr/src/sprach/sprach_${m}" > "init/sprach_${m}_elf_.c"
     sed "s/usr_src_sprach_sprach_${m}/sprach_${m}_init_elf/g; s/usr_src_sprach_sprach_${m}_len/sprach_${m}_init_elf_len/g" "init/sprach_${m}_elf_.c" > "init/sprach_${m}_elf.c"
     rm -f "init/sprach_${m}_elf_.c"
@@ -447,8 +447,6 @@ cp -f usr/src/cmd/copland.elf ./usr/bin/copland_status
 cp -f usr/src/cmd/terminal.elf ./usr/bin/terminal
 cp -f usr/src/cmd/fm.elf ./usr/bin/fm
 cp -f usr/src/sprach/sprach_stack ./usr/bin/sprach_stack
-cp -f usr/src/sprach/sprach_tiling ./usr/bin/sprach_tiling
-cp -f usr/src/sprach/sprach_scroll ./usr/bin/sprach_scroll
 cp -f usr/src/tools/pcc/pcc.elf ./usr/bin/pcc
 cp -f usr/src/tools/pcc/pcc.elf ./usr/bin/cc
 fi
@@ -480,8 +478,6 @@ $KCC $CFLAGS -c init/copland_elf.c -o $OBJDIR/copland_elf.o
 $KCC $CFLAGS -c init/terminal_elf.c -o $OBJDIR/terminal_elf.o
 $KCC $CFLAGS -c init/fm_elf.c -o $OBJDIR/fm_elf.o
 $KCC $CFLAGS -c init/sprach_stack_elf.c -o $OBJDIR/sprach_stack_elf.o
-$KCC $CFLAGS -c init/sprach_tiling_elf.c -o $OBJDIR/sprach_tiling_elf.o
-$KCC $CFLAGS -c init/sprach_scroll_elf.c -o $OBJDIR/sprach_scroll_elf.o
 $KCC $CFLAGS -c init/pcc_elf.c -o $OBJDIR/pcc_elf.o
 fi
 if [ "$NEED_RECOVERY" = 1 ]; then
@@ -553,8 +549,6 @@ if [ "$NEED_GRAPHICS" = 1 ]; then
     $OBJDIR/terminal_elf.o \
     $OBJDIR/fm_elf.o \
     $OBJDIR/sprach_stack_elf.o \
-    $OBJDIR/sprach_tiling_elf.o \
-    $OBJDIR/sprach_scroll_elf.o \
     $OBJDIR/pcc_elf.o"
 fi
 if [ "$NEED_USER" = 1 ]; then

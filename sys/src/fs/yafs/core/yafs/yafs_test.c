@@ -14,6 +14,9 @@
 #include <yafs.h>
 #include <yafs_btree.h>
 
+/* 4096 blocks: this ramdisk IS the production root filesystem
+ * backing store (FHS tree + /bin ELFs live here).  Do not shrink
+ * for the boot-time self-test — it shares the device. */
 #define RAMDISK_BLOCKS  4096
 #define RAMDISK_SIZE    (RAMDISK_BLOCKS * YAFS_BTREE_BLOCK_SIZE)
 
@@ -49,6 +52,10 @@ mkrn_yafs_dev_alloc_block(void)
     if (next_free_block >= RAMDISK_BLOCKS)
         return 0;
     uint64_t u64Blk = next_free_block++;
+    /* lazy zeroing: fresh blocks are handed out clean (format
+     * only zeroes the metadata head) */
+    mkrn_memset(ramdisk + u64Blk * YAFS_BTREE_BLOCK_SIZE, 0,
+               YAFS_BTREE_BLOCK_SIZE);
     total_allocated++;
     return u64Blk;
 }
@@ -64,7 +71,10 @@ mkrn_yafs_dev_free_block(uint64_t u64Lba)
 static void
 yafs_test_format(void)
 {
-    mkrn_memset(ramdisk, 0, RAMDISK_SIZE);
+    /* Zero only the metadata head (superblocks + first b-tree
+     * blocks).  Data blocks are zeroed on first allocation in
+     * mkrn_yafs_dev_alloc_block(), so no 16MB memset at boot. */
+    mkrn_memset(ramdisk, 0, 4 * YAFS_BTREE_BLOCK_SIZE);
 
     struct yafs_superblock sb;
     mkrn_memset(&sb, 0, sizeof(sb));
