@@ -201,7 +201,7 @@ else
     check_fail "at.c 缺少输入验证"
 fi
 
-# 测试9: Copland 协议层单元测试（洁净室阶段1）
+# 测试9: Copland 协议层单元测试（洁净室阶段1-2）
 echo ""
 echo "=== 测试9: Copland 协议层单元测试 ==="
 if [ -f sys/src/copland/copland_proto.c ]; then
@@ -221,6 +221,29 @@ if [ -f sys/src/copland/copland_proto.c ]; then
     fi
 else
     check_fail "sys/src/copland/copland_proto.c 不存在"
+fi
+
+# 测试10: Copland 合成器核心单元测试（洁净室阶段2）
+echo ""
+echo "=== 测试10: Copland 合成器单元测试 ==="
+if [ -f sys/src/copland/compositor.c ]; then
+    if gcc -Wall -Wextra -Isys/src/copland \
+        -o /tmp/cp_comp_test \
+        tools/testing/copland/test_compositor_host.c \
+        sys/src/copland/compositor.c \
+        sys/src/copland/copland_proto.c 2>/tmp/cp_comp_err.log; then
+        if /tmp/cp_comp_test > /tmp/cp_comp_out.log 2>&1; then
+            check_pass "copland 合成器单元测试 (51 asserts)"
+        else
+            check_fail "copland 合成器单元测试有断言失败"
+            cat /tmp/cp_comp_out.log
+        fi
+    else
+        check_fail "copland 合成器单元测试编译失败"
+        cat /tmp/cp_comp_err.log
+    fi
+else
+    check_fail "sys/src/copland/compositor.c 不存在"
 fi
 
 # 汇总

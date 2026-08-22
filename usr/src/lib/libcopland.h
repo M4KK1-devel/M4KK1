@@ -104,6 +104,10 @@ struct copland_shm {
     uint32_t shutdown;            /* 1 = WM requests session end: the
                                      server exits so MDM regains the
                                      screen (lock/logout/shutdown) */
+    uint32_t reboot;              /* 1 = WM chose "Shut Down": after the
+                                     session ends, issue the magic-gated
+                                     reboot syscall (QEMU std i386 has
+                                     no ACPI poweroff) */
 
     struct copland_surface
         surfaces[COPLAND_MAX_SURFACES];
