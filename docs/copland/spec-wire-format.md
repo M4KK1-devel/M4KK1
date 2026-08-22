@@ -52,12 +52,13 @@ C8 00 00 00   height = 200
 ```
 
 **registry.global(name=1, interface="copland_compositor", version=1)**（对象 3，opcode 0） 事件：
+string 总长 = 4B 长度字 + 内容+NUL（19B）填充到 20B = 24B；整条 = 8+4+24+4 = **40 (0x28)**：
 ```
-03 00 00 00
-24 00 00 00   size = 0x24 (36B), opcode = 0
+03 00 00 00   object-id = 3
+28 00 00 00   size = 0x28 (40B), opcode = 0
 01 00 00 00   name = 1
-14 00 00 00   string len = 20 ("copland_compositor" + NUL = 19, padded 20)
-"copland_compositor\0" + pad
+13 00 00 00   string len = 19 ("copland_compositor" 18B + NUL)
+"copland_compositor\0" + 1B pad
 01 00 00 00   version = 1
 ```
 

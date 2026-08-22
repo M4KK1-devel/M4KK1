@@ -201,6 +201,28 @@ else
     check_fail "at.c 缺少输入验证"
 fi
 
+# 测试9: Copland 协议层单元测试（洁净室阶段1）
+echo ""
+echo "=== 测试9: Copland 协议层单元测试 ==="
+if [ -f sys/src/copland/copland_proto.c ]; then
+    if gcc -Wall -Wextra -Isys/src/copland \
+        -o /tmp/cp_proto_test \
+        tools/testing/copland/test_proto_host.c \
+        sys/src/copland/copland_proto.c 2>/tmp/cp_proto_err.log; then
+        if /tmp/cp_proto_test > /tmp/cp_proto_out.log 2>&1; then
+            check_pass "copland 协议层单元测试 (42 asserts)"
+        else
+            check_fail "copland 协议层单元测试有断言失败"
+            cat /tmp/cp_proto_out.log
+        fi
+    else
+        check_fail "copland 协议层单元测试编译失败"
+        cat /tmp/cp_proto_err.log
+    fi
+else
+    check_fail "sys/src/copland/copland_proto.c 不存在"
+fi
+
 # 汇总
 echo ""
 echo "=========================================="
