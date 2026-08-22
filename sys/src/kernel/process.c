@@ -119,10 +119,25 @@ static void proc_registry_remove(mkrn_process_t *p)
  * no scheduler state can reference the process anymore. */
 static void proc_free_zombie(mkrn_process_t *p)
 {
-    if (p->user_stack_base)
-        mkrn_free((void *)p->user_stack_base);
-    if (p->kernel_stack)
-        mkrn_free((void *)(p->kernel_stack - M4K_STACK_SIZE));
+    /* Stacks may originate from the buddy zone (fork children since
+     * the overlap fix) or the linker heap (execve'd processes): free
+     * by range.  Buddy pages cover [0x3000000, top-of-RAM); heap
+     * blocks live below 0x3000000. */
+    if (p->user_stack_base) {
+        if (p->user_stack_base >= 0x3000000u)
+            mkrn_memory_free_page((void *)p->user_stack_base,
+                                  (M4K_STACK_SIZE + 0xFFF) >> 12);
+        else
+            mkrn_free((void *)p->user_stack_base);
+    }
+    if (p->kernel_stack) {
+        uint32_t kbase = p->kernel_stack - M4K_STACK_SIZE;
+        if (kbase >= 0x3000000u)
+            mkrn_memory_free_page((void *)kbase,
+                                  (M4K_STACK_SIZE + 0xFFF) >> 12);
+        else
+            mkrn_free((void *)kbase);
+    }
     proc_registry_remove(p);
     mkrn_free(p);
 }
@@ -840,9 +855,19 @@ pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
     /* Private kernel stack for the child.  TSS esp0 is per-process
      * (set on each context switch), so the child's future syscalls
      * push onto its own stack instead of clobbering the parent's
-     * still-pending ISR frame.  The child's resume block lives on
-     * the top of this stack and is consumed once at first resume. */
-    uint32_t *kstack = (uint32_t *)mkrn_alloc(M4K_STACK_SIZE);
+     * still-pending ISR frame.  The child's resume block lives on the
+     * top of this stack and is consumed once at first resume.
+     *
+     * Both child stacks come from the buddy zone, NOT the linker
+     * heap: the heap's free-list bookkeeping is known-fragile
+     * (u32UsedMemory has been observed at 56MB on a 4MB heap), and a
+     * ghost free block can overlap the parent's live user stack —
+     * the fork-time byte copy then memcpy'd the parent's stack ONTO
+     * ITSELF through the overlapping window (rep movsl smear), the
+     * child resumed on an all-zero frame and #UD'd at pc=3.
+     * Page-granular buddy allocations are disjoint by construction. */
+    uint32_t kstack_pages = (M4K_STACK_SIZE + 0xFFF) >> 12;
+    uint32_t *kstack = (uint32_t *)mkrn_memory_alloc_page(kstack_pages);
     if (!kstack) {
         M4K_LOG_ERROR("fork: kstack alloc failed");
         mkrn_free(child);
@@ -880,7 +905,8 @@ pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
      * parent later unwinds garbage when it resumes.  The resume esp/ebp
      * are remapped into the copy at the same relative offset. */
     if (parent->user_stack_base) {
-        uint32_t *ustack = (uint32_t *)mkrn_alloc(M4K_STACK_SIZE);
+        uint32_t upages = (M4K_STACK_SIZE + 0xFFF) >> 12;
+        uint32_t *ustack = (uint32_t *)mkrn_memory_alloc_page(upages);
         if (ustack) {
             mkrn_memcpy(ustack, (void *)parent->user_stack_base,
                         M4K_STACK_SIZE);
@@ -935,9 +961,13 @@ pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
         M4K_LOG_ERROR("fork: ready queue full");
         proc_registry_remove(child);
         process_ctrl.process_count--;
-        mkrn_free((void *)(child->kernel_stack - M4K_STACK_SIZE));
+        mkrn_memory_free_page(
+            (void *)(child->kernel_stack - M4K_STACK_SIZE),
+            (M4K_STACK_SIZE + 0xFFF) >> 12);
         if (child->user_stack_base)
-            mkrn_free((void *)child->user_stack_base);
+            mkrn_memory_free_page(
+                (void *)child->user_stack_base,
+                (M4K_STACK_SIZE + 0xFFF) >> 12);
         mkrn_free(child);
         return -1;
     }
