@@ -18,6 +18,7 @@
 #include <ldso.h>
 #include <process.h>
 #include <signal.h>
+#include <memory.h>
 #include <timer.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -561,10 +562,22 @@ static uint32_t m4k_syscall_spawn_impl(uint32_t arg1, uint32_t arg2, uint32_t ar
 
     uint8_t *elf_buf = NULL;
     uint32_t total = 0;
-    uint32_t cap = 4096;
+    uint32_t cap = 1u << 20;          /* 1 MiB staging, no realloc */
     int ret = -1;
 
-    elf_buf = (uint8_t *)mkrn_alloc(cap);
+    /* Single fixed staging buffer from the buddy zone, NOT mkrn_alloc:
+     * the linker heap's free-list bookkeeping is known-fragile
+     * (ghost blocks overlapping live allocations — the same class of
+     * bug that corrupted fork child stacks), AND the heap range
+     * [0x29c000, 0x69c000) overlaps the fixed user image window
+     * (copland lives at 0x600000..0x60B75C): a heap block landing
+     * there smears ELF bytes straight over the daemon's .text.
+     * One up-front allocation also removes the realloc churn
+     * (alloc/copy/free per growth step) that made the buffer
+     * address unstable across the read loop.  Largest known user
+     * ELF is m4sh at ~363 KB; 1 MiB leaves ample headroom and the
+     * buddy zone has ~480 MB. */
+    elf_buf = (uint8_t *)mkrn_memory_alloc_page(cap >> 12);
     if (!elf_buf) {
         mkrn_vfs_close(fd);
         return (uint32_t)-1;
@@ -577,16 +590,6 @@ static uint32_t m4k_syscall_spawn_impl(uint32_t arg1, uint32_t arg2, uint32_t ar
         if (n == 0)
             break;
         total += (uint32_t)n;
-        if (total + 256 >= cap) {
-            uint32_t new_cap = cap * 2;
-            uint8_t *tmp = (uint8_t *)mkrn_alloc(new_cap);
-            if (!tmp)
-                goto out;
-            mkrn_memcpy(tmp, elf_buf, total);
-            mkrn_free(elf_buf);
-            elf_buf = tmp;
-            cap = new_cap;
-        }
     }
 
     if (total == 0)
@@ -603,7 +606,7 @@ static uint32_t m4k_syscall_spawn_impl(uint32_t arg1, uint32_t arg2, uint32_t ar
 
 out:
     if (elf_buf)
-        mkrn_free(elf_buf);
+        mkrn_memory_free_page(elf_buf, cap / 4096);
     mkrn_vfs_close(fd);
     if (ret != 0)
         return (uint32_t)-1;
