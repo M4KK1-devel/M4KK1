@@ -58,8 +58,14 @@ extern unsigned char copland_init_elf[];
 extern unsigned int copland_init_elf_len;
 extern unsigned char terminal_init_elf[];
 extern unsigned int terminal_init_elf_len;
+extern unsigned char cptest_init_elf[];
+extern unsigned int cptest_init_elf_len;
 extern unsigned char fm_init_elf[];
 extern unsigned int fm_init_elf_len;
+extern unsigned char altr_init_elf[];
+extern unsigned int altr_init_elf_len;
+extern unsigned char calc_init_elf[];
+extern unsigned int calc_init_elf_len;
 extern unsigned char sprach_stack_init_elf[];
 extern unsigned int sprach_stack_init_elf_len;
 extern unsigned char pcc_init_elf[];
@@ -477,6 +483,20 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
         }
     }
     {
+        int fd = mkrn_vfs_open("/bin/cptest",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, cptest_init_elf,
+                cptest_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/cptest written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/cptest\n");
+        }
+    }
+    {
         int fd = mkrn_vfs_open("/bin/fm",
             M4K_O_CREAT | M4K_O_WRONLY);
         if (fd >= 0) {
@@ -488,6 +508,34 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
             mkrn_console_write(" bytes)\n");
         } else {
             mkrn_console_write("   WARNING: failed to create /bin/fm\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/altr",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, altr_init_elf,
+                altr_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/altr written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/altr\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/calcg",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, calc_init_elf,
+                calc_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/calcg written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/calcg\n");
         }
     }
     {
