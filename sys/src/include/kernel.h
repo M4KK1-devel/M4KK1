@@ -21,7 +21,7 @@
 #define M4K_VERSION_TYPE "devel"
 
 #define M4K_MAX_PROCESSES 256
-#define M4K_STACK_SIZE 32768
+#define M4K_STACK_SIZE 65536
 #define M4K_PAGE_SIZE 4096
 #define M4K_HEAP_SIZE (1024 * 1024)
 

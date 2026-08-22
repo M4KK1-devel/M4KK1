@@ -411,11 +411,24 @@ void mkrn_vesa_init(void)
 
     /* Allocate back buffer */
     back_buffer_size = fb_info.width * fb_info.height * (fb_info.bpp / 8);
-    back_buffer = (uint32_t *)mkrn_alloc(back_buffer_size);
+    /* The kernel linker heap (0x29c000..0x69c000, 4MB) cannot hold a
+     * 1.9MB frame buffer plus every other allocation: a first-fit
+     * block near the heap tail silently ran past __heap_end and the
+     * full-screen gradient fill overwrote the fixed user-ELF window
+     * at 0x600000+ (killing init/MDM — the "MDM GPF" of commit
+     * 8374944).  Large buffers belong to the buddy zone above the
+     * ramdisk (0x3000000+), page-aligned, far from every fixed
+     * window.  Pages: size rounded up to 4KB. */
+    {
+        size_t pages = (back_buffer_size + 0xFFF) >> 12;
+        back_buffer = (uint32_t *)mkrn_memory_alloc_page(pages);
+    }
     if (!back_buffer) {
         M4K_LOG_ERROR("vesa: failed to allocate back buffer\n");
         return;
     }
+    /* zero the fresh pages so the first flip does not flash garbage */
+    mkrn_memset(back_buffer, 0, back_buffer_size);
 
     mkrn_console_write("[INFO] vesa: framebuffer at 0x");
     mkrn_console_write_hex(fb_info.phys_addr);

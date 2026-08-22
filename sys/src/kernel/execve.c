@@ -110,10 +110,19 @@ int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
             uint32_t seg_lo = phdr->p_vaddr;
             uint32_t seg_hi = phdr->p_vaddr
                               + phdr->p_memsz;
+            /* Fixed-address user window: the graphics daemons are
+             * linked at dedicated addresses above the kernel heap
+             * (copland 0x600000, filemgr 0xD00000, cptest 0xE00000,
+             * sprach 0x1100000) per usr/src/cmd/*.ld.  Only the
+             * linker heap itself and the ramdisk (0x2000000..) are
+             * forbidden.  The old `seg_lo < heap_end` check rejected
+             * copland (0x600000 < 0x69C000) — MDM could never start
+             * it. */
+            uint32_t user_win_lo = 0x400000u;
+            uint32_t user_win_hi = 0x2000000u;
             if (phdr->p_memsz == 0
-                || seg_lo < heap_end
-                || (seg_lo >= 0x2000000u
-                    && seg_lo < 0x3000000u)
+                || seg_lo < user_win_lo
+                || seg_lo >= user_win_hi
                 || seg_hi > 0x3000000u) {
                 M4K_LOG_ERROR(
                     "execve: LOAD segment 0x");
