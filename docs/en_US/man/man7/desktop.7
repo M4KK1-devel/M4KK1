@@ -1,0 +1,83 @@
+.DD ${date}
+.TH M4KK1 7 "Desktop Interaction Guide"
+.SH NAME
+Desktop interaction guide \- shortcuts, menus and operations of the
+Sprach window manager desktop
+.SH OVERVIEW
+This page describes the M4KK1 desktop environment (Copland display
+server + Sprach WM + MDM greeter): the Bar menu, Dock quick launch,
+Launchpad, file manager (fm), virtual desktops and the wallpaper system.
+The \fBRule\fR key is the keyboard Win/Meta key; the current keymap maps
+it onto the \fBAlt\fR modifier slot.
+.SH BAR MENU
+Click the "M4KK1" brand text at the top-left of the Bar to open the
+dropdown menu:
+.TP
+.B About This PC
+Info panel with OS/kernel version (uname), total/used/free memory
+(sysinfo, KB), build date and CPU model.
+.TP
+.B System Settings
+Placeholder; shows "Not implemented yet".
+.TP
+.B Lock Screen
+Ends the session; the screen returns to the MDM greeter.
+.TP
+.B Shut Down
+After the session ends Copland issues the magic-gated reboot syscall
+(int 0x80 nr 0x6D, magic1=0x01234567 magic2=0x89ABCDEF). QEMU std
+i386 has no ACPI poweroff; the warm reset is the only machine-level
+restart this hardware offers.
+.SH DOCK QUICK LAUNCH
+.TP
+.B Rule+1 .. Rule+9
+Activates the Nth Dock icon from the left: raises the existing window
+or spawns a new instance.
+.SH LAUNCHPAD
+Click the Dock grid icon to open the full-screen 4-column app grid.
+The app list is scanned at open time from \fI/bin\fR and \fI/usr/bin\fR
+(same target, deduplicated), skipping dot-files and WM-internal
+components (sprach/copland/login/mdm ...). Each app shows a 32x32
+icon (icons.c) and its name. Clicking an icon launches the app and
+closes the Launchpad; Esc or a background click closes it too.
+.SH FILE MANAGER (fm)
+The initial tab opens the user's home directory (the home field of
+the passwd.db entry matching the current uid; root -> /export/root).
+.TP
+.B Ctrl+T / Ctrl+W
+New tab / close current tab.
+.TP
+.B Ctrl+Tab
+Cycle through the in-use tabs (or click the tab strip directly).
+.TP
+.B Ctrl+L
+Focus the address bar, type a path and press Enter; Esc cancels.
+.TP
+.B Ctrl+H
+Toggle hidden (dot-prefixed) file display.
+.TP
+.B Enter / j / k
+Open the selection / move down / move up.
+.TP
+.B mouse click / double click
+Click selects a row or switches tabs; double click enters a directory
+or opens a file.
+.TP
+File types
+Directories use the folder icon, .txt the text icon, .c/.h the code
+icon, everything else the generic file icon. Double-clicking a text
+file opens the built-in read-only preview (first 24 lines); Esc,
+Enter or q leaves it. (m4k_spawn has no argv, so launching sead with
+the path is impossible; the preview is the equivalent.)
+.SH VIRTUAL DESKTOPS
+.TP
+.B Rule+Shift+1 / 2 / 3 / 4
+Switch to desktop 1\-4. Windows show/hide per their desktop; the Bar
+center shows "Desktop N".
+.SH WALLPAPER
+The MDM greeter and the Sprach desktop background share
+\fBgui_draw_wallpaper()\fR: a vertical blue gradient (0x000044 ->
+0x0066FF).
+.SH SEE ALSO
+.BR copland (7),
+.BR sprach (7)

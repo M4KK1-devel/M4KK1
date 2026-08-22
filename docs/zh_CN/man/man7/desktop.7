@@ -1,0 +1,70 @@
+.DD ${date}
+.TH M4KK1 7 "桌面交互指南"
+.SH 名称
+桌面交互指南 \- Sprach 窗口管理器与桌面应用的快捷键、菜单与操作说明
+.SH 概述
+本文档描述 M4KK1 桌面环境（Copland 显示服务器 + Sprach WM + MDM 登录器）的交互功能：
+Bar 菜单、Dock 快速启动、启动台（Launchpad）、文件管理器（fm）、虚拟桌面与壁纸系统。
+.\" 规则键（Rule）
+规则键（\fBRule\fR）即键盘上的 Win/Meta 键，在当前键位映射中与 \fBAlt\fR 同一修饰位。
+.SH Bar 菜单
+点击 Bar 左上角 "M4KK1" 品牌文字弹出下拉菜单：
+.TP
+.B 关于本机 (About This PC)
+弹出信息面板，显示 OS/内核版本（uname）、内存总量/已用/空闲（sysinfo，单位 KB）、
+构建日期与 CPU 型号。
+.TP
+.B 系统设置 (System Settings)
+预留项，显示 "Not implemented yet"。
+.TP
+.B 锁定屏幕 (Lock Screen)
+结束当前会话，屏幕交还 MDM 登录器。
+.TP
+.B 关机 (Shut Down)
+结束会话后由 Copland 发起 magic 门控的 reboot 系统调用（int 0x80, nr 0x6D，
+magic1=0x01234567 magic2=0x89ABCDEF）。QEMU std i386 无 ACPI 关机，
+warm reset 是该硬件唯一的机器级重启。
+.SH Dock 快速启动
+.TP
+.B Rule+1 .. Rule+9
+激活 Dock 左起第 N 个应用图标：已有实例则提升窗口，否则启动新实例。
+.SH 启动台 (Launchpad)
+点击 Dock 网格图标打开全屏 4 列应用网格。应用列表在打开时实时扫描
+\fI/bin\fR 与 \fI/usr/bin\fR（两目录同一目标，自动去重），排除以 . 开头的文件及
+WM 内部组件（sprach/copland/login/mdm 等）。每个应用显示 32x32 图标（icons.c）
+与名称。点击图标启动对应程序并自动关闭启动台；按 Esc 或点击背景关闭。
+.SH 文件管理器 (fm)
+默认路径为当前用户主目录（passwd.db 中 uid 对应的 home 字段，root 为 /export/root）。
+.TP
+.B Ctrl+T / Ctrl+W
+新建标签页 / 关闭当前标签页。
+.TP
+.B Ctrl+Tab
+在已用标签页间循环切换（也可直接点击标签条）。
+.TP
+.B Ctrl+L
+聚焦地址栏，输入路径回车跳转；Esc 取消。
+.TP
+.B Ctrl+H
+切换隐藏文件（. 开头）显示。
+.TP
+.B Enter / j / k
+打开选中项 / 向下、向上移动选择。
+.TP
+.B 鼠标单击 / 双击
+单击选中行或切换标签页；双击进入目录或打开文件。
+.TP
+文件类型
+目录显示文件夹图标；\ .txt 显示文本图标；\ .c/.h 显示代码图标；其余显示通用文件图标。
+双击文本类文件进入内置只读预览（前 24 行），Esc/Enter/q 退出预览。
+（m4k_spawn 不支持 argv，故无法以路径参数调起 sead；预览为等效替代。）
+.SH 虚拟桌面
+.TP
+.B Rule+Shift+1 / 2 / 3 / 4
+切换到第 1\-4 个虚拟桌面。窗口按所属桌面显示/隐藏，Bar 中间显示 "Desktop N"。
+.SH 壁纸
+MDM 登录屏与 Sprach 桌面背景统一使用 \fBgui_draw_wallpaper()\fR 绘制的
+蓝色垂直渐变（0x000044 → 0x0066FF）。
+.SH 另见
+.BR copland (7),
+.BR sprach (7)
