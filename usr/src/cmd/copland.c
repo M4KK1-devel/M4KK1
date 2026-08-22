@@ -65,22 +65,28 @@ static void copland_render_surface(const struct copland_surface *s)
 {
     if (!(s->flags & COPLAND_SURF_VISIBLE))
         return;
-    if (s->w <= 0 || s->h <= 0)
+    /* Snapshot geometry ONCE: a concurrent MOVE/RESIZE landing
+     * between the blit and the border draws would otherwise mix
+     * two different w/h values (torn frame) — and in the worst
+     * case blit with a stale-bigger w against a fresh buffer. */
+    const int sw = s->w;
+    const int sh = s->h;
+    if (sw <= 0 || sh <= 0)
         return;
 
     /* Client-rendered window content (Sprach model): blit the
      * surface's pixel buffer.  Otherwise fall back to a flat fill. */
     if (s->buffer_ptr)
-        m4k_gfx_blit(s->x, s->y, s->w, s->h,
+        m4k_gfx_blit(s->x, s->y, sw, sh,
                      (const void *)(uintptr_t)s->buffer_ptr);
     else
-        gui_draw_rect(s->x, s->y, s->w, s->h, s->color);
+        gui_draw_rect(s->x, s->y, sw, sh, s->color);
 
     /* 3D-ish border: light top/left, dark bottom/right */
-    gui_draw_rect(s->x, s->y, s->w, 1, COPLAND_COLOR_WHITE);
-    gui_draw_rect(s->x, s->y, 1, s->h, COPLAND_COLOR_WHITE);
-    gui_draw_rect(s->x, s->y + s->h - 1, s->w, 1, COPLAND_COLOR_DARK);
-    gui_draw_rect(s->x + s->w - 1, s->y, 1, s->h, COPLAND_COLOR_DARK);
+    gui_draw_rect(s->x, s->y, sw, 1, COPLAND_COLOR_WHITE);
+    gui_draw_rect(s->x, s->y, 1, sh, COPLAND_COLOR_WHITE);
+    gui_draw_rect(s->x, s->y + sh - 1, sw, 1, COPLAND_COLOR_DARK);
+    gui_draw_rect(s->x + sw - 1, s->y, 1, sh, COPLAND_COLOR_DARK);
 }
 
 /* Wallpaper gradient fill clipped to a region (incremental path).
@@ -212,7 +218,21 @@ static void copland_handle_commands(struct copland_shm *shm)
             if (c.args[0] >= 0 &&
                 c.args[0] < COPLAND_MAX_SURFACES &&
                 shm->surfaces[c.args[0]].in_use) {
-                shm->surfaces[c.args[0]].in_use = 0;
+                /* Zero the WHOLE slot before releasing it.  A stale
+                 * in_use=1 window between destroy and the next
+                 * create lets the compositor blit a dead client's
+                 * buffer_ptr (the EIP-into-lp_buf crash class). */
+                struct copland_surface *d =
+                    &shm->surfaces[c.args[0]];
+                d->buffer_ptr = 0;
+                d->flags = 0;
+                d->w = 0;
+                d->h = 0;
+                d->x = 0;
+                d->y = 0;
+                d->color = 0;
+                d->dmg_w = 0;
+                d->in_use = 0;      /* publish last */
                 if (shm->surface_count > 0)
                     shm->surface_count--;
                 ser_puts("[COPLAND] destroyed surface id=");

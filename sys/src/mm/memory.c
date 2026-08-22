@@ -255,13 +255,18 @@ mkrn_memory_init(multiboot_info_t *pMbInfo)
     u32KernelHeapStart = (uint32_t)&__heap_start;
     u32KernelHeapEnd = (uint32_t)&__heap_end;
 
-    /* Buddy zone: manage physical RAM from ABOVE the kernel image
-     * + linker heap up to min(total, 512MB).  Free-list nodes are
-     * stored in the freed pages themselves, so nothing below the
-     * kernel's boot heap end may ever enter the buddy. */
+    /* Buddy zone: manage physical RAM from ABOVE the kernel image +
+     * linker heap + fixed-address ramdisk (0x2000000..0x3000000,
+     * reserved for the YAFS root device) up to min(total, 512MB).
+     * Free-list nodes are stored in the freed pages themselves, so
+     * nothing below the highest permanent allocation may ever enter
+     * the buddy.  The user ELF window (0x600000..0x127BE40) sits
+     * below this zone start and never overlaps buddy pages either. */
     uint32_t zone_start =
-        (u32KernelHeapEnd + M4K_PAGE_SIZE - 1)
-        & ~(uint32_t)(M4K_PAGE_SIZE - 1);
+        (u32KernelHeapEnd > 0x3000000u)
+            ? ((u32KernelHeapEnd + M4K_PAGE_SIZE - 1)
+               & ~(uint32_t)(M4K_PAGE_SIZE - 1))
+            : 0x3000000u;
     uint32_t zone_end = u32TotalMemory;
     if (zone_end > 512u * 1024u * 1024u)
         zone_end = 512u * 1024u * 1024u;

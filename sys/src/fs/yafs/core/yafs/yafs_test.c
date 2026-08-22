@@ -20,7 +20,16 @@
 #define RAMDISK_BLOCKS  4096
 #define RAMDISK_SIZE    (RAMDISK_BLOCKS * YAFS_BTREE_BLOCK_SIZE)
 
-static uint8_t ramdisk[RAMDISK_SIZE];
+/* The ramdisk lives at a FIXED address (0x2000000, 32MB), outside the
+ * kernel image/BSS/heap.  A 16MB array inside .bss used to push the
+ * kernel top to 0x127F79C — straight into the user ELF window
+ * (sprach BSS ends at 0x127BE40, terminal loads at 0xC00000), so any
+ * execve of a desktop binary scribbled over kernel data (EXC #NP,
+ * "vanished" processes).  The buddy zone starts above this address
+ * (see mkrn_memory_init), so the array is now a plain pointer into
+ * permanently-reserved RAM instead of BSS. */
+#define RAMDISK_ADDR    0x2000000u
+static uint8_t *const ramdisk = (uint8_t *const)RAMDISK_ADDR;
 
 uint64_t next_free_block = 3;
 uint64_t total_allocated = 0;

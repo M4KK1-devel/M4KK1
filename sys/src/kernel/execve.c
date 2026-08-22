@@ -98,6 +98,35 @@ int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
         if (phdr->p_type != M4K_PT_LOAD)
             continue;
 
+        /* Guard the flat address space: a LOAD segment may never
+         * touch the kernel image/BSS/heap (below the linker heap
+         * end), the ramdisk window, or the buddy zone.  A stray
+         * base here used to scribble over live kernel data with no
+         * diagnostic except a later EXC — reject it loudly. */
+        {
+            extern unsigned char __heap_end[];
+            uint32_t heap_end =
+                (uint32_t)__heap_end;
+            uint32_t seg_lo = phdr->p_vaddr;
+            uint32_t seg_hi = phdr->p_vaddr
+                              + phdr->p_memsz;
+            if (phdr->p_memsz == 0
+                || seg_lo < heap_end
+                || (seg_lo >= 0x2000000u
+                    && seg_lo < 0x3000000u)
+                || seg_hi > 0x3000000u) {
+                M4K_LOG_ERROR(
+                    "execve: LOAD segment 0x");
+                mkrn_console_write_hex(seg_lo);
+                mkrn_console_write(
+                    "..0x");
+                mkrn_console_write_hex(seg_hi);
+                mkrn_console_write(
+                    " overlaps kernel space\n");
+                return -1;
+            }
+        }
+
         M4K_LOG_INFO("execve: LOAD segment");
         mkrn_console_write("  vaddr=0x");
         mkrn_console_write_hex(phdr->p_vaddr);

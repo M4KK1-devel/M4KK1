@@ -937,15 +937,20 @@ int sprach_create_app_menu(struct sprach_ctx *ctx)
         return 0;
     for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
         if (!ctx->shm->surfaces[i].in_use) {
-            ctx->shm->surfaces[i].in_use = 1;
-            ctx->shm->surfaces[i].x = 6;
-            ctx->shm->surfaces[i].y = MENUBAR_H;
-            ctx->shm->surfaces[i].w = APP_MENU_W;
-            ctx->shm->surfaces[i].h = APP_MENU_H;
-            ctx->shm->surfaces[i].color = 0x00E8E8E8;
-            ctx->shm->surfaces[i].flags = 0 /* start hidden: no VISIBLE flag */;
-            ctx->shm->surfaces[i].buffer_ptr =
+            struct copland_surface *s =
+                &ctx->shm->surfaces[i];
+            s->x = 6;
+            s->y = MENUBAR_H;
+            s->w = APP_MENU_W;
+            s->h = APP_MENU_H;
+            s->color = 0x00E8E8E8;
+            s->flags = 0 /* start hidden: no VISIBLE flag */;
+            s->dmg_w = 0;
+            s->buffer_ptr =
                 (uint32_t)(uintptr_t)app_menu_buf;
+            s->in_use = 1;      /* publish LAST: the compositor
+                                 * must never see in_use=1 with
+                                 * half-filled geometry */
             ctx->menu_slot = i;
             return 0;
         }
@@ -1055,14 +1060,18 @@ int sprach_create_launchpad(struct sprach_ctx *ctx)
         return 0;
     for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
         if (!ctx->shm->surfaces[i].in_use) {
-            ctx->shm->surfaces[i].in_use = 1;
-            ctx->shm->surfaces[i].x = 0;
-            ctx->shm->surfaces[i].y = MENUBAR_H;
-            ctx->shm->surfaces[i].w = LP_W;
-            ctx->shm->surfaces[i].h = LP_H;
-            ctx->shm->surfaces[i].color = 0x00102040;
-            ctx->shm->surfaces[i].flags = 0 /* start hidden: no VISIBLE flag */;
-            ctx->shm->surfaces[i].buffer_ptr = (uint32_t)(uintptr_t)lp_buf;
+            struct copland_surface *s =
+                &ctx->shm->surfaces[i];
+            s->x = 0;
+            s->y = MENUBAR_H;
+            s->w = LP_W;
+            s->h = LP_H;
+            s->color = 0x00102040;
+            s->flags = 0 /* start hidden: no VISIBLE flag */;
+            s->dmg_w = 0;
+            s->buffer_ptr = (uint32_t)(uintptr_t)lp_buf;
+            s->in_use = 1;      /* publish LAST (same reason as
+                                 * sprach_create_app_menu) */
             ctx->lp_slot = i;
             return 0;
         }
@@ -1450,8 +1459,8 @@ void sprach_handle_mouse(struct sprach_ctx *ctx)
  *
  * Ctrl+Alt+T (detected in the keyboard path) forks a child that execs
  * /bin/terminal at 0xC00000 — a separate flat-address-space process
- * whose code/data never overlap Sprach's 0x900000 zone, mirroring how
- * Copland (0x600000) forks Sprach (0x900000).  The terminal owns its
+ * whose code/data never overlap Sprach's 0x1100000 zone, mirroring how
+ * Copland (0x600000) forks Sprach (0x1100000).  The terminal owns its
  * surface's pixel buffer and paints both chrome and the 80×25 grid.
  * Sprach only tracks the slot, routes chrome clicks, raises it in
  * z-order and forwards keystrokes through the term_mailbox ring. */

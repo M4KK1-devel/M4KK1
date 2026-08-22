@@ -121,7 +121,11 @@ static inline struct copland_shm *copland_shm_get(void)
     return (struct copland_shm *)COPLAND_SHM_BASE;
 }
 
-/* Find a free surface slot; returns index or -1. */
+/* Find a free surface slot; returns index or -1.  The caller fills
+ * the geometry afterwards — in_use is set to 1 HERE only because the
+ * compositor (same process for CREATE commands) is the one filling
+ * it; cross-process creators must fill fields first and publish
+ * in_use LAST themselves (see Sprach's create_launchpad). */
 static inline int copland_surface_alloc(struct copland_shm *shm)
 {
     int i;

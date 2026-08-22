@@ -400,25 +400,36 @@ mkrn_process_t *mkrn_process_switch_pick(void)
     /* Dequeue next ready process (skip stopped, reap terminated) */
     mkrn_process_t *next = NULL;
     uint32_t scanned = 0;
+    int exhausted = 1;   /* assume wrap-around unless a valid pick
+                          * breaks out of the loop below */
     while (scanned < ready_queue_count + 1) {
-        next = ready_dequeue();
-        if (!next)
+        mkrn_process_t *cand = ready_dequeue();
+        if (!cand)
             break;
         scanned++;
-        if (next->state_tags & M4K_TERMINATE) {
-            mkrn_process_reap(next);
+        if (cand->state_tags & M4K_TERMINATE) {
+            mkrn_process_reap(cand);
             scanned--;          /* reaped task left the queue */
             continue;
         }
-        if (!(next->state_tags & M4K_STOPPED) &&
-            (next->state_tags & M4K_SCHED_READY)) {
+        if (!(cand->state_tags & M4K_STOPPED) &&
+            (cand->state_tags & M4K_SCHED_READY)) {
+            next = cand;
+            exhausted = 0;
             break;
         }
         /* Put stopped/non-ready back at end */
-        ready_enqueue(next);
+        ready_enqueue(cand);
     }
-    if (scanned >= ready_queue_count + 1)
-        next = NULL;            /* every queued task is stopped: spin idly */
+    /* Only nullify when the loop actually wrapped around (every
+     * queued task was stopped).  The old post-check
+     * `scanned >= ready_queue_count + 1` also fired after a VALID
+     * early break whenever the dequeue had shrunk the queue — a
+     * single ready task (e.g. a just-forked child) was dropped
+     * from the queue and never scheduled: the "silently vanished
+     * spawn" bug class. */
+    if (exhausted)
+        next = NULL;            /* every queued task is stopped */
 
     if (next) {
         current = next;
