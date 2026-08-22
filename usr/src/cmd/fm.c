@@ -18,6 +18,7 @@
 #include "m4sh.h"
 #include "../lib/libcopland.h"
 #include "../lib/musr_inline.h"
+#include "../lib/icons.h"
 
 /* Globals required by m4sh.h */
 int out_fd = 1;
@@ -60,6 +61,20 @@ static struct fm_entry fm_entries[48];
 #define FM_MAX_ENTRIES 48
 static int fm_count = 0;
 static int fm_truncated = 0;  /* dir had ≥48 entries — list clipped */
+
+/* Text preview mode (Enter on a .txt/.c/.h file): renders the first
+ * PREVIEW_LINES lines read-only.  Esc/Enter returns to the listing. */
+static int fm_preview = 0;
+static char fm_preview_title[64];
+static char fm_preview_lines[24][76];
+static int fm_preview_count = 0;
+
+/* Mouse click forwarding (Sprach → FM).  Same mailbox ring as keys,
+ * but control codes 0xF1 (click) / 0xF2 (double click) arrive with
+ * two payload bytes (lx, ly — window-local coords) that follow in
+ * the ring. */
+#define FM_MB_CLICK     0xF1
+#define FM_MB_DBLCLICK  0xF2
 
 /* Address-bar edit buffer (Ctrl+L activates) */
 static int fm_addr_edit = 0;
@@ -171,6 +186,90 @@ static int fm_strlen(const char *s)
     return n;
 }
 
+/* ── Home directory: mini passwd.db lookup ──
+ * passwd.db lines are "name:uid:gid:home:shell:gecos:hash".  We only
+ * need uid → home, so a minimal field walker suffices (musr_getpwuid
+ * drags the whole m4sh shell along). */
+static void fm_default_home(char *out, int cap)
+{
+    int uid = m4k_getuid();
+    out[0] = '/'; out[1] = '\0';
+    int fd = musr_sc_open("/export/cfg/passwd.db", O_RDONLY);
+    if (fd < 0)
+        return;
+    static char buf[1024];
+    int n = musr_sc_read(fd, buf, sizeof(buf) - 1);
+    musr_sc_close(fd);
+    if (n <= 0)
+        return;
+    buf[n] = '\0';
+    /* walk lines */
+    int i = 0;
+    while (i < n) {
+        int ls = i;
+        while (i < n && buf[i] != '\n')
+            i++;
+        int le = i;
+        if (i < n)
+            i++;
+        /* fields: name(0) uid(1) gid(2) home(3) ... */
+        int f = 0, fs = ls, uid_v = -1, hs = -1, he = -1;
+        for (int j = ls; j <= le; j++) {
+            if (j == le || buf[j] == ':') {
+                if (f == 1 && uid_v < 0) {
+                    uid_v = 0;
+                    for (int q = fs; q < j; q++)
+                        if (buf[q] >= '0' && buf[q] <= '9')
+                            uid_v = uid_v * 10 + (buf[q] - '0');
+                }
+                if (f == 3 && hs < 0) {
+                    hs = fs; he = j;
+                }
+                f++;
+                fs = j + 1;
+            }
+        }
+        if (uid_v == uid && hs >= 0 && he > hs) {
+            int len = he - hs;
+            if (len > cap - 1)
+                len = cap - 1;
+            for (int q = 0; q < len; q++)
+                out[q] = buf[hs + q];
+            out[len] = '\0';
+            return;
+        }
+    }
+}
+
+/* ── Rendering ── */
+static uint32_t fm_buf[FM_W * FM_H];
+
+static void fm_icon16(uint32_t *ic, int x, int y)
+{
+    for (int yy = 0; yy < 16; yy++)
+        for (int xx = 0; xx < 16; xx++) {
+            uint32_t px = ic[(yy * 2) * 32 + xx * 2];
+            if (!(px >> 24))
+                continue;   /* transparent */
+            fm_buf[(y + yy) * FM_W + x + xx] = px;
+        }
+}
+
+/* Entry icon by name: folder / .txt / .c / .h / generic file. */
+static uint32_t *fm_entry_icon(int idx)
+{
+    if (fm_entries[idx].is_dir)
+        return icon_folder;
+    const char *nm = fm_entries[idx].name;
+    int len = fm_strlen(nm);
+    if (len >= 4 && nm[len-4]=='.' && nm[len-3]=='t' && nm[len-2]=='x'
+        && nm[len-1]=='t')
+        return icon_text;
+    if (len >= 2 && nm[len-2]=='.' && (nm[len-1]=='c' || nm[len-1]=='h'))
+        return icon_code;
+    return icon_file;
+}
+
 /* ── Directory loading ── */
 static void fm_load_dir(struct fm_tab *t)
 {
@@ -231,8 +330,6 @@ static void fm_path_join(struct fm_tab *t, const char *sub)
 }
 
 /* ── Rendering ── */
-static uint32_t fm_buf[FM_W * FM_H];
-
 static void fm_render(void)
 {
     struct fm_tab *t = &fm_tabs[fm_cur_tab];
@@ -271,24 +368,29 @@ static void fm_render(void)
     fm_str(fm_buf, FM_W, 6, FM_TITLE_H + FM_TAB_H + 7,
            fm_addr_edit ? fm_addr_buf : t->path, FM_COL_TEXT);
 
-    /* File rows */
+    /* File rows (or the text preview when active) */
     fm_rect(fm_buf, FM_W, 0, FM_TITLE_H + FM_TAB_H + FM_ADDR_H,
             FM_W, FM_H - FM_TITLE_H - FM_TAB_H - FM_ADDR_H, FM_COL_BODY);
+    if (fm_preview) {
+        /* read-only text preview */
+        fm_str(fm_buf, FM_W, 8, FM_TITLE_H + FM_TAB_H + FM_ADDR_H + 4,
+               fm_preview_title, 0x002040A0);
+        int y0 = FM_TITLE_H + FM_TAB_H + FM_ADDR_H + 18;
+        for (int i = 0; i < fm_preview_count; i++)
+            fm_str(fm_buf, FM_W, 8, y0 + i * 12, fm_preview_lines[i],
+                   FM_COL_TEXT);
+        fm_str(fm_buf, FM_W, 8, FM_H - 30,
+               "Esc: back to listing", 0x00707070);
+    } else {
     for (int i = 0; i < fm_count && i < FM_ROWS; i++) {
         int y = FM_TITLE_H + FM_TAB_H + FM_ADDR_H + 2 + i * FM_ROW_H;
         if (i == t->sel)
             fm_rect(fm_buf, FM_W, 2, y - 1, FM_W - 4, FM_ROW_H, FM_COL_SEL);
-        /* folder glyph vs file glyph */
-        if (fm_entries[i].is_dir) {
-            fm_rect(fm_buf, FM_W, 8, y + 2, 12, 9, 0x00E0B040);
-            fm_rect(fm_buf, FM_W, 8, y, 5, 3, 0x00E0B040);
-        } else {
-            fm_rect(fm_buf, FM_W, 9, y, 10, 12, 0x00FFFFFF);
-            fm_rect(fm_buf, FM_W, 9, y, 10, 12 - 1, 0x00808080 + 0);
-            fm_rect(fm_buf, FM_W, 10, y + 1, 8, 10, 0x00FFFFFF);
-        }
+        /* typed icon from the shared icons.c set (16x16 scaled) */
+        fm_icon16(fm_entry_icon(i), 6, y);
         fm_str(fm_buf, FM_W, 26, y + 3, fm_entries[i].name,
                fm_entries[i].is_dir ? 0x002040A0 : FM_COL_TEXT);
+    }
     }
 
     /* Status bar: "items: N  tab M" — N printed with a generic digit
@@ -363,6 +465,66 @@ static void fm_next_tab(void)
     }
 }
 
+/* Build /path/to/file from the current tab + entry name. */
+static void fm_full_path(struct fm_tab *t, const char *name, char *out,
+                         int cap)
+{
+    int n = fm_strlen(t->path);
+    int i = 0;
+    for (; i < n && i < cap - 1; i++)
+        out[i] = t->path[i];
+    if (i > 0 && out[i - 1] != '/' && i < cap - 1)
+        out[i++] = '/';
+    for (const char *p = name; *p && i < cap - 1; p++)
+        out[i++] = *p;
+    out[i] = '\0';
+}
+
+/* Load a text file into the preview buffer (first 24 lines x 75 chars). */
+static void fm_preview_load(struct fm_tab *t, const char *name)
+{
+    char path[232];
+    fm_full_path(t, name, path, sizeof(path));
+    int fd = musr_sc_open(path, O_RDONLY);
+    if (fd < 0) {
+        fm_preview_count = 0;
+    } else {
+        static char pbuf[4096];
+        int n = musr_sc_read(fd, pbuf, sizeof(pbuf) - 1);
+        musr_sc_close(fd);
+        if (n < 0)
+            n = 0;
+        pbuf[n] = '\0';
+        int line = 0, col = 0, i = 0;
+        while (i < n && line < 24) {
+            char c = pbuf[i];
+            if (c == '\n') {
+                fm_preview_lines[line][col] = '\0';
+                line++; col = 0;
+            } else if (c != '\r' && col < 75) {
+                fm_preview_lines[line][col++] = (c < 0x20) ? ' ' : c;
+            }
+            i++;
+        }
+        if (col > 0 && line < 24)
+            fm_preview_lines[line][col] = '\0';
+        else if (col > 0)
+            line++;   /* last partial line counts */
+        fm_preview_count = (col > 0 && line <= 24) ? line :
+                           (line > 24 ? 24 : line);
+        if (fm_preview_count < 0)
+            fm_preview_count = 0;
+    }
+    /* title: "[preview] name" */
+    int k = 0;
+    const char *p = "[preview] ";
+    while (*p && k < 62) fm_preview_title[k++] = *p++;
+    const char *q = name;
+    while (*q && k < 62) fm_preview_title[k++] = *q++;
+    fm_preview_title[k] = '\0';
+    fm_preview = 1;
+}
+
 static void fm_open_selected(void)
 {
     struct fm_tab *t = &fm_tabs[fm_cur_tab];
@@ -371,13 +533,79 @@ static void fm_open_selected(void)
     if (fm_entries[t->sel].is_dir) {
         fm_path_join(t, fm_entries[t->sel].name);
         fm_load_dir(t);
+        fm_preview = 0;
+        return;
     }
-    /* regular files: no default handler wired yet — flash the status */
+    /* Regular file: .c/.h/.txt → spawn the altr editor, .sh → the
+     * shell; anything else falls back to the built-in preview.
+     * (m4k_spawn has no argv, so the app starts at its default
+     * location — altr opens /export/home/$USER from its own tree.) */
+    {
+        const char *nm = fm_entries[t->sel].name;
+        int len = fm_strlen(nm);
+        int is_c  = len >= 2 && nm[len-2] == '.' && nm[len-1] == 'c';
+        int is_h  = len >= 2 && nm[len-2] == '.' && nm[len-1] == 'h';
+        int is_tx = len >= 4 && nm[len-4] == '.' && nm[len-3] == 't'
+                    && nm[len-2] == 'x' && nm[len-1] == 't';
+        int is_sh = len >= 3 && nm[len-3] == '.' && nm[len-2] == 's'
+                    && nm[len-1] == 'h';
+        if (is_c || is_h || is_tx || is_sh) {
+            const char *app = is_sh ? "/bin/m4shg" : "/bin/altr";
+            int pid = musr_sc_fork();
+            if (pid == 0) {
+                m4k_spawn(app, 0);
+                m4k_exit(1);   /* spawn failed */
+            }
+            return;
+        }
+    }
+    fm_preview_load(t, fm_entries[t->sel].name);
+}
+
+/* Mouse click at window-local (lx, ly).  Single click selects the row
+ * (or the tab under the strip); double click opens it. */
+static void fm_click(int lx, int ly, int dbl)
+{
+    struct fm_tab *t = &fm_tabs[fm_cur_tab];
+
+    if (fm_preview) {
+        if (dbl || ly > FM_TITLE_H)
+            fm_preview = 0;   /* any click leaves the preview */
+        return;
+    }
+
+    /* Tab strip click: switch to the tab under the cursor */
+    if (ly >= FM_TITLE_H && ly < FM_TITLE_H + FM_TAB_H) {
+        int idx = lx / 64;
+        if (idx >= 0 && idx < FM_MAX_TABS && fm_tabs[idx].in_use) {
+            fm_cur_tab = idx;
+            fm_load_dir(&fm_tabs[idx]);
+        }
+        return;
+    }
+
+    /* File row click: select / (double) open */
+    int list_y = ly - (FM_TITLE_H + FM_TAB_H + FM_ADDR_H + 2);
+    if (lx >= 0 && lx < FM_W && list_y >= 0) {
+        int row = list_y / FM_ROW_H;
+        if (row >= 0 && row < fm_count && row < FM_ROWS) {
+            t->sel = row;
+            if (dbl)
+                fm_open_selected();
+        }
+    }
 }
 
 static void fm_key(unsigned char ch)
 {
     struct fm_tab *t = &fm_tabs[fm_cur_tab];
+
+    /* Preview mode: any of Esc/Enter/q returns to the listing */
+    if (fm_preview) {
+        if (ch == 0x1B || ch == '\r' || ch == '\n' || ch == 'q')
+            fm_preview = 0;
+        return;
+    }
 
     /* Address-bar editing mode */
     if (fm_addr_edit) {
@@ -422,6 +650,7 @@ static void fm_key(unsigned char ch)
 /* ── Main ── */
 void _start(void)
 {
+    icons_init();
     ser_puts("[FM] file manager starting\n");
 
     struct copland_shm *shm = copland_shm_get();
@@ -435,13 +664,14 @@ void _start(void)
     fm_mb->write_idx = 0;
     fm_mb->read_idx = 0;
 
-    /* Initial tab: root → /export/root, others → / (getpwuid lives in
-     * the m4sh binary; the FM ELF links without it). */
-    if (m4k_getuid() == 0)
-        musr_strncpy(fm_tabs[0].path, "/export/root",
-                     sizeof(fm_tabs[0].path) - 1);
-    else
-        musr_strncpy(fm_tabs[0].path, "/", 2);
+    /* Initial tab: the user's home directory from passwd.db
+     * (root → /export/root, testuser → /home/testuser, ...).  Falls
+     * back to "/" when the DB is unreadable. */
+    {
+        char home[200];
+        fm_default_home(home, sizeof(home));
+        musr_strncpy(fm_tabs[0].path, home, sizeof(fm_tabs[0].path) - 1);
+    }
     fm_tabs[0].in_use = 1;
     fm_tabs[0].hidden_files = 0;
     fm_load_dir(&fm_tabs[0]);
@@ -493,6 +723,20 @@ void _start(void)
         while (fm_mb->read_idx != fm_mb->write_idx) {
             unsigned char ch = fm_mb->buf[fm_mb->read_idx];
             fm_mb->read_idx = (fm_mb->read_idx + 1) % 64;
+            if (ch == FM_MB_CLICK || ch == FM_MB_DBLCLICK) {
+                /* click payload: lx, ly follow in the ring */
+                if (fm_mb->read_idx != fm_mb->write_idx) {
+                    int lx = fm_mb->buf[fm_mb->read_idx];
+                    fm_mb->read_idx = (fm_mb->read_idx + 1) % 64;
+                    if (fm_mb->read_idx != fm_mb->write_idx) {
+                        int ly = fm_mb->buf[fm_mb->read_idx];
+                        fm_mb->read_idx = (fm_mb->read_idx + 1) % 64;
+                        fm_click(lx, ly, ch == FM_MB_DBLCLICK);
+                    }
+                }
+                need_render = 1;
+                continue;
+            }
             fm_key(ch);
             need_render = 1;
         }

@@ -166,6 +166,7 @@ struct sprach_ctx {
     int clock_x, clock_y;   /* popup top-left (screen space) */
     int clock_last_sec;  /* second of the last popup repaint */
     int clock_about;     /* 1 = popup shows "About This PC" info */
+    int clock_settings;  /* 1 = About panel is the settings placeholder */
 
     /* Desktop index shown in the menubar center ("Desktop N") */
     int desktop_idx;
@@ -184,7 +185,7 @@ struct sprach_ctx {
      * range too).  Desktop 0 is the initial one. */
 #define SPRACH_DESKTOPS 4
 
-    /* Launchpad app list (static table, see sprach.c) */
+    /* Launchpad app list (scanned from /bin at open time) */
     int lp_count;
 };
 

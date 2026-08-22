@@ -34,6 +34,7 @@
  */
 
 #include "../lib/libgui.h"
+#include "../lib/icons.h"
 #include "../lib/musr_inline.h"
 #include "sprach.h"
 
@@ -769,8 +770,8 @@ void sprach_draw_menubar(struct sprach_ctx *ctx)
 
 #define CLOCK_POP_W     168
 #define CLOCK_POP_H     64
-
-static uint32_t clock_popup_buf[CLOCK_POP_W * CLOCK_POP_H];
+#define ABOUT_POP_H     128         /* About panel needs more rows */
+static uint32_t clock_popup_buf[CLOCK_POP_W * ABOUT_POP_H];
 
 /* Epoch → YYYY-MM-DD (proleptic Gregorian, good to 9999). */
 static void clock_fmt_date(int epoch, char out[11])
@@ -850,17 +851,111 @@ void sprach_draw_clock_popup(struct sprach_ctx *ctx)
             SPRACH_COL_BORDER);
 
     if (ctx->clock_about) {
-        /* "About This PC" panel: kernel version + uptime + memory */
-        sp_draw_str(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 10, 8, "About This PC",
+        /* "About This PC" panel: kernel version, memory, CPU.  The
+         * panel surface is resized to ABOUT_POP_H while About is
+         * open (see sprach_create_clock_popup / toggle paths). */
+        sp_fill(clock_popup_buf, CLOCK_POP_W * ABOUT_POP_H, 0x00E8E8E8);
+        sp_rect(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 0, 0,
+                CLOCK_POP_W, ABOUT_POP_H, SPRACH_COL_BORDER);
+        sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 10, 8,
+                    "About This PC", SPRACH_COL_MENUBAR_FG);
+        sp_rect(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 8, 24,
+                CLOCK_POP_W - 16, 1, SPRACH_COL_BORDER);
+
+        struct utsname uts;
+        int have_uts = (musr_sc_uname(&uts) == 0);
+        char ln[40];
+        int k;
+
+        /* OS / kernel version from uname */
+        k = 0;
+        const char *p1 = "OS:      ";
+        while (*p1 && k < 38) ln[k++] = *p1++;
+        if (have_uts) {
+            for (int i = 0; uts.sysname[i] && k < 38; i++)
+                ln[k++] = uts.sysname[i];
+            ln[k++] = ' ';
+            for (int i = 0; uts.release[i] && k < 38; i++)
+                ln[k++] = uts.release[i];
+        } else {
+            const char *fb = "M4KK1 4P1";
+            while (*fb && k < 38) ln[k++] = *fb++;
+        }
+        ln[k] = '\0';
+        sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 10, 32, ln,
                     SPRACH_COL_MENUBAR_FG);
-        sp_rect(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 8, 24, CLOCK_POP_W - 16, 1,
-                SPRACH_COL_BORDER);
-        sp_draw_str(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 10, 32,
-                    "M4KK1 4P1 (build1 alpha1)",
+
+        /* Kernel build string */
+        k = 0;
+        p1 = "Kernel:  ";
+        while (*p1 && k < 38) ln[k++] = *p1++;
+        if (have_uts) {
+            for (int i = 0; uts.version[i] && k < 38; i++)
+                ln[k++] = uts.version[i];
+            ln[k++] = ' ';
+            for (int i = 0; uts.machine[i] && k < 38; i++)
+                ln[k++] = uts.machine[i];
+        } else {
+            const char *fb = "M4K i386 monolithic";
+            while (*fb && k < 38) ln[k++] = *fb++;
+        }
+        ln[k] = '\0';
+        sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 10, 44, ln,
                     SPRACH_COL_MENUBAR_FG);
-        sp_draw_str(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 10, 44,
-                    "Kernel: M4K i386 monolithic",
-                    SPRACH_COL_MENUBAR_FG);
+
+        /* Memory in KB — sysinfo reports bytes; spec wants
+         * "Total/Used/Free" triple.  Hand-rolled u32-to-dec. */
+        struct sysinfo si;
+        if (musr_sc_sysinfo(&si) == 0) {
+            uint32_t tot_kb = si.total_ram / 1024u;
+            uint32_t used_kb = si.used_ram / 1024u;
+            uint32_t free_kb = si.free_ram / 1024u;
+            k = 0;
+            p1 = "Mem KB:  ";
+            while (*p1 && k < 38) ln[k++] = *p1++;
+            char dg[12];
+            int nd = 0;
+            do { dg[nd++] = (char)('0' + tot_kb % 10); tot_kb /= 10; }
+            while (tot_kb && nd < 11);
+            while (nd && k < 38) ln[k++] = dg[--nd];
+            const char *p2 = "/";
+            while (*p2 && k < 38) ln[k++] = *p2++;
+            nd = 0;
+            do { dg[nd++] = (char)('0' + used_kb % 10); used_kb /= 10; }
+            while (used_kb && nd < 11);
+            while (nd && k < 38) ln[k++] = dg[--nd];
+            const char *p3 = "/";
+            while (*p3 && k < 38) ln[k++] = *p3++;
+            nd = 0;
+            do { dg[nd++] = (char)('0' + free_kb % 10); free_kb /= 10; }
+            while (free_kb && nd < 11);
+            while (nd && k < 38) ln[k++] = dg[--nd];
+            ln[k] = '\0';
+            sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 10, 56,
+                        ln, SPRACH_COL_MENUBAR_FG);
+        }
+
+        /* Build date — __DATE__ of the sprach translation unit */
+        sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 10, 68,
+                    "Built:   " __DATE__, SPRACH_COL_MENUBAR_FG);
+
+        /* CPU: fixed identification from the boot CPU detect */
+        sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 10, 80,
+                    "CPU:     x86 i386 (QEMU std)", SPRACH_COL_MENUBAR_FG);
+
+        if (ctx->clock_settings) {
+            /* System Settings placeholder panel: same surface, just
+             * the "not implemented" notice centered. */
+            sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 10, 96,
+                        "System Settings:",
+                        SPRACH_COL_MENUBAR_FG);
+            sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 10, 108,
+                        "Not implemented yet",
+                        SPRACH_COL_MENUBAR_FG);
+            ctx->shm->dirty = 1;
+            return;
+        }
+
         char up[24] = "up ";
         uint32_t secs = (uint32_t)musr_sc_uptime();
         int n = 3;
@@ -871,7 +966,7 @@ void sprach_draw_clock_popup(struct sprach_ctx *ctx)
         up[n++] = '0' + (char)((secs / 60) % 10);
         up[n++] = 'm';
         up[n] = '\0';
-        sp_draw_str(clock_popup_buf, CLOCK_POP_W, CLOCK_POP_H, 10, 56, up,
+        sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 10, 92, up,
                     SPRACH_COL_MENUBAR_FG);
         ctx->shm->dirty = 1;
         return;
@@ -990,33 +1085,47 @@ static void sprach_app_menu_activate(struct sprach_ctx *ctx, int mi)
     case 0:   /* About This PC → info popup in the clock popup style */
         ctx->clock_open = 1;
         ctx->clock_about = 1;
+        ctx->clock_settings = 0;
         ctx->clock_x = (SCREEN_W - CLOCK_POP_W) / 2;
         ctx->clock_y = 200;
         ctx->clock_last_sec = -1;
         if (ctx->clock_slot >= 0) {
             ctx->shm->surfaces[ctx->clock_slot].x = ctx->clock_x;
             ctx->shm->surfaces[ctx->clock_slot].y = ctx->clock_y;
+            ctx->shm->surfaces[ctx->clock_slot].h = ABOUT_POP_H;
             ctx->shm->surfaces[ctx->clock_slot].flags |=
                 COPLAND_SURF_VISIBLE;
             sprach_draw_clock_popup(ctx);
         }
         break;
-    case 1:   /* System Settings → open the settings window (win 0) */
-        if (ctx->wins[0].slot >= 0 && ctx->wins[0].hidden) {
-            ctx->wins[0].hidden = 0;
-            ctx->shm->surfaces[ctx->wins[0].slot].flags |=
+    case 1:   /* System Settings → placeholder */
+        ser_puts("[SPRACH] system settings: Not implemented yet\n");
+        if (ctx->clock_slot >= 0) {
+            ctx->clock_open = 1;
+            ctx->clock_about = 1;
+            ctx->clock_settings = 1;
+            ctx->clock_x = (SCREEN_W - CLOCK_POP_W) / 2;
+            ctx->clock_y = 200;
+            ctx->clock_last_sec = -1;
+            ctx->shm->surfaces[ctx->clock_slot].x = ctx->clock_x;
+            ctx->shm->surfaces[ctx->clock_slot].y = ctx->clock_y;
+            ctx->shm->surfaces[ctx->clock_slot].h = ABOUT_POP_H;
+            ctx->shm->surfaces[ctx->clock_slot].flags |=
                 COPLAND_SURF_VISIBLE;
+            sprach_draw_clock_popup(ctx);
         }
-        ctx->active = 0;
-        sprach_raise_window(ctx, 0);
         break;
     case 2:   /* Lock Screen → end the session, MDM regains the screen */
         ser_puts("[SPRACH] locking screen...\n");
         ctx->shm->shutdown = 1;
         break;
-    case 3:   /* Shut Down → end the session, back to MDM login */
-        ser_puts("[SPRACH] shutting down session (back to MDM)...\n");
+    case 3:   /* Shut Down → reboot syscall (magic-gated 0x6D).
+         * QEMU std i386 has no ACPI poweroff; the triple-fault warm
+         * reset in the kernel's reboot handler is the only machine
+         * restart this hardware offers. */
+        ser_puts("[SPRACH] shutting down (reboot syscall)...\n");
         ctx->shm->shutdown = 1;
+        ctx->shm->reboot = 1;
         break;
     }
     ctx->shm->dirty = 1;
@@ -1024,6 +1133,9 @@ static void sprach_app_menu_activate(struct sprach_ctx *ctx, int mi)
 
 /* ==== LAUNCHPAD ======================================================
  * A full-work-area overlay with a 4-column grid of installed apps.
+ * The app list is SCANNED at open time from /bin (= /usr/bin symlink)
+ * and /usr/bin: every regular executable except the WM/server-internal
+ * ELFs (spawning those again would kill or duplicate the session).
  * Clicking an icon forks+spawns the app; clicking the background or
  * pressing Esc closes the overlay. */
 
@@ -1031,22 +1143,125 @@ static void sprach_app_menu_activate(struct sprach_ctx *ctx, int mi)
 #define LP_H  (SCREEN_H - MENUBAR_H - TASKBAR_H)
 static uint32_t lp_buf[LP_W * LP_H];
 
+#define LP_MAX_APPS 40
 struct lp_app {
-    const char *name;
-    const char *path;
+    char name[16];      /* basename shown under the icon */
+    char path[40];      /* /bin/<name> used for spawn */
+    uint32_t icon;      /* icon kind (LP_ICON_*) */
+};
+static struct lp_app lp_apps[LP_MAX_APPS];
+static int lp_app_count = 0;
+
+/* WM/server-internal ELFs that must never be launched from Launchpad:
+ * they already own the compositor/WM/session. */
+static const char *lp_hidden_apps[] = {
+    "copland", "sprach", "sprach_stack", "sprach_scroll", "sprach_tiling",
+    "login", "mdm", "mdm_mini", "init", "reset-passwd", "fsck",
 };
 
-static const struct lp_app lp_apps[] = {
-    { "terminal",   "/bin/terminal" },
-    { "fm",         "/bin/fm" },
-    { "sead",       "/bin/sead" },
-    { "gfx_test",   "/bin/gfx_test" },
-    { "m4sh",       "/bin/m4shg" },
-    { "clock",      "/bin/clock" },
-    { "calc",       "/bin/calc" },
-    { "sysmon",     "/bin/sysmon" },
-};
-#define LP_APP_COUNT (int)(sizeof(lp_apps) / sizeof(lp_apps[0]))
+#define LP_ICON_TERMINAL 0
+#define LP_ICON_WINDOW   1
+#define LP_ICON_GEAR     2
+#define LP_ICON_FILE     3
+
+static uint32_t *lp_icon_for(struct lp_app *a)
+{
+    switch (a->icon) {
+    case LP_ICON_TERMINAL: return icon_terminal;
+    case LP_ICON_GEAR:     return icon_gear;
+    case LP_ICON_FILE:     return icon_file;
+    default:               return icon_window;
+    }
+}
+
+static int lp_name_hidden(const char *n)
+{
+    for (unsigned i = 0;
+         i < sizeof(lp_hidden_apps) / sizeof(lp_hidden_apps[0]); i++) {
+        const char *h = lp_hidden_apps[i];
+        int j = 0;
+        while (n[j] && h[j] && n[j] == h[j])
+            j++;
+        if (!n[j] && !h[j])
+            return 1;
+    }
+    return 0;
+}
+
+/* Pick an icon kind from the app basename. */
+static uint32_t lp_icon_kind(const char *n)
+{
+    if (n[0] == 't' && n[1] == 'e' && n[2] == 'r' && n[3] == 'm' &&
+        n[4] == '\0')
+        return LP_ICON_TERMINAL;
+    if (n[0] == 'm' && n[1] == '4' && n[2] == 's' && n[3] == 'h')
+        return LP_ICON_TERMINAL;
+    if (n[0] == 'f' && n[1] == 'm' && n[2] == '\0')
+        return LP_ICON_WINDOW;
+    if (n[0] == 'p' && n[1] == 'a' && n[2] == 's' && n[3] == 's' &&
+        n[4] == 'w' && n[5] == 'd')
+        return LP_ICON_GEAR;
+    if (n[0] == 'u' && n[1] == 's' && n[2] == 'e' && n[3] == 'r')
+        return LP_ICON_GEAR;
+    if (n[0] == 'p' && n[1] == 'a' && n[2] == 's' && n[3] == 's')
+        return LP_ICON_GEAR;
+    return LP_ICON_FILE;
+}
+
+/* Scan /bin and /usr/bin (dedup — /bin is a symlink to /usr/bin).
+ * '.'-prefixed entries are skipped per spec. */
+static void lp_scan(void)
+{
+    static const char *dirs[] = { "/bin", "/usr/bin" };
+    lp_app_count = 0;
+    for (int d = 0; d < 2 && lp_app_count < LP_MAX_APPS; d++) {
+        int fd = musr_sc_open((char *)dirs[d], O_RDONLY);
+        if (fd < 0)
+            continue;
+        struct dirent dbuf[48];
+        int n = musr_sc_getdents(fd, dbuf, 48);
+        musr_sc_close(fd);
+        if (n <= 0)
+            continue;
+        if (n > 48)
+            n = 48;
+        for (int i = 0; i < n && lp_app_count < LP_MAX_APPS; i++) {
+            const char *nm = dbuf[i].name;
+            if (nm[0] == '.' || dbuf[i].type == 2 /* dir */)
+                continue;
+            if (lp_name_hidden(nm))
+                continue;
+            /* dedup against earlier entries */
+            int dup = 0;
+            for (int k = 0; k < lp_app_count; k++) {
+                const char *a = lp_apps[k].name, *b = nm;
+                while (*a && *b && *a == *b) { a++; b++; }
+                if (!*a && !*b) { dup = 1; break; }
+            }
+            if (dup)
+                continue;
+            /* copy name (clamped) */
+            int j = 0;
+            while (nm[j] && j < 15) {
+                lp_apps[lp_app_count].name[j] = nm[j];
+                j++;
+            }
+            lp_apps[lp_app_count].name[j] = '\0';
+            /* path: /bin/<name> */
+            lp_apps[lp_app_count].path[0] = '/';
+            lp_apps[lp_app_count].path[1] = 'b';
+            lp_apps[lp_app_count].path[2] = 'i';
+            lp_apps[lp_app_count].path[3] = 'n';
+            lp_apps[lp_app_count].path[4] = '/';
+            int p = 5;
+            for (int q = 0; nm[q] && p < 39; q++, p++)
+                lp_apps[lp_app_count].path[p] = nm[q];
+            lp_apps[lp_app_count].path[p] = '\0';
+            lp_apps[lp_app_count].icon = lp_icon_kind(nm);
+            lp_app_count++;
+        }
+    }
+}
 
 #define LP_COLS     4
 #define LP_CELL_W   160
@@ -1088,7 +1303,7 @@ void sprach_draw_launchpad(struct sprach_ctx *ctx)
         lp_buf[i] = 0x00C8203048;
     sp_draw_str(lp_buf, LP_W, LP_H, (LP_W - 7 * 9) / 2, 20, "Launchpad",
                 0x00FFFFFF);
-    for (int a = 0; a < LP_APP_COUNT; a++) {
+    for (int a = 0; a < lp_app_count; a++) {
         int cx = LP_GRID_X + (a % LP_COLS) * LP_CELL_W;
         int cy = LP_GRID_Y + (a / LP_COLS) * LP_CELL_H;
         int sel = (ctx->mouse_x >= cx && ctx->mouse_x < cx + LP_CELL_W &&
@@ -1097,10 +1312,19 @@ void sprach_draw_launchpad(struct sprach_ctx *ctx)
         if (sel)
             sp_rect(lp_buf, LP_W, LP_H, cx + 8, cy + 8, LP_CELL_W - 16,
                     LP_CELL_H - 16, 0x004060A0);
-        /* icon: simple app-window glyph */
-        sp_rect(lp_buf, LP_W, LP_H, cx + 56, cy + 12, 48, 44, 0x003060C0);
-        sp_rect(lp_buf, LP_W, LP_H, cx + 56, cy + 12, 48, 12, 0x005080E0);
-        sp_rect(lp_buf, LP_W, LP_H, cx + 60, cy + 30, 40, 22, 0x00F0F0F0);
+        /* icon from the shared icons.c set (32x32 ARGB, centered) */
+        {
+            uint32_t *ic = lp_icon_for(&lp_apps[a]);
+            int ix = cx + (LP_CELL_W - 32) / 2;
+            int iy = cy + 14;
+            for (int yy = 0; yy < 32; yy++)
+                for (int xx = 0; xx < 32; xx++) {
+                    uint32_t px = ic[yy * 32 + xx];
+                    if (!(px >> 24))
+                        continue;   /* transparent */
+                    lp_buf[(iy + yy) * LP_W + ix + xx] = px;
+                }
+        }
         /* name centered under the icon */
         int nl = 0;
         for (const char *p = lp_apps[a].name; *p; p++)
@@ -1118,7 +1342,7 @@ static void sprach_launchpad_activate(struct sprach_ctx *ctx)
 {
     int lx = ctx->mouse_x;
     int ly = ctx->mouse_y - MENUBAR_H;
-    for (int a = 0; a < LP_APP_COUNT; a++) {
+    for (int a = 0; a < lp_app_count; a++) {
         int cx = LP_GRID_X + (a % LP_COLS) * LP_CELL_W;
         int cy = LP_GRID_Y + (a / LP_COLS) * LP_CELL_H;
         if (lx >= cx && lx < cx + LP_CELL_W &&
@@ -1126,18 +1350,21 @@ static void sprach_launchpad_activate(struct sprach_ctx *ctx)
             ser_puts("[SPRACH] launchpad: launching ");
             ser_puts(lp_apps[a].path);
             ser_puts("\n");
-            if (lp_apps[a].path[0] == '/' &&
-                lp_apps[a].path[1] == 'b' &&
-                lp_apps[a].path[2] == 'i' &&
-                lp_apps[a].path[3] == 'n' &&
-                lp_apps[a].path[4] == '/' &&
-                lp_apps[a].path[5] == 't' &&
-                lp_apps[a].path[6] == 'e' &&
-                lp_apps[a].path[7] == 'r' &&
-                lp_apps[a].path[8] == 'm' &&
+            if (lp_apps[a].path[5] == 't' && lp_apps[a].path[6] == 'e' &&
+                lp_apps[a].path[7] == 'r' && lp_apps[a].path[8] == 'm' &&
                 lp_apps[a].path[9] == '\0') {
                 /* /bin/terminal: the WM-owned emulator */
                 sprach_spawn_terminal(ctx);
+            } else if (lp_apps[a].path[5] == 'm' && lp_apps[a].path[6] == '4' &&
+                       lp_apps[a].path[7] == 's' && lp_apps[a].path[8] == 'h' &&
+                       lp_apps[a].path[9] == '\0') {
+                /* /bin/m4sh: the console shell would hog the raw
+                 * console — launch the graphical shell instead */
+                int pid = musr_sc_fork();
+                if (pid == 0) {
+                    m4k_spawn("/bin/m4shg", 0);
+                    m4k_exit(1);
+                }
             } else {
                 int pid = musr_sc_fork();
                 if (pid == 0) {
@@ -1192,7 +1419,8 @@ void sprach_launchpad_toggle(struct sprach_ctx *ctx, int open)
         return;
     ctx->lp_open = open;
     if (open) {
-        ctx->lp_count = LP_APP_COUNT;
+        lp_scan();
+        ctx->lp_count = lp_app_count;
         ctx->shm->surfaces[ctx->lp_slot].flags |=
             COPLAND_SURF_VISIBLE;
         /* Raise above every client window — DIAGNOSTIC: still disabled,
@@ -1985,12 +2213,62 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                     }
                 }
             }
+
+            /* FM client window: forward the click (window-local) into
+             * the FM mailbox.  Double click = two presses within 25
+             * ticks (~0.5 s) inside the FM surface. */
+            if (!hit) {
+                int top = -1;
+                for (int i = 0; i < COPLAND_MAX_SURFACES; i++)
+                    if (ctx->shm->surfaces[i].in_use &&
+                        i != ctx->taskbar_slot && i != ctx->menubar_slot)
+                        top = i;
+                if (top >= 0 && ctx->shm->surfaces[top].w == FM_SURF_W &&
+                    top != ctx->term_slot && top != ctx->clock_slot &&
+                    top != ctx->menu_slot && top != ctx->lp_slot) {
+                    struct copland_surface *fs = &ctx->shm->surfaces[top];
+                    int lx = ctx->mouse_x - (int)fs->x;
+                    int ly = ctx->mouse_y - (int)fs->y;
+                    if (lx >= 0 && lx < (int)fs->w &&
+                        ly >= 0 && ly < (int)fs->h) {
+                        static uint32_t last_fm_click_tick = 0;
+                        static int last_fm_click_x = -99, last_fm_click_y = -99;
+                        int dbl = (ctx->tick - last_fm_click_tick <= 25) &&
+                                  (lx > last_fm_click_x - 6 &&
+                                   lx < last_fm_click_x + 6) &&
+                                  (ly > last_fm_click_y - 6 &&
+                                   ly < last_fm_click_y + 6);
+                        last_fm_click_tick = ctx->tick;
+                        last_fm_click_x = lx;
+                        last_fm_click_y = ly;
+                        volatile struct sprach_fm_mailbox *mb =
+                            (volatile struct sprach_fm_mailbox *)
+                                FM_MAILBOX_BASE;
+                        if (mb->magic == FM_MAILBOX_MAGIC) {
+                            unsigned char code = dbl ? 0xF2 : 0xF1;
+                            for (int b = 0; b < 3; b++) {
+                                unsigned char v = b == 0 ? code
+                                              : (b == 1 ? (unsigned char)lx
+                                                        : (unsigned char)ly);
+                                uint32_t next =
+                                    (mb->write_idx + 1) % FM_MAILBOX_SIZE;
+                                if (next == mb->read_idx)
+                                    break;   /* ring full */
+                                mb->buf[mb->write_idx] = v;
+                                mb->write_idx = next;
+                            }
+                        }
+                        hit = 1;
+                    }
+                }
+            }
 }
 
 /* ── Entry point ── */
 
 void _start(void)
 {
+    icons_init();
     ser_puts("[SPRACH] ================================\n");
     ser_puts("[SPRACH] Window manager starting (mode: ");
     ser_puts(sprach_mode_name());

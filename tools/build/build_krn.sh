@@ -48,6 +48,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --cmd-only) BUILD_MODE="cmd-only"; shift ;;
         --full) BUILD_MODE="full"; shift ;;
+        --full-test) BUILD_MODE="full-test"; shift ;;
         --minimal) BUILD_MODE="minimal"; shift ;;
         --recovery) BUILD_MODE="recovery"; shift ;;
         --output) OUTPUT_DIR="$2"; shift 2 ;;
@@ -72,6 +73,7 @@ case "$BUILD_MODE" in
     cmd-only)  MODE_DEFINES="-DM4K_CMD_ONLY";  NEED_USER=1; NEED_GRAPHICS=0; NEED_RECOVERY=0 ;;
     recovery)  MODE_DEFINES="-DM4K_RECOVERY -DM4K_CMD_ONLY"; NEED_USER=1; NEED_GRAPHICS=0; NEED_RECOVERY=1 ;;
     full)      MODE_DEFINES="-DM4K_FULL";      NEED_USER=1; NEED_GRAPHICS=1; NEED_RECOVERY=0 ;;
+    full-test) MODE_DEFINES="-DM4K_FULL -DM4K_TEST_AUTOLOGIN"; NEED_USER=1; NEED_GRAPHICS=1; NEED_RECOVERY=0 ;;
     *) echo "ERROR: Invalid build mode '$BUILD_MODE'" >&2; exit 1 ;;
 esac
 echo "=== Build mode: $BUILD_MODE ==="
@@ -231,7 +233,7 @@ M4SH_CFLAGS="$M4SH_CFLAGS -I$PWD/sys/src/include -I$PWD/include -I$PWD/sys/src/a
 # PCC 编译产物需要编译器运行时（__divdi3 等），等价于 gcc 隐式链接的 libgcc
 PCC_RUNTIME="$PWD/usr/src/lib/m4k_libc/libpcc.a"
 OBJS=""
-for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/lib/*' | sort); do
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/lib/*' | sort); do
     o="${f%.c}.o"
     $UCC $M4SH_CFLAGS -c "$f" -o "$o"
     OBJS="$OBJS $o"
@@ -244,7 +246,7 @@ echo "=== Building M4SHG (graphical-terminal shell) ==="
 # and skips the serial login gate.  Linked at 0x1000000 so the exec'd
 # image never overlaps any live process (see m4sh/m4shg.ld).
 OBJS_G=""
-for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/lib/*' | sort); do
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/lib/*' | sort); do
     o="${f%.c}.g.o"
     $UCC $M4SH_CFLAGS -DM4SH_GRAPHICAL -c "$f" -o "$o"
     OBJS_G="$OBJS_G $o"
@@ -302,9 +304,16 @@ echo "   Flip Test ELF: usr/src/cmd/flip_test.elf ($(stat -c%s usr/src/cmd/flip_
 
 echo "=== Building Copland (display server) ELF ==="
 $UCC $M4SH_CFLAGS -c usr/src/lib/libgui.c -o usr/src/lib/libgui.o
+$UCC $M4SH_CFLAGS -c sys/src/copland/copland_proto.c -o sys/src/copland/copland_proto.o
+$UCC $M4SH_CFLAGS -c sys/src/copland/compositor.c -o sys/src/copland/compositor.o
 $UCC $M4SH_CFLAGS -c usr/src/cmd/copland.c -o usr/src/cmd/copland.o
-$LD -m elf_i386 -T usr/src/cmd/copland.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/copland.elf usr/src/cmd/copland.o usr/src/lib/libgui.o $PCC_RUNTIME
+$LD -m elf_i386 -T usr/src/cmd/copland.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/copland.elf usr/src/cmd/copland.o sys/src/copland/compositor.o sys/src/copland/copland_proto.o usr/src/lib/libgui.o $PCC_RUNTIME
 echo "   Copland ELF: usr/src/cmd/copland.elf ($(stat -c%s usr/src/cmd/copland.elf) bytes)"
+
+echo "=== Building CPTEST (copland protocol smoke client) ELF ==="
+$UCC $M4SH_CFLAGS -c usr/src/cmd/cptest.c -o usr/src/cmd/cptest.o
+$LD -m elf_i386 -T usr/src/cmd/cptest.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/cptest.elf usr/src/cmd/cptest.o sys/src/copland/copland_proto.o usr/src/lib/libgui.o $PCC_RUNTIME
+echo "   CPTEST ELF: usr/src/cmd/cptest.elf ($(stat -c%s usr/src/cmd/cptest.elf) bytes)"
 
 echo "=== Building Terminal (graphical terminal emulator) ELF ==="
 $UCC $M4SH_CFLAGS -c usr/src/cmd/terminal.c -o usr/src/cmd/terminal.o
@@ -312,9 +321,23 @@ $LD -m elf_i386 -T usr/src/cmd/terminal.ld -nostdlib -z max-page-size=0x1000 -o 
 echo "   Terminal ELF: usr/src/cmd/terminal.elf ($(stat -c%s usr/src/cmd/terminal.elf) bytes)"
 
 echo "=== Building File Manager (tabbed graphical FM) ELF ==="
+# icons.c: shared pixel-icon library, linked into the standalone
+# GUI clients (fm) and the WM (sprach) below.
+$UCC $M4SH_CFLAGS -c usr/src/lib/icons.c -o usr/src/lib/icons.o
+
 $UCC $M4SH_CFLAGS -c usr/src/cmd/fm.c -o usr/src/cmd/fm.o
-$LD -m elf_i386 -T usr/src/cmd/fm.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/fm.elf usr/src/cmd/fm.o $PCC_RUNTIME
+$LD -m elf_i386 -T usr/src/cmd/fm.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/fm.elf usr/src/cmd/fm.o usr/src/lib/icons.o $PCC_RUNTIME
 echo "   File Manager ELF: usr/src/cmd/fm.elf ($(stat -c%s usr/src/cmd/fm.elf) bytes)"
+
+echo "=== Building ALTR (text editor) ELF ==="
+$UCC $M4SH_CFLAGS -c usr/src/cmd/altr.c -o usr/src/cmd/altr.o
+$LD -m elf_i386 -T usr/src/cmd/altr.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/altr.elf usr/src/cmd/altr.o $PCC_RUNTIME
+echo "   ALTR ELF: usr/src/cmd/altr.elf ($(stat -c%s usr/src/cmd/altr.elf) bytes)"
+
+echo "=== Building CALC GUI (calculator) ELF ==="
+$UCC $M4SH_CFLAGS -c usr/src/cmd/calc_gui.c -o usr/src/cmd/calc_gui.o
+$LD -m elf_i386 -T usr/src/cmd/calc_gui.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/calc_gui.elf usr/src/cmd/calc_gui.o $PCC_RUNTIME
+echo "   CALC GUI ELF: usr/src/cmd/calc_gui.elf ($(stat -c%s usr/src/cmd/calc_gui.elf) bytes)"
 
 echo "=== Building Sprach (window manager) ELFs ==="
 $UCC $M4SH_CFLAGS -c usr/src/sprach/sprach.c -o usr/src/sprach/sprach.o
@@ -322,7 +345,7 @@ for m in stack; do
     $UCC $M4SH_CFLAGS -c "usr/src/sprach/sprach_mode_${m}.c" -o "usr/src/sprach/sprach_mode_${m}.o"
     $LD -m elf_i386 -T usr/src/sprach/sprach.ld -nostdlib -z max-page-size=0x1000 \
         -o "usr/src/sprach/sprach_${m}" \
-        usr/src/sprach/sprach.o "usr/src/sprach/sprach_mode_${m}.o" $PCC_RUNTIME
+        "usr/src/sprach/sprach.o" "usr/src/sprach/sprach_mode_${m}.o" usr/src/lib/icons.o $PCC_RUNTIME
     echo "   Sprach ${m} ELF: usr/src/sprach/sprach_${m} ($(stat -c%s usr/src/sprach/sprach_${m}) bytes)"
 done
 cp -f usr/src/sprach/sprach_stack ./usr/bin/sprach
@@ -395,10 +418,25 @@ sed 's/usr_src_cmd_terminal_elf/terminal_init_elf/g; s/usr_src_cmd_terminal_elf_
 rm -f init/terminal_elf_.c
 echo "   Generated init/terminal_elf.c"
 
+xxd -i usr/src/cmd/cptest.elf > init/cptest_elf_.c
+sed 's/usr_src_cmd_cptest_elf/cptest_init_elf/g; s/usr_src_cmd_cptest_elf_len/cptest_init_elf_len/g' init/cptest_elf_.c > init/cptest_elf.c
+rm -f init/cptest_elf_.c
+echo "   Generated init/cptest_elf.c"
+
 xxd -i usr/src/cmd/fm.elf > init/fm_elf_.c
 sed 's/usr_src_cmd_fm_elf/fm_init_elf/g; s/usr_src_cmd_fm_elf_len/fm_init_elf_len/g' init/fm_elf_.c > init/fm_elf.c
 rm -f init/fm_elf_.c
 echo "   Generated init/fm_elf.c"
+
+xxd -i usr/src/cmd/altr.elf > init/altr_elf_.c
+sed 's/usr_src_cmd_altr_elf/altr_init_elf/g; s/usr_src_cmd_altr_elf_len/altr_init_elf_len/g' init/altr_elf_.c > init/altr_elf.c
+rm -f init/altr_elf_.c
+echo "   Generated init/altr_elf.c"
+
+xxd -i usr/src/cmd/calc_gui.elf > init/calc_elf_.c
+sed 's/usr_src_cmd_calc_gui_elf/calc_init_elf/g; s/usr_src_cmd_calc_gui_elf_len/calc_init_elf_len/g' init/calc_elf_.c > init/calc_elf.c
+rm -f init/calc_elf_.c
+echo "   Generated init/calc_elf.c"
 
 for m in stack; do
     xxd -i "usr/src/sprach/sprach_${m}" > "init/sprach_${m}_elf_.c"
@@ -446,6 +484,8 @@ cp -f usr/src/cmd/copland.elf ./usr/bin/copland
 cp -f usr/src/cmd/copland.elf ./usr/bin/copland_status
 cp -f usr/src/cmd/terminal.elf ./usr/bin/terminal
 cp -f usr/src/cmd/fm.elf ./usr/bin/fm
+cp -f usr/src/cmd/altr.elf ./usr/bin/altr
+cp -f usr/src/cmd/calc_gui.elf ./usr/bin/calcg
 cp -f usr/src/sprach/sprach_stack ./usr/bin/sprach_stack
 cp -f usr/src/tools/pcc/pcc.elf ./usr/bin/pcc
 cp -f usr/src/tools/pcc/pcc.elf ./usr/bin/cc
@@ -476,7 +516,10 @@ $KCC $CFLAGS -c init/mdm_mini_elf.c -o $OBJDIR/mdm_mini_elf.o
 $KCC $CFLAGS -c init/flip_test_elf.c -o $OBJDIR/flip_test_elf.o
 $KCC $CFLAGS -c init/copland_elf.c -o $OBJDIR/copland_elf.o
 $KCC $CFLAGS -c init/terminal_elf.c -o $OBJDIR/terminal_elf.o
+$KCC $CFLAGS -c init/cptest_elf.c -o $OBJDIR/cptest_elf.o
 $KCC $CFLAGS -c init/fm_elf.c -o $OBJDIR/fm_elf.o
+$KCC $CFLAGS -c init/altr_elf.c -o $OBJDIR/altr_elf.o
+$KCC $CFLAGS -c init/calc_elf.c -o $OBJDIR/calc_elf.o
 $KCC $CFLAGS -c init/sprach_stack_elf.c -o $OBJDIR/sprach_stack_elf.o
 $KCC $CFLAGS -c init/pcc_elf.c -o $OBJDIR/pcc_elf.o
 fi
@@ -547,6 +590,9 @@ if [ "$NEED_GRAPHICS" = 1 ]; then
     $OBJDIR/flip_test_elf.o \
     $OBJDIR/copland_elf.o \
     $OBJDIR/terminal_elf.o \
+    $OBJDIR/cptest_elf.o \
+    $OBJDIR/altr_elf.o \
+    $OBJDIR/calc_elf.o \
     $OBJDIR/fm_elf.o \
     $OBJDIR/sprach_stack_elf.o \
     $OBJDIR/pcc_elf.o"

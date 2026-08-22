@@ -125,9 +125,15 @@ void icons_init(void)
     icircle_fill(&icon_gear[0], 15, 15, 10, 0xFF808090);
     icircle_fill(&icon_gear[0], 15, 15, 6, 0x00000000);
     icircle_ring(&icon_gear[0], 15, 15, 5, 0xFFB0B0C0);
+    /* gear teeth at 8 compass points, radius 11 (integer table —
+     * the standalone GUI ELFs link without libm) */
+    static const int gt8[8][2] = {
+        { 11, 0 }, { 8, 8 }, { 0, 11 }, { -8, 8 },
+        { -11, 0 }, { -8, -8 }, { 0, -11 }, { 8, -8 },
+    };
     for (int a = 0; a < 8; a++) {
-        int bx = 15 + (int)(11.0 * cos(a * 0.7854));
-        int by = 15 + (int)(11.0 * sin(a * 0.7854));
+        int bx = 15 + gt8[a][0];
+        int by = 15 + gt8[a][1];
         irect(&icon_gear[0], bx - 2, by - 2, bx + 2, by + 2, 0xFF808090);
     }
 

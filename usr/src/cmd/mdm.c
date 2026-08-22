@@ -36,6 +36,16 @@ char cwd[256] = "/";
 #define FIELD_USERNAME  0
 #define FIELD_PASSWORD  1
 
+#ifdef M4K_TEST_AUTOLOGIN
+/* Debug milestone counter in MDM's own .bss (loaded at a fixed
+ * address); read via QEMU physical memory dump.  Serial dies once
+ * MDM touches the framebuffer. */
+volatile uint32_t g_mdm_milestone = 0xDEAD0000;
+#define MDM_MILESTONE(c) (g_mdm_milestone = 0xDEAD0000u | (c))
+#else
+#define MDM_MILESTONE(c) ((void)0)
+#endif
+
 static char username[64] = "";
 static char password[64] = "";
 static int current_field = FIELD_USERNAME;
@@ -58,8 +68,8 @@ static int cached_entry_valid = 0;
 
 /* Draw the login form */
 static void draw_login_form(void) {
-    /* Draw gradient background (default blue wallpaper 0x000044→0x0066FF) */
-    gui_draw_gradient(0x00000044, 0x000066FF);
+    /* Unified system wallpaper (blue gradient 0x000044→0x0066FF) */
+    gui_draw_wallpaper();
     
     /* Draw form background */
     gui_draw_rect(FORM_X, FORM_Y, FORM_WIDTH, FORM_HEIGHT, GUI_COLOR_WHITE);
@@ -296,14 +306,39 @@ void _start(void) {
     /* Session loop: draw login form → run event loop → (on success)
      * wait for the desktop session → back to the login form. */
     for (;;) {
+        MDM_MILESTONE(0xA0);   /* session loop entered */
         username[0] = '\0';
         password[0] = '\0';
         current_field = FIELD_USERNAME;
         login_failed = 0;
         session_active = 0;
 
+        MDM_MILESTONE(0xA1);   /* about to draw login form */
         draw_login_form();
+        MDM_MILESTONE(1);      /* form drawn */
         ser_puts("[MDM] Login form drawn, entering event loop\n");
+
+#ifdef M4K_TEST_AUTOLOGIN
+        /* Test builds only: headless QEMU has no working keyboard
+         * injection (no IRQ1 reaches the guest), so bypass the
+         * interactive login and enter the session directly. */
+        MDM_MILESTONE(1);
+        ser_puts("[MDM] TEST_AUTOLOGIN: skipping interactive login\n");
+        MDM_MILESTONE(2);
+        musr_strncpy(username, "root", sizeof(username) - 1);
+        musr_strncpy(password, "123456", sizeof(password) - 1);
+        if (authenticate_user() == 0) {
+            MDM_MILESTONE(3);
+            session_active = 1;
+            launch_desktop();
+        } else {
+            MDM_MILESTONE(4);
+            ser_puts("[MDM] TEST_AUTOLOGIN failed\n");
+            for (;;)
+                ;
+        }
+        continue;
+#endif
 
         while (!session_active) {
             handle_keyboard();

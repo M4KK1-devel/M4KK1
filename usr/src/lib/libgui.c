@@ -102,6 +102,19 @@ int gui_draw_gradient(uint32_t color_top, uint32_t color_bottom) {
                              color_top, color_bottom);
 }
 
+/* Unified system wallpaper: vertical blue gradient 0x000044 → 0x0066FF.
+ * Both MDM (login) and Sprach/Copland (desktop) call this so the boot
+ * chain never flashes a mismatched background.  Single kernel
+ * fill_gradient syscall — no separate flip needed (next composite
+ * presents it). */
+#define GUI_WALLPAPER_TOP    0x00000044u
+#define GUI_WALLPAPER_BOTTOM 0x000066FFu
+
+int gui_draw_wallpaper(void)
+{
+    return gui_draw_gradient(GUI_WALLPAPER_TOP, GUI_WALLPAPER_BOTTOM);
+}
+
 /* Present back buffer to screen */
 int gui_flip(void) {
     return m4k_flip();

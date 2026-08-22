@@ -20,6 +20,7 @@
 #include "../lib/libgui.h"
 #include "../lib/libcopland.h"
 #include "../lib/mkrn_rect.h"
+#include "../../../sys/src/copland/compositor.h"
 
 /* Global variables required by m4sh.h functions */
 int out_fd = 1;
@@ -154,15 +155,19 @@ static void copland_composite(struct copland_shm *shm)
 {
     int i;
 
-    /* Desktop background: default blue gradient wallpaper
-     * (0x000044 → 0x0066FF), same palette as the MDM login screen. */
-    gui_draw_gradient(0x00000044, 0x000066FF);
+    /* Desktop background: the unified system wallpaper (see
+     * gui_draw_wallpaper). */
+    gui_draw_wallpaper();
 
     /* All live surfaces, back to front */
     for (i = 0; i < COPLAND_MAX_SURFACES; i++) {
         if (shm->surfaces[i].in_use)
             copland_render_surface(&shm->surfaces[i]);
     }
+
+    /* New-protocol surfaces layer on top of the legacy pass so they
+     * survive the legacy full-screen wallpaper redraw (phase 2). */
+    cp_compositor_paint(&cp_comp);
 
     gui_flip();
 }
@@ -248,9 +253,118 @@ static void copland_handle_commands(struct copland_shm *shm)
     }
 }
 
+/* ── New-protocol backend hooks (phase 2) ── */
+
+static void cp_daemon_blit(int x, int y, int w, int h,
+			   const uint8_t *src, uint32_t stride)
+{
+    /* The kernel blit uses w*4 stride; new-protocol buffers may
+     * carry a larger stride.  Row-by-row fallback keeps correctness
+     * (v1: only when stride != w*4). */
+    if (stride == (uint32_t)(w * 4)) {
+        m4k_gfx_blit(x, y, w, h, src);
+        return;
+    }
+    {
+        int row;
+        for (row = 0; row < h; row++) {
+            const uint8_t *r = src + (uint32_t)row * stride;
+            /* one-row blits: correctness over speed in v1 */
+            m4k_gfx_blit(x, y + row, w, 1, r);
+        }
+    }
+}
+
+static void cp_daemon_fill(int x, int y, int w, int h, uint32_t argb)
+{
+    gui_draw_rect(x, y, w, h, argb);
+}
+
+static void cp_daemon_wallpaper(int x, int y, int w, int h)
+{
+    copland_wallpaper_rect(x, y, w, h);
+}
+
+static const struct cp_backend cp_daemon_backend = {
+    cp_daemon_blit, cp_daemon_fill, cp_daemon_wallpaper
+};
+
+/* One round of new-protocol service: adopt new connections,
+ * dispatch one request per client, and run one frame cycle. */
+static void copland_protocol_tick(void)
+{
+    struct cp_conn *adopted[CP_CONN_SLOTS];
+    int n, i;
+
+    n = cp_conn_table_poll(adopted, CP_CONN_SLOTS);
+    for (i = 0; i < n; i++) {
+        int ci = cp_compositor_attach_client(&cp_comp, adopted[i]);
+        ser_puts("[COPLAND] new protocol client #");
+        print_u32(adopted[i]->client_id);
+        ser_puts(ci >= 0 ? " attached\n" : " REJECTED\n");
+    }
+    for (i = 0; i < CP_MAX_CLIENTS; i++) {
+        if (cp_comp.clients[i].active)
+            cp_compositor_dispatch(&cp_comp, &cp_comp.clients[i]);
+    }
+    if (cp_comp.frame_dirty) {
+        int fx = cp_comp.frame_dmg_x, fy = cp_comp.frame_dmg_y;
+        int fw = cp_comp.frame_dmg_w, fh = cp_comp.frame_dmg_h;
+        cp_compositor_frame(&cp_comp);
+        /* present the damaged region (frame() blits into the
+         * back buffer; the legacy path flips full-screen) */
+        m4k_flip_rect(fx, fy, fw, fh);
+    }
+}
+
 /* ── Sprach watchdog (phase 3) ── */
 
 #define COPLAND_SIGKILL 2  /* M4K_SIGKILL (signal.h); kernel-internal value */
+
+/* Fork a Copland-protocol smoke client (phase 2 verification).
+ * Returns the child pid, or -1.  The child execs /bin/cptest which
+ * runs the full protocol handshake and then parks with its surface
+ * composited on screen (no argv ABI: behaviour fixed by the binary). */
+static int copland_spawn_cptest(void)
+{
+    /* Parent-side beacon: fork+spawn ATTEMPT issued (column x=640,
+     * y=410).  If this pixel is missing the spawn path never ran. */
+    {
+        struct m4k_framebuffer_info fb;
+        if (m4k_get_framebuffer_info(&fb) == 0) {
+            uint32_t *px = (uint32_t *)(uintptr_t)fb.phys_addr;
+            px[410 * fb.width + 640] = 0xFF0000FFu;
+        }
+    }
+    int pid = musr_sc_fork();
+    if (pid == 0) {
+        int r = m4k_spawn("/bin/cptest", 0);
+        /* Serial is dead by this point in the boot chain; paint the
+         * failure code on the framebuffer so headless smoke tests
+         * can see it.  Column x=640, y=400..: one red px per
+         * failure kind (r==-1 open/elf: 1px; else 2px). */
+        {
+            struct m4k_framebuffer_info fb;
+            if (m4k_get_framebuffer_info(&fb) == 0) {
+                uint32_t *px =
+                    (uint32_t *)(uintptr_t)fb.phys_addr;
+                px[400 * fb.width + 640] = 0xFFFF0000u;
+                if (r != (int)0xFFFF0000u && r != -1)
+                    px[401 * fb.width + 640] = 0xFF00FF00u;
+            }
+        }
+        ser_puts("[COPLAND] cptest spawn failed (ret=");
+        print_u32((uint32_t)r);
+        ser_puts(")\n");
+        m4k_exit(1);
+    }
+    if (pid < 0)
+        return -1;
+    ser_puts("[COPLAND] cptest client started (pid=");
+    print_u32((uint32_t)pid);
+    ser_puts(")\n");
+    return (int)pid;
+}
 
 /* Fork a Sprach window-manager child.  Returns the child pid on
  * success, -1 on failure.  The child execs /bin/sprach (which never
@@ -288,6 +402,12 @@ void _start(void)
     copland_init_shm(shm);
     copland_composite(shm);
 
+    /* New protocol stack (phase 1-2): connection table + compositor */
+    cp_conn_table_init();
+    cp_compositor_init(&cp_comp);
+    cp_compositor_set_backend(&cp_comp, &cp_daemon_backend);
+    ser_puts("[COPLAND] protocol compositor up (conn table 0x720000)\n");
+
     if (copland_status_mode()) {
         /* Verification mode: report readiness and stay up */
         ser_puts("[COPLAND] status: Copland ready\n");
@@ -303,6 +423,11 @@ void _start(void)
     int stale_ticks = 0;
     int wm_pid = copland_spawn_wm(shm);
 
+    /* Phase 2 verification: also start the protocol smoke client.
+     * It connects through the new connection table, runs the full
+     * handshake, and parks with its surface on screen. */
+    copland_spawn_cptest();
+
     /* Server loop: consume IPC commands and recompose the screen
      * only when the dirty flag is set.  Cursor updates are handled
      * separately by the kernel (m4k_update_cursor) and do not need
@@ -315,6 +440,21 @@ void _start(void)
             ser_puts("[COPLAND] shutdown requested, exiting...\n");
             if (wm_pid > 0)
                 m4k_kill(wm_pid, COPLAND_SIGKILL);
+            /* "Shut Down" menu action: the WM set shm->reboot —
+             * issue the magic-gated reboot syscall (int 0x80 nr 0x6D,
+             * magic1=0x01234567 magic2=0x89ABCDEF) before exiting.
+             * QEMU std i386 warm-resets the machine. */
+            if (shm->reboot) {
+                uint32_t ret;
+                ser_puts("[COPLAND] rebooting machine...\n");
+                __asm__ volatile(
+                    "int $0x80"
+                    : "=a"(ret)
+                    : "a"(0x6Du), "b"(0x01234567u),
+                      "c"(0x89ABCDEFu), "d"(1u)
+                    : "memory");
+                (void)ret;   /* never returns on success */
+            }
             m4k_exit(0);
         }
 
@@ -324,6 +464,7 @@ void _start(void)
             copland_handle_commands(shm);
             had_commands = (shm->cmd_read_idx != saved_r);
         }
+        copland_protocol_tick();
 
         if (shm->dirty || had_commands) {
             copland_composite(shm);
