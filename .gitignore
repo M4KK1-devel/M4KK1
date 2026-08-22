@@ -19,6 +19,9 @@ pkg/**/*.o
 # IDE
 .vscode/
 .idea/
+
+# cron / build logs
+logs/
 *.swp
 *.swo
 *~
