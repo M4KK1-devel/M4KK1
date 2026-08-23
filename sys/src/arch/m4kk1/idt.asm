@@ -383,24 +383,30 @@ isr_syscall:
     push edi
     push ebp
 
-    ; Save user frame for fork(): g_syscall_user_frame = {eip, cs, eflags, esp, ss, ebp}
+    ; Save user frame for fork(): per-PCB copy {eip, cs, eflags, esp, ss, ebp}
+    ; (was a single global — raced with MDM's waitpid syscall storm when
+    ; fork got preempted mid-copy by the timer; fork then built a
+    ; poisoned iret frame and the child #DF'd.)
     ; Stack now: [esp]=ebp, +4=edi, +8=esi, +12=edx, +16=ecx, +20=ebx, +24=eax,
     ;            +28=user_eip, +32=cs, +36=eflags, +40=esp, +44=ss
-    ; NOTE: use the symbol as an immediate (array address), not
-    ; dword [sym] which would load the array's first element instead.
-    mov eax, g_syscall_user_frame
+    ; offsetof(mkrn_process_t, user_frame) == 204 — verified by
+    ; _Static_assert in process.c; update both if the PCB changes.
+    mov eax, [g_current_process]
+    test eax, eax
+    jz .skip_frame_save0
     mov ecx, [esp+28]
-    mov [eax], ecx
+    mov [eax+204], ecx
     mov ecx, [esp+32]
-    mov [eax+4], ecx
+    mov [eax+208], ecx
     mov ecx, [esp+36]
-    mov [eax+8], ecx
+    mov [eax+212], ecx
     mov ecx, [esp+40]
-    mov [eax+12], ecx
+    mov [eax+216], ecx
     mov ecx, [esp+44]
-    mov [eax+16], ecx
+    mov [eax+220], ecx
     mov ecx, [esp+0]          ; user EBP (pushed first, bottom of block)
-    mov [eax+20], ecx
+    mov [eax+224], ecx
+.skip_frame_save0:
 
     ; Restore the syscall number into EAX: the frame capture above
     ; clobbered the register, and mkrn_syscall_handler reads the number
@@ -451,24 +457,25 @@ isr_m4k_syscall:
     push ebx
     push eax                ; top of saved regs = EAX (syscall number)
 
-    ; Save user frame for fork(): g_syscall_user_frame = {eip, cs, eflags, esp, ss, ebp}
+    ; Save user frame for fork(): per-PCB copy — see isr_syscall note.
     ; Stack now: [esp]=eax, +4=ebx, +8=ecx, +12=edx, +16=esi, +20=edi, +24=ebp,
     ;            +28=user_eip, +32=cs, +36=eflags, +40=esp, +44=ss
-    ; NOTE: use the symbol as an immediate (array address), not
-    ; dword [sym] which would load the array's first element instead.
-    mov eax, g_syscall_user_frame
+    mov eax, [g_current_process]
+    test eax, eax
+    jz .skip_frame_save1
     mov ecx, [esp+28]
-    mov [eax], ecx
+    mov [eax+204], ecx
     mov ecx, [esp+32]
-    mov [eax+4], ecx
+    mov [eax+208], ecx
     mov ecx, [esp+36]
-    mov [eax+8], ecx
+    mov [eax+212], ecx
     mov ecx, [esp+40]
-    mov [eax+12], ecx
+    mov [eax+216], ecx
     mov ecx, [esp+44]
-    mov [eax+16], ecx
+    mov [eax+220], ecx
     mov ecx, [esp+24]         ; user EBP (pushed last, at +24)
-    mov [eax+20], ecx
+    mov [eax+224], ecx
+.skip_frame_save1:
 
     lea eax, [esp+4]        ; pointer to EBX (2nd from top)
     push eax                ; 2nd arg: saved_regs points to EBX
@@ -583,7 +590,7 @@ extern mkrn_timer_handler
 extern mkrn_syscall_handler
 extern m4k_syscall_handler
 extern mkrn_idt_handle_irq
-extern g_syscall_user_frame
+extern g_current_process
 extern mkrn_process_yield
 extern mkrn_console_write
 extern mkrn_console_write_hex

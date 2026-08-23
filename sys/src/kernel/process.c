@@ -22,6 +22,11 @@
 #endif
 
 static mkrn_process_ctrl_t process_ctrl;
+/* current is the scheduler's authoritative pointer.  g_current_process
+ * is an alias the syscall ISRs (idt.asm) use to store the user frame
+ * into the CURRENT pcb without calling C code — keep both in sync in
+ * pick/switch and init. */
+mkrn_process_t *g_current_process = NULL;
 static mkrn_process_t *current = NULL;
 static uint32_t scheduler_enabled = 0;
 
@@ -448,6 +453,7 @@ mkrn_process_t *mkrn_process_switch_pick(void)
 
     if (next) {
         current = next;
+        g_current_process = next;
         next->state_tags &= ~(M4K_SCHED_READY | M4K_SCHED_SLEEPING);
         next->state_tags |= M4K_SCHED_RUNNING;
         g_switch_esp = next->thread_esp;
@@ -604,6 +610,7 @@ void mkrn_process_exit(int status)
          * PCB below.  The dying PCB stays valid until waitpid reaps
          * it, so reading its fields after the switch is safe. */
         current = next;
+        g_current_process = next;
         next->state_tags &= ~(M4K_SCHED_READY | M4K_SCHED_SLEEPING);
         next->state_tags |= M4K_SCHED_RUNNING;
 
@@ -648,6 +655,7 @@ void mkrn_process_exit(int status)
             continue;
 
         current = next;
+        g_current_process = next;
         next->state_tags &= ~(M4K_SCHED_READY | M4K_SCHED_SLEEPING);
         next->state_tags |= M4K_SCHED_RUNNING;
 
@@ -699,6 +707,7 @@ void mkrn_process_init(void)
     }
 
     current = idle;
+    g_current_process = idle;
     process_ctrl.current = idle;
     process_ctrl.process_count = 1;
     process_ctrl.next_pid = 2;
@@ -753,8 +762,19 @@ int mkrn_process_fill_info(struct mkrn_procinfo *buf, uint32_t max)
 /* ── 4P1 fork_status: clone with selective inheritance ── */
 
 /* Captured by isr_syscall / isr_m4k_syscall at every syscall entry:
- * {user_eip, user_cs, user_eflags, user_esp, user_ss, user_ebp} */
+ * {user_eip, user_cs, user_eflags, user_esp, user_ss, user_ebp}.
+ * Retained for reference/forensics but no longer written by the ISRs —
+ * they store into current->user_frame (per-PCB) now; a single global
+ * raced against preempting syscalls from other tasks during fork's
+ * 128KB stack copy. */
 uint32_t g_syscall_user_frame[6];
+
+/* The syscall ISRs address current->user_frame with hardcoded offsets
+ * (204..224) because they run before any C frame exists.  Fail the
+ * build if the PCB layout ever drifts. */
+_Static_assert(
+    __builtin_offsetof(mkrn_process_t, user_frame) == 204,
+    "idt.asm frame-save offsets (204..224) are stale");
 
 /* Resume trampoline for a freshly forked child: the scheduler pops
  * ebx/esi/edi/ebp and ret's here, then we pop the synthetic
@@ -824,6 +844,13 @@ pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
     /* State inheritance: only inherit requested bits */
     child->state_tags = parent->state_tags & inherit_mask;
 
+    /* Snapshot the parent's syscall user frame into the child's PCB:
+     * the child's own next syscall will refresh it, but between fork
+     * and that first syscall an isr entry on the child's context must
+     * find a frame to write/read consistently. */
+    mkrn_memcpy(child->user_frame, parent->user_frame,
+                sizeof(child->user_frame));
+
     /* If no scheduling class inherited, default to SCHED_READY */
     if (!(child->state_tags & M4K_STATE_SCHED_MASK))
         child->state_tags |= M4K_SCHED_READY;
@@ -890,12 +917,12 @@ pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
      *   [eax][ebx][ecx][edx][esi][edi][ebp]       <- mkrn_fork_child_restore pops
      *   [eip][cs][eflags][esp][ss]                <- iret frame
      */
-    uint32_t ueip    = g_syscall_user_frame[0];
-    uint32_t ucs     = g_syscall_user_frame[1];
-    uint32_t ueflags = g_syscall_user_frame[2];
-    uint32_t uesp    = g_syscall_user_frame[3];
-    uint32_t uss     = g_syscall_user_frame[4];
-    uint32_t uebp    = g_syscall_user_frame[5];
+    uint32_t ueip    = parent->user_frame[0];
+    uint32_t ucs     = parent->user_frame[1];
+    uint32_t ueflags = parent->user_frame[2];
+    uint32_t uesp    = parent->user_frame[3];
+    uint32_t uss     = parent->user_frame[4];
+    uint32_t uebp    = parent->user_frame[5];
     uint32_t child_top = child->kernel_stack;
 
     /* Private user stack for the child: a byte-for-byte copy of the

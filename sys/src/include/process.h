@@ -109,6 +109,16 @@ typedef struct mkrn_process {
     uint32_t thread_esp;
     uint32_t kernel_stack;  /* top of this process's private kernel stack (TSS esp0) */
     uint32_t user_stack_base; /* bottom of this process's user stack allocation */
+    /* Private copy of the int-0x80/int-0x4D user frame
+     * {eip, cs, eflags, esp, ss, ebp}, written by the syscall ISRs on
+     * every entry and read by fork to lay out the child's resume
+     * frame.  Per-PCB (not a single global): fork copies 128KB of
+     * stack while holding a pointer into the old global, and any
+     * OTHER task entering a syscall via timer preemption overwrote
+     * it mid-copy (the MDM waitpid storm) — fork then built a
+     * poisoned iret frame (uesp=0xffffffff, eip=0xc8) and the child
+     * #GP/#DF'd on resume. */
+    uint32_t user_frame[6];
     uint32_t sleep_ticks;
     uint32_t exit_status;
     uint32_t pending_signals;
