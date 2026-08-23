@@ -160,7 +160,7 @@ AS=nasm
 LD=ld
 CFLAGS="-Wall -Wextra -O2 -g -ffreestanding -nostdlib -nostdinc -m32 -mno-sse -mno-sse2 -mno-mmx -std=gnu99 -fno-stack-protector -fno-pic -fno-pie"
 CFLAGS="$CFLAGS $MODE_DEFINES"
-CFLAGS="$CFLAGS -I$PWD/sys/src/include -I$PWD/include -I$PWD/sys/src/arch/m4kk1/include -I$PWD/sys/src/fs/yafs/include -I$PWD/sys/src/drivers/mouse -I$PWD/sys/src/drivers/keyboard -I$PWD/sys/src/kernel/drivers"
+CFLAGS="$CFLAGS -I$PWD/sys/src/include -I$PWD/include -I$PWD/init -I$PWD/sys/src/arch/m4kk1/include -I$PWD/sys/src/fs/yafs/include -I$PWD/sys/src/drivers/mouse -I$PWD/sys/src/drivers/keyboard -I$PWD/sys/src/kernel/drivers"
 ASFLAGS="-f elf32"
 LDFLAGS="-T $PWD/sys/src/init/linker.ld -nostdlib -z max-page-size=0x1000 -m elf_i386 -g -no-pie"
 
@@ -178,6 +178,9 @@ fi
 echo "   ./usr/bin/ cleaned"
 
 echo "=== Compiling kernel C files ==="
+# Manual pages: bake docs/zh_CN/man into init/man_pages.[ch] before
+# kmain.c is compiled (it includes man_pages.h in non-minimal builds).
+bash tools/build/gen_man_pages.sh
 if [ "$NEED_GRAPHICS" = 1 ]; then
     $KCC $CFLAGS -c sys/src/kernel/video/vesa.c -o $OBJDIR/vesa.o
 fi
@@ -343,10 +346,11 @@ echo "=== Building Sprach (window manager) ELFs ==="
 $UCC $M4SH_CFLAGS -c usr/src/sprach/sprach.c -o usr/src/sprach/sprach.o
 for m in stack; do
     $UCC $M4SH_CFLAGS -c "usr/src/sprach/sprach_mode_${m}.c" -o "usr/src/sprach/sprach_mode_${m}.o"
+    $UCC $M4SH_CFLAGS -c sys/src/copland/copland_proto.c -o usr/src/sprach/copland_proto.o
     $LD -m elf_i386 -T usr/src/sprach/sprach.ld -nostdlib -z max-page-size=0x1000 \
         -o "usr/src/sprach/sprach_${m}" \
-        "usr/src/sprach/sprach.o" "usr/src/sprach/sprach_mode_${m}.o" usr/src/lib/icons.o $PCC_RUNTIME
-    echo "   Sprach ${m} ELF: usr/src/sprach/sprach_${m} ($(stat -c%s usr/src/sprach/sprach_${m}) bytes)"
+        "usr/src/sprach/sprach.o" "usr/src/sprach/sprach_mode_${m}.o" usr/src/lib/icons.o usr/src/sprach/copland_proto.o $PCC_RUNTIME
+    echo "   Sprach ${m} ELF: usr/src/sprach/sprach_${m} ($(stat -c%s "usr/src/sprach/sprach_${m}") bytes)"
 done
 cp -f usr/src/sprach/sprach_stack ./usr/bin/sprach
 
@@ -523,6 +527,7 @@ $KCC $CFLAGS -c init/calc_elf.c -o $OBJDIR/calc_elf.o
 $KCC $CFLAGS -c init/sprach_stack_elf.c -o $OBJDIR/sprach_stack_elf.o
 $KCC $CFLAGS -c init/pcc_elf.c -o $OBJDIR/pcc_elf.o
 fi
+$KCC $CFLAGS -c init/man_pages.c -o $OBJDIR/man_pages.o
 if [ "$NEED_RECOVERY" = 1 ]; then
 if [ -f init/fsck_elf.c ]; then
     $KCC $CFLAGS -c init/fsck_elf.c -o $OBJDIR/fsck_elf.o
@@ -601,7 +606,8 @@ if [ "$NEED_USER" = 1 ]; then
     KRN_OBJS="$KRN_OBJS $OBJDIR/init_elf.o \
     $OBJDIR/m4sh_elf.o \
     $OBJDIR/m4shg_elf.o \
-    $OBJDIR/login_elf.o"
+    $OBJDIR/login_elf.o \
+    $OBJDIR/man_pages.o"
 fi
 if [ "$NEED_RECOVERY" = 1 ]; then
     if [ -f $OBJDIR/fsck_elf.o ]; then

@@ -44,6 +44,10 @@ struct cp_surface_state {
 	uint32_t pending_buffer; /* next frame's buffer (double buffer) */
 	int32_t  dmg_x, dmg_y, dmg_w, dmg_h;  /* pending damage */
 	int32_t  pdmg_x, pdmg_y, pdmg_w, pdmg_h; /* damage in pending CU */
+	/* WM layout (spec §8/§15): set_position lands in pend_x/pend_y
+	 * and is promoted to x/y atomically on the next commit. */
+	int32_t  pend_x, pend_y;
+	uint8_t  pend_pos;
 	uint8_t  mapped;      /* has a committed buffer */
 	uint8_t  visible;     /* mapped and not hidden by z-reorder */
 	/* input region: 0 = whole surface accepts input */
@@ -112,6 +116,10 @@ struct cp_compositor {
 	uint32_t zcount;
 	/* Serial counter for input events. */
 	uint32_t serial;
+	/* WM identity (spec §15): the FIRST client that successfully
+	 * binds copland_compositor owns the layout privilege.  0 = none;
+	 * cleared when that client's connection is torn down. */
+	uint32_t wm_client_id;
 };
 
 /* ── Backend hooks (implemented by the daemon; NULL = no-op) ── */

@@ -280,7 +280,58 @@ int main(void)
 		      "bad format rejected with error");
 	}
 
-	/* ── 7. surface destroy cleans up z-list and damage ── */
+	/* ── 7. WM layout: set_position privilege + atomic apply ── */
+	{
+		struct cp_surface_state *s = cp_find_surface(c, 7);
+		uint32_t pos_args[2] = { 40, 60 };
+
+		CHECK(c->wm_client_id == test_conn.client_id,
+		      "first compositor bind wins WM identity");
+		/* before commit the pending position must not apply */
+		req_u32s(&test_conn, 7, CP_SURFACE_SET_POSITION,
+			 pos_args, 2);
+		CHECK(cp_compositor_dispatch(c, cl) == 1,
+		      "dispatch set_position (WM)");
+		CHECK(s->x == 100 && s->y == 100,
+		      "position pending until commit");
+		CHECK(s->pend_pos == 1, "pending position staged");
+		/* commit applies the CU atomically */
+		req_u32s(&test_conn, 7, CP_SURFACE_COMMIT, 0, 0);
+		CHECK(cp_compositor_dispatch(c, cl) == 1,
+		      "dispatch commit with position");
+		CHECK(s->x == 40 && s->y == 60,
+		      "position applied on commit");
+		CHECK(s->pend_pos == 0, "pending position consumed");
+		/* WM can position surfaces it does not own */
+		s->client_id = 0xDEAD;
+		req_u32s(&test_conn, 7, CP_SURFACE_SET_POSITION,
+			 (uint32_t[2]){ 0, 0 }, 2);
+		CHECK(cp_compositor_dispatch(c, cl) == 1,
+		      "WM moves foreign surface");
+		s->client_id = test_conn.client_id;
+		/* non-WM client gets access denied */
+		{
+			struct cp_conn c2;
+			struct cp_client *cl2;
+
+			memset(&c2, 0, sizeof(c2));
+			cp_client_conn_init(&c2);
+			c2.client_id = 2;
+			CHECK(cp_compositor_attach_client(c, &c2) >= 0,
+			      "second client attached");
+			cl2 = &c->clients[1];
+			req_u32s(&c2, 7, CP_SURFACE_SET_POSITION,
+				 (uint32_t[2]){ 1, 1 }, 2);
+			CHECK(cp_compositor_dispatch(c, cl2) == 1,
+			      "dispatch set_position (non-WM)");
+			CHECK(evt_pop(&c2, &obj, &op, &a0, &a1) > 0
+			      && op == CP_DISPLAY_ERROR
+			      && a1 == CP_ERR_ACCESS_DENIED,
+			      "display.error access_denied");
+		}
+	}
+
+	/* ── 8. surface destroy cleans up z-list and damage ── */
 	{
 		req_u32s(&test_conn, 7, CP_SURFACE_DESTROY, 0, 0);
 		CHECK(cp_compositor_dispatch(c, cl) == 1,

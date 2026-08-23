@@ -108,7 +108,8 @@ enum cp_surface_req {
 	CP_SURFACE_FRAME = 3,
 	CP_SURFACE_SET_OPAQUE_REGION = 4,
 	CP_SURFACE_SET_INPUT_REGION = 5,
-	CP_SURFACE_COMMIT = 6
+	CP_SURFACE_COMMIT = 6,
+	CP_SURFACE_SET_POSITION = 7    /* WM-only layout extension (§8/§15) */
 };
 enum cp_surface_evt {
 	CP_SURFACE_ENTER = 0,
@@ -163,6 +164,7 @@ enum cp_output_evt {
 #define CP_ERR_INVALID_METHOD   1u
 #define CP_ERR_NO_MEMORY        2u
 #define CP_ERR_IMPLEMENTATION   3u
+#define CP_ERR_ACCESS_DENIED    4u   /* WM-only request from non-WM client */
 
 /* ══════════ Message builder (producer side) ══════════ */
 

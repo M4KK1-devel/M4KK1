@@ -36,11 +36,86 @@
 #include "../lib/libgui.h"
 #include "../lib/icons.h"
 #include "../lib/musr_inline.h"
+#include "../../../sys/src/copland/copland_proto.h"
 #include "sprach.h"
 
 /* Globals required by the m4sh.h ABI */
 int out_fd = 1;
 char cwd[256] = "/";
+
+/* ── Copland new-protocol client state (phase 3: WM identity) ──
+ *
+ * Sprach connects through the same connection table as cptest, but
+ * binds copland_compositor FIRST and thereby claims the WM privilege
+ * (spec §15).  Its chrome surfaces (menubar, taskbar) live on the
+ * new protocol; app windows stay on the legacy shm cmd ring until
+ * they are migrated. */
+static struct cp_conn sp_conn;
+static struct cp_objmap sp_map;
+static uint8_t sp_reqbuf[CP_MSG_MAX];
+static struct cp_msgbuf sp_mb;
+
+static uint32_t sp_id_comp;       /* compositor object id */
+static uint32_t sp_id_shm;        /* shm object id */
+static uint32_t sp_id_pool;       /* pool covering all chrome buffers */
+static uint32_t sp_id_mb_surf;    /* menubar surface */
+static uint32_t sp_id_tb_surf;    /* taskbar surface */
+static uint32_t sp_id_mb_buf;     /* menubar buffer */
+static uint32_t sp_id_tb_buf;     /* taskbar buffer */
+static uint8_t  sp_proto_ready;   /* handshake done */
+
+static void sp_send(uint32_t obj, uint32_t op)
+{
+    struct cp_ring r;
+
+    if (cp_msg_finish(&sp_mb) < 0)
+        return;
+    cp_ring_init(&r, &sp_conn.req_head, &sp_conn.req_tail,
+                 sp_conn.req_data, sp_conn.req_size);
+    cp_ring_write(&r, sp_reqbuf, sp_mb.len);
+}
+
+static void sp_req(uint32_t obj, uint32_t op)
+{
+    cp_msg_start(&sp_mb, sp_reqbuf, sizeof(sp_reqbuf), obj, op);
+}
+
+static int sp_evt_pop(uint32_t *obj, uint32_t *op, uint32_t *a0)
+{
+    uint8_t buf[CP_MSG_MAX];
+    struct cp_ring r;
+    int rc;
+
+    cp_ring_init(&r, &sp_conn.evt_head, &sp_conn.evt_tail,
+                 sp_conn.evt_data, sp_conn.evt_size);
+    rc = cp_ring_read(&r, buf, sizeof(buf));
+    if (rc <= 0)
+        return rc;
+    *obj = (uint32_t)buf[0] | ((uint32_t)buf[1] << 8)
+        | ((uint32_t)buf[2] << 16) | ((uint32_t)buf[3] << 24);
+    *op = (uint32_t)buf[4] | ((uint32_t)buf[5] << 8);
+    if (a0) {
+        struct cp_msg_reader rd;
+        cp_reader_init(&rd, buf, (uint32_t)rc);
+        *a0 = cp_get_u32(&rd);
+    }
+    return rc;
+}
+
+static int sp_wait_evt(uint32_t obj, uint32_t op, int spins)
+{
+    uint32_t eo, ep, ea;
+    int s;
+
+    for (s = 0; s < spins; s++) {
+        while (sp_evt_pop(&eo, &ep, &ea) > 0) {
+            if (eo == obj && ep == op)
+                return 1;
+        }
+        m4k_yield();
+    }
+    return 0;
+}
 
 /* Click handler defined below sprach_handle_mouse; forward-declared so
  * the whole file compiles cleanly under -Werror=implicit-function-
@@ -62,6 +137,8 @@ static uint32_t maximize_bufs[SPRACH_WINDOW_COUNT]
 
 static uint32_t taskbar_buf[SCREEN_W * TASKBAR_H]
     __attribute__((aligned(16)));
+/* menubar_buf stays static; its address is passed directly. */
+#define SP_TASKBAR_BUF taskbar_buf
 
 static uint32_t menubar_buf[SCREEN_W * MENUBAR_H]
     __attribute__((aligned(16)));
@@ -543,6 +620,142 @@ void sprach_commit_layout(struct sprach_ctx *ctx)
 }
 
 /* ── Taskbar (bottom) ── */
+
+/* ── New-protocol WM bootstrap (phase 3) ──
+ *
+ * Connects through the connection table, wins the WM identity by
+ * binding copland_compositor first, then creates the chrome
+ * surfaces (menubar + taskbar) with buffers covering the existing
+ * static pixel buffers.  On failure the caller falls back to the
+ * legacy shm surfaces (graceful degradation, not a boot failure). */
+static int sprach_proto_connect(void)
+{
+    uint32_t eo, ep, ea;
+    uint32_t id_reg;
+
+    /* sp_conn lives in BSS (zeroed): without conn_init it never
+     * carries COPLAND_CONN_MAGIC and cp_client_connect refuses it
+     * ("new protocol unavailable, legacy surfaces"). */
+    cp_client_conn_init(&sp_conn);
+    if (cp_client_connect(&sp_conn, 0) < 0)
+        return -1;
+    cp_objmap_init(&sp_map);
+
+    /* registry */
+    id_reg = cp_objmap_new_id(&sp_map);
+    sp_req(CP_ID_DISPLAY, CP_DISPLAY_GET_REGISTRY);
+    cp_put_u32(&sp_mb, id_reg);
+    sp_send(CP_ID_DISPLAY, CP_DISPLAY_GET_REGISTRY);
+    if (!sp_wait_evt(id_reg, CP_REGISTRY_GLOBAL, 4000))
+        return -1;
+    while (sp_evt_pop(&eo, &ep, &ea) > 0)
+        ;   /* drain remaining globals */
+
+    /* bind compositor FIRST: claims the WM privilege (spec §15) */
+    sp_id_comp = cp_objmap_new_id(&sp_map);
+    sp_req(2, CP_REGISTRY_BIND);
+    cp_put_u32(&sp_mb, CP_IF_COMPOSITOR);
+    cp_put_u32(&sp_mb, sp_id_comp);
+    sp_send(2, CP_REGISTRY_BIND);
+
+    /* bind shm + wait for the format event */
+    sp_id_shm = cp_objmap_new_id(&sp_map);
+    sp_req(2, CP_REGISTRY_BIND);
+    cp_put_u32(&sp_mb, CP_IF_SHM);
+    cp_put_u32(&sp_mb, sp_id_shm);
+    sp_send(2, CP_REGISTRY_BIND);
+    if (!sp_wait_evt(sp_id_shm, CP_SHM_FORMAT, 4000))
+        return -1;
+    while (sp_evt_pop(&eo, &ep, &ea) > 0)
+        ;
+
+    return 0;
+}
+
+/* Create one chrome surface on the new protocol:
+ * pool + buffer + surface + set_position + attach + damage + commit.
+ * buf points at the caller's static pixel store (must stay alive).
+ * Returns 0 on success; the surface id lands in *surf_out. */
+static int sprach_proto_chrome(uint32_t *surf_out, uint32_t *buf_out,
+                               uint32_t buf_addr, int32_t sx, int32_t sy,
+                               int32_t w, int32_t h)
+{
+    /* The pool is created once and resized per chrome surface to
+     * cover [0, accumulated size); buffers address it by offset.
+     * v1 keeps it simple: one pool spanning both chrome buffers,
+     * created with the final size on the first call. */
+    static uint32_t pool_created;
+    uint32_t id_surf, id_buf;
+
+    if (!pool_created) {
+        /* Pool covers both chrome pixel stores: taskbar_buf then
+         * menubar_buf (flat BSS addresses, page-less granularity
+         * allowed by spec §6).  Size = distance from taskbar_buf
+         * start to menubar_buf end.  Both are static in this
+         * file, so the linker keeps them in BSS order. */
+        uint32_t base = (uint32_t)(uintptr_t)taskbar_buf;
+        uint32_t end = (uint32_t)(uintptr_t)menubar_buf
+                     + SCREEN_W * MENUBAR_H * 4;
+        sp_id_pool = cp_objmap_new_id(&sp_map);
+        sp_req(sp_id_shm, CP_SHM_CREATE_POOL);
+        cp_put_u32(&sp_mb, sp_id_pool);
+        cp_put_u32(&sp_mb, base);
+        cp_put_i32(&sp_mb, (int32_t)(end - base));
+        sp_send(sp_id_shm, CP_SHM_CREATE_POOL);
+        pool_created = 1;
+    }
+
+    id_buf = cp_objmap_new_id(&sp_map);
+    sp_req(sp_id_pool, CP_POOL_CREATE_BUFFER);
+    cp_put_u32(&sp_mb, id_buf);
+    cp_put_i32(&sp_mb, buf_addr - (uint32_t)(uintptr_t)taskbar_buf);
+    cp_put_i32(&sp_mb, w);
+    cp_put_i32(&sp_mb, h);
+    cp_put_i32(&sp_mb, w * 4);
+    cp_put_i32(&sp_mb, 0);   /* xrgb8888 */
+    sp_send(sp_id_pool, CP_POOL_CREATE_BUFFER);
+    *buf_out = id_buf;
+
+    id_surf = cp_objmap_new_id(&sp_map);
+    sp_req(sp_id_comp, CP_COMPOSITOR_CREATE_SURFACE);
+    cp_put_u32(&sp_mb, id_surf);
+    sp_send(sp_id_comp, CP_COMPOSITOR_CREATE_SURFACE);
+
+    /* WM privilege: place the surface before first commit */
+    sp_req(id_surf, CP_SURFACE_SET_POSITION);
+    cp_put_i32(&sp_mb, sx);
+    cp_put_i32(&sp_mb, sy);
+    sp_send(id_surf, CP_SURFACE_SET_POSITION);
+
+    sp_req(id_surf, CP_SURFACE_ATTACH);
+    cp_put_u32(&sp_mb, id_buf);
+    sp_send(id_surf, CP_SURFACE_ATTACH);
+
+    sp_req(id_surf, CP_SURFACE_DAMAGE);
+    cp_put_i32(&sp_mb, 0);
+    cp_put_i32(&sp_mb, 0);
+    cp_put_i32(&sp_mb, w);
+    cp_put_i32(&sp_mb, h);
+    sp_send(id_surf, CP_SURFACE_DAMAGE);
+
+    sp_req(id_surf, CP_SURFACE_COMMIT);
+    sp_send(id_surf, CP_SURFACE_COMMIT);
+    *surf_out = id_surf;
+    return 0;
+}
+
+/* Push one full-surface damage+commit for a chrome surface. */
+static void sprach_proto_repaint(uint32_t surf, int32_t w, int32_t h)
+{
+    sp_req(surf, CP_SURFACE_DAMAGE);
+    cp_put_i32(&sp_mb, 0);
+    cp_put_i32(&sp_mb, 0);
+    cp_put_i32(&sp_mb, w);
+    cp_put_i32(&sp_mb, h);
+    sp_send(surf, CP_SURFACE_DAMAGE);
+    sp_req(surf, CP_SURFACE_COMMIT);
+    sp_send(surf, CP_SURFACE_COMMIT);
+}
 
 int sprach_create_taskbar(struct sprach_ctx *ctx)
 {
@@ -2339,10 +2552,36 @@ void _start(void)
 
     /* Create chrome surfaces: taskbar first, then menubar.
      * Menubar gets higher slot → composited on top by Copland. */
-    if (sprach_create_taskbar(&ctx) != 0)
-        ser_puts("[SPRACH] warning: taskbar creation failed\n");
-    if (sprach_create_menubar(&ctx) != 0)
-        ser_puts("[SPRACH] warning: menubar creation failed\n");
+    sp_proto_ready = (sprach_proto_connect() == 0);
+    if (sp_proto_ready)
+        ser_puts("[SPRACH] WM identity claimed (new protocol)\n");
+    else
+        ser_puts("[SPRACH] new protocol unavailable, legacy surfaces\n");
+    if (sp_proto_ready) {
+        /* Chrome on the new protocol: menubar (top) then taskbar
+         * (bottom; created last → higher z in the legacy pass too,
+         * irrelevant here since these live outside the shm slots). */
+        if (sprach_proto_chrome(&sp_id_mb_surf, &sp_id_mb_buf,
+                                (uint32_t)(uintptr_t)menubar_buf,
+                                0, 0, SCREEN_W, MENUBAR_H) == 0
+            && sprach_proto_chrome(&sp_id_tb_surf, &sp_id_tb_buf,
+                                   (uint32_t)(uintptr_t)taskbar_buf,
+                                   0, SCREEN_H - TASKBAR_H,
+                                   SCREEN_W, TASKBAR_H) == 0) {
+            ctx.menubar_slot = -2;   /* sentinel: proto-backed */
+            ctx.taskbar_slot = -2;
+        } else {
+            sp_proto_ready = 0;
+            ser_puts("[SPRACH] chrome surface creation failed,"
+                     " legacy fallback\n");
+        }
+    }
+    if (!sp_proto_ready) {
+        if (sprach_create_taskbar(&ctx) != 0)
+            ser_puts("[SPRACH] warning: taskbar creation failed\n");
+        if (sprach_create_menubar(&ctx) != 0)
+            ser_puts("[SPRACH] warning: menubar creation failed\n");
+    }
     if (sprach_create_clock_popup(&ctx) != 0)
         ser_puts("[SPRACH] warning: clock popup creation failed\n");
     if (sprach_create_app_menu(&ctx) != 0)
@@ -2461,7 +2700,18 @@ void _start(void)
             sprach_commit_layout(&ctx);
             shm->dirty = 1;
         } else if (taskbar_repainted || menubar_repainted) {
-            shm->dirty = 1;
+            if (sp_proto_ready) {
+                /* New-protocol chrome: push damage+commit instead
+                 * of the legacy full-screen dirty flag. */
+                if (taskbar_repainted)
+                    sprach_proto_repaint(sp_id_tb_surf,
+                                         SCREEN_W, TASKBAR_H);
+                if (menubar_repainted)
+                    sprach_proto_repaint(sp_id_mb_surf,
+                                         SCREEN_W, MENUBAR_H);
+            } else {
+                shm->dirty = 1;
+            }
         } else if ((ctx.tick % SPRACH_ANIM_TICKS) == 0) {
             shm->dirty = 1;
         }

@@ -178,6 +178,11 @@ surface 状态分 **pending**（请求修改）与 **current**（合成器使用
 **set_input_region(opcode 5)**：`region` (object, copland_region, 可空)
 - 可接收指针事件的区域。空 region（NULL）= 无穷（整面收输入）。
 
+**set_position(opcode 7)**：`x`, `y` (int，屏幕坐标)
+- WM 专用（阶段 3 布局扩展，见 §15）：设定 surface 的屏幕位置。
+  非 WM 客户端调用时服务器发 error(access_denied) 并忽略。
+  位置在下一个 commit 时生效（与其他 pending 状态同批原子提升）。
+
 **commit(opcode 6)**
 - 原子地把 pending 状态提升为 current，形成一个内容更新（CU）。
 - CU 排入该 surface 的更新队列，在下一个帧周期统一应用（见
@@ -273,13 +278,18 @@ surface 状态分 **pending**（请求修改）与 **current**（合成器使用
 
 ## 15. WM（Sprach）专用扩展
 
-Sprach 作为**特殊客户端**管理布局。服务器为绑定了 compositor 的
-客户端中标记为 WM 的那个（绑定 registry name 1 时携带 WM 旗标的
-约定：Sprach 绑定 seat 后第一个调用 set_cursor/或绑定 compositor）
-保留布局权：
+Sprach 作为**特殊客户端**管理布局。WM 判定：**第一个成功绑定
+copland_compositor 的客户端即获得 WM 身份**（服务器在 bind 时记录
+client_id，连接断开时释放；后续 compositor 绑定为普通客户端）。
+
+WM 权限：
+- **surface.set_position（§8 opcode 7）**：任意 surface 的屏幕位置
+  （含其他客户端的 surface）。非 WM 调用 → error(access_denied)。
 - v1 布局仍由服务器实现 surface 的屏幕位置（见 spec-event-flow §4
   的位置来源），Sprach 通过创建装饰 surface 并摆放它们来表现窗口
-  框架，客户端 surface 的位置由 Sprach 的 MOVE 命令（保留在旧
-  cmd 环，见 spec-wire-format §6 兼容层）驱动。
+  框架，客户端 surface 的位置由 set_position（新协议）或 MOVE 命令
+  （保留在旧 cmd 环，见 spec-wire-format §6 兼容层）驱动。
+- Z 序仍由服务器维护（映射顺序）+ Alt+Tab 轮换 + 点击隐式提升；
+  v1 无 set_z_order 请求（阶段 3 后期若需要须先修订本文档）。
 
 （阶段 3 落地时若需要更细的 WM 协议接口，须先修订本文档。）

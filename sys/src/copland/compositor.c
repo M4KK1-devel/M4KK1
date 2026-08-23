@@ -193,6 +193,7 @@ cp_compositor_init(struct cp_compositor *c)
 	c->frame_dirty = 0;
 	c->zcount = 0;
 	c->serial = 0;
+	c->wm_client_id = 0;
 }
 
 int
@@ -304,6 +305,12 @@ cp_handle_registry(struct cp_compositor *c, struct cp_client *cl,
 				cp_evt_begin(&m, id, CP_SHM_FORMAT);
 				cp_put_u32(&m, 0);  /* xrgb8888 */
 				cp_evt_send(cl, &m);
+			} else if (iface == CP_IF_COMPOSITOR) {
+				/* WM identity (spec §15): the FIRST client that
+				 * binds copland_compositor owns the layout
+				 * privilege (surface.set_position). */
+				if (c->wm_client_id == 0)
+					c->wm_client_id = cl->client_id;
 			} else if (iface == CP_IF_SEAT) {
 				cp_evt_begin(&m, id, CP_SEAT_CAPABILITIES);
 				cp_put_u32(&m, 3);  /* pointer + keyboard */
@@ -368,6 +375,7 @@ cp_handle_compositor(struct cp_compositor *c, struct cp_client *cl,
 			s->dmg_h = 0;
 			s->pdmg_w = 0;
 			s->pdmg_h = 0;
+			s->pend_pos = 0;
 			s->mapped = 0;
 			s->visible = 0;
 			s->has_input_region = 0;
@@ -662,6 +670,7 @@ cp_handle_surface(struct cp_compositor *c, struct cp_client *cl,
 	}
 	case CP_SURFACE_COMMIT: {
 		uint32_t old = s->buffer_obj;
+		int32_t old_x = s->x, old_y = s->y;
 
 		s->buffer_obj = s->pending_buffer;
 		s->pending_buffer = 0;
@@ -683,6 +692,15 @@ cp_handle_surface(struct cp_compositor *c, struct cp_client *cl,
 					       s->w, s->h);
 			}
 		}
+		/* Pending WM position applies atomically with the CU
+		 * (spec §8 set_position: effective on next commit). */
+		if (s->pend_pos) {
+			s->x = s->pend_x;
+			s->y = s->pend_y;
+			s->pend_pos = 0;
+			cp_frame_accum(c, old_x, old_y, s->w, s->h);
+			cp_frame_accum(c, s->x, s->y, s->w, s->h);
+		}
 		if (s->pdmg_w > 0) {
 			s->dmg_x = s->pdmg_x;
 			s->dmg_y = s->pdmg_y;
@@ -695,6 +713,26 @@ cp_handle_surface(struct cp_compositor *c, struct cp_client *cl,
 			cp_evt_begin(&m, old, CP_BUFFER_RELEASE);
 			cp_evt_send(cl, &m);
 		}
+		break;
+	}
+	case CP_SURFACE_SET_POSITION: {
+		int32_t x = cp_get_i32(r);
+		int32_t y = cp_get_i32(r);
+
+		/* WM-only (spec §15): the first compositor-bound
+		 * client owns the layout privilege. */
+		if (c->wm_client_id == 0 ||
+		    c->wm_client_id != cl->client_id) {
+			cp_evt_begin(&m, CP_ID_DISPLAY,
+				     CP_DISPLAY_ERROR);
+			cp_put_u32(&m, obj);
+			cp_put_u32(&m, CP_ERR_ACCESS_DENIED);
+			cp_evt_send(cl, &m);
+			break;
+		}
+		s->pend_x = x;
+		s->pend_y = y;
+		s->pend_pos = 1;   /* applied on next COMMIT */
 		break;
 	}
 	default:
@@ -839,6 +877,14 @@ cp_compositor_dispatch(struct cp_compositor *c, struct cp_client *cl)
 	    | ((uint32_t)cp_scratch[5] << 8);
 	iface = (uint8_t)cp_objmap_iface(&cl->map, obj);
 	cp_reader_init(&r, cp_scratch, (uint32_t)rc);
+	/* WM layout channel (spec §15): set_position addresses
+	 * server-global surface ids, which may belong to OTHER
+	 * clients and are therefore absent from the WM's object
+	 * map.  Route it ahead of the per-client iface gate. */
+	if (opcode == CP_SURFACE_SET_POSITION) {
+		cp_handle_surface(c, cl, obj, opcode, &r);
+		return 1;
+	}
 	switch (iface) {
 	case CP_IF_DISPLAY:
 		cp_handle_display(c, cl, opcode, &r);
