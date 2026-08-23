@@ -497,12 +497,19 @@ void mkrn_vesa_clear(uint32_t color)
         return;
 
     /* rep stosl fill: 1024x600x4 = 2.4MB per clear — the per-pixel
-     * C loop dominated boot and window-drag redraw paths. */
+     * C loop dominated boot and window-drag redraw paths.
+     * NOTE: the fill pointer is a LOCAL copy — with "+D"(back_buffer)
+     * the advanced post-rep EDI was written back into the global,
+     * so every clear started 1.9MB further up, walking the fill
+     * straight over buddy free-list nodes stored in free pages
+     * (phase-3 fork double-issue root cause). */
     uint32_t pixels = fb_info.width * fb_info.height;
+    uint32_t *dst = back_buffer;
     __asm__ volatile("cld; rep stosl"
-        : "+c"(pixels), "+D"(back_buffer)
+        : "+c"(pixels), "+D"(dst)
         : "a"(color)
         : "memory");
+    (void)dst;
 }
 
 /* ── Phase 2: Drawing primitives ── */

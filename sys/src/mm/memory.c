@@ -382,9 +382,7 @@ mkrn_memory_free(void *pPtr)
 void *
 mkrn_memory_alloc_page(size_t pages)
 {
-    uint32_t u32Address = allocate_pages(
-        (uint32_t)pages);
-    return (void *)(uintptr_t)u32Address;
+    return (void *)(uintptr_t)allocate_pages((uint32_t)pages);
 }
 
 void
