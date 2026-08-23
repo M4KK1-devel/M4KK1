@@ -163,7 +163,15 @@ int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
     mkrn_console_write_hex(ehdr->e_entry);
     mkrn_console_write("\n");
 
-    u32 *stack = (u32 *)mkrn_alloc(M4K_STACK_SIZE);
+    /* User stack from the buddy zone, NOT mkrn_alloc: the linker heap
+     * ends near 0x300000 and a 64KB block allocated at its tail
+     * straddles into the buddy range — the buddy allocator does not
+     * know about heap-resident pages and hands the same range to the
+     * next fork kstack/ustack, smearing this frame mid-syscall
+     * (observed: te+0x14 overwritten with a syscall number, resume
+     * PC = heap garbage).  Buddy pages are exclusive by construction. */
+    u32 *stack = (u32 *)mkrn_memory_alloc_page(
+        (M4K_STACK_SIZE + 0xFFF) >> 12);
     if (!stack) {
         M4K_LOG_ERROR("execve: failed to allocate stack");
         return -1;
@@ -191,17 +199,41 @@ int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
     *--sp = 0;                              /* sched ebx */
 
     init->thread_esp = (u32)sp;
-    init->state_tags = M4K_SCHED_READY;
+    /* RUNNING, not READY: this process is on the CPU right now (it
+     * just replaced its own image).  A bare READY tag makes
+     * mkrn_process_switch_pick's re-enqueue condition
+     * (`state_tags & M4K_SCHED_RUNNING`) fail on its next yield —
+     * the process is silently dropped from the ready queue and never
+     * scheduled again (the "sprach vanishes after banner" bug: fork
+     * child execs, runs to its first yield, gone). */
+    init->state_tags = M4K_SCHED_RUNNING;
 
     /* Release the replaced image's user stack (idle's pre-init frame
      * or a fork child's private copy); the new frame above is the only
-     * live reference from now on.  Done only here, after every
-     * validation and the new stack allocation succeeded, so a failed
-     * execve leaves the old stack intact. */
-    if (init->user_stack_base) {
+     * live reference from now on.
+     *
+     * DO NOT free a fork-child stack here — see execve.c history:
+     * fork allocates the child's ustack adjacent (and often
+     * contiguous) to its kstack in the buddy zone.  Freeing the old
+     * ustack returns those pages to the buddy pool while the child's
+     * kstack (thread_esp) still lives next door; the very next buddy
+     * allocation (e.g. the next fork's ustack) hands the same pages
+     * back and the fork-time 64KB stack copy smears the parent's live
+     * kernel stack — fork never returns and the CPU walks heap
+     * garbage (mt8 hang, PC observed executing inside
+     * .kernel_heap).  Heap stacks from mkrn_alloc are freed normally
+     * (the linker heap is not page-buddy memory).
+     *
+     * Fork-child buddy stacks (>= 0x3000000) are intentionally
+     * orphaned here (the PCB pointer is replaced below, so nobody
+     * references them anymore); the bounded leak is 64KB per
+     * fork-then-exec cycle — cheap compared to a smeared kernel
+     * stack. */
+    if (init->user_stack_base
+        && init->user_stack_base < 0x3000000u) {
         mkrn_free((void *)init->user_stack_base);
-        init->user_stack_base = 0;
     }
+    init->user_stack_base = 0;
     init->user_stack_base = (u32)stack;
 
     mkrn_console_write("[INFO] execve: init process ready, stack at 0x");
