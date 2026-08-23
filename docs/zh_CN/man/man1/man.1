@@ -1,0 +1,33 @@
+.\" M4KK1 4P1 - man.1
+.TH MAN 1 "2026-08-23" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+man \- 显示手册页
+.SH 概要
+.B man
+[\fI名称\fR] [\fI章节\fR]
+.br
+.B man \-l
+.SH 描述
+显示 M4KK1 手册页。手册页在构建时从 docs/zh_CN/man 打包进内核镜像，
+启动时安装到 /export/share/man/。
+.TP
+.B 名称
+要查询的手册页名称（如 ls、cat、desktop）。
+.TP
+.B 章节
+可选章节号（1\-8）。省略时按 1, 7, 8, 4, 5 顺序搜索。
+.TP
+.B \-l
+列出所有已安装的手册页。
+.SH 示例
+.TP
+.B man ls
+显示 ls 命令的手册页。
+.TP
+.B man desktop 7
+指定显示第 7 章的 desktop 总览页。
+.TP
+.B man \-l
+列出全部手册页。
+.SH 另见
+.BR help (1)

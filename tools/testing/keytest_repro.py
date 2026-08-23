@@ -6,8 +6,8 @@ no modifiers as control."""
 import socket, subprocess, time, json, sys
 
 ISO = "/tmp/mtQ.iso"
-SER = "/tmp/keytest_run6.log"
-PORT = 4466
+SER = "/tmp/keytest_run8.log"
+PORT = 4468
 
 qemu = subprocess.Popen(
     ["qemu-system-i386", "-boot", "d", "-cdrom", ISO, "-m", "512",

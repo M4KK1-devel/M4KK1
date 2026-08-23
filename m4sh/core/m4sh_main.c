@@ -64,6 +64,7 @@ musr_cmd_t musr_cmd_table[] = {
     {"gfx_test",musr_cmd_gfx_test,"Draw graphics test pattern"},
     {"pcc",    musr_cmd_pcc,     "Self-hosted C compiler"},
     {"cc",     musr_cmd_cc,      "C compiler (alias for pcc)"},
+    {"man",    musr_cmd_man,     "Show manual page (man <name>)"},
     {NULL, NULL, NULL}
 };
 

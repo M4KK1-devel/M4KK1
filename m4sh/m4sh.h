@@ -931,6 +931,7 @@ void musr_cmd_userlog(int, char **);
 void musr_cmd_gfx_test(int, char **);
 void musr_cmd_pcc(int, char **);
 void musr_cmd_cc(int, char **);
+void musr_cmd_man(int, char **);
 void musr_boot_setup(void);
 void musr_setup_env(void);
 extern int musr_login_ok;

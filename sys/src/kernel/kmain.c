@@ -665,6 +665,50 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
         }
     }
 
+#ifndef M4K_MINIMAL
+    {
+        /* Manual pages: baked at build time from docs/zh_CN/man into
+         * init/man_pages.c; installed under /export/share/man.
+         * Present in every non-minimal build (cmd-only and full) so
+         * the console shell can use man too. */
+#include "man_pages.h"
+        static const char mp_dirs[][26] = {
+            "/export/share", "/export/share/man",
+            "/export/share/man/man1", "/export/share/man/man2",
+            "/export/share/man/man3", "/export/share/man/man4",
+            "/export/share/man/man5", "/export/share/man/man7",
+            "/export/share/man/man8",
+        };
+        for (int i = 0; i < 9; i++)
+            mkrn_vfs_mkdir(mp_dirs[i]);
+        int installed = 0;
+        for (int p = 0; mkrn_man_pages[p].name; p++) {
+            static char path[80];
+            const char *pre = "/export/share/man/man";
+            mkrn_strcpy(path, pre);
+            int k = mkrn_strlen(path);
+            path[k++] = '0' + (char)mkrn_man_pages[p].section;
+            path[k++] = '/';
+            const char *nm = mkrn_man_pages[p].name;
+            while (*nm && k < 70)
+                path[k++] = *nm++;
+            path[k++] = '.';
+            path[k++] = '0' + (char)mkrn_man_pages[p].section;
+            path[k] = '\0';
+            int fd = mkrn_vfs_open(path, M4K_O_CREAT | M4K_O_WRONLY);
+            if (fd >= 0) {
+                mkrn_vfs_write(fd, mkrn_man_pages[p].data,
+                               (int)mkrn_man_pages[p].len);
+                mkrn_vfs_close(fd);
+                installed++;
+            }
+        }
+        mkrn_console_write("   man pages installed: ");
+        mkrn_console_write_dec(installed);
+        mkrn_console_write("\n");
+    }
+#endif /* M4K_FULL */
+
     mkrn_console_write("10. Loading init...\n");
 #ifndef M4K_MINIMAL
     int exec_ret = mkrn_execve(
