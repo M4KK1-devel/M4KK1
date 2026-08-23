@@ -6,8 +6,8 @@ no modifiers as control."""
 import socket, subprocess, time, json, sys
 
 ISO = "/tmp/mtQ.iso"
-SER = "/tmp/keytest_run5.log"
-PORT = 4465
+SER = "/tmp/keytest_run6.log"
+PORT = 4466
 
 qemu = subprocess.Popen(
     ["qemu-system-i386", "-boot", "d", "-cdrom", ISO, "-m", "512",
@@ -58,8 +58,12 @@ try:
     print("ctrl-alt-T logged:", "Ctrl+Alt+T" in t)
 
     # 2. letters into the (now focused) terminal
+    # NOTE: QMP qcodes are key NAMES, not characters — " " is not a
+    # valid qcode and would be silently rejected (the "missing space"
+    # red herring).  Map the few specials explicitly.
+    QCODE = {" ": "spc", "\n": "ret", "\t": "tab", "\b": "backsp"}
     for ch in "echo hi":
-        key(ch)
+        key(QCODE.get(ch, ch))
     key("ret")
     time.sleep(4)
 
