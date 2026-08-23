@@ -420,7 +420,6 @@ void _start(void)
 
     /* Bring up the Sprach window manager */
     uint32_t last_beat = 0;
-    int stale_ticks = 0;
     int wm_pid = copland_spawn_wm(shm);
 
     /* Phase 2 verification: also start the protocol smoke client.
@@ -503,33 +502,46 @@ void _start(void)
                 /* The clean path performs no syscalls; without an
                  * explicit yield, Sprach never gets CPU to re-set the
                  * dirty flag, the heartbeat freezes, and the watchdog
-                 * kills a healthy WM.  Yield here so Sprach can
-                 * repaint and beat its heart. */
-                m4k_yield();
+                 * kills a healthy WM.  Sleep (hlt) rather than bare
+                 * yield: an interactive storm keeps the command path
+                 * hot, and the watchdog below is time-based, so the
+                 * server loop itself must never out-run the WM's
+                 * 20 ms frame cadence. */
+                m4k_sleep(5);
             }
         }
 
-        /* WM watchdog: if the window manager stops beating its heart,
-         * tear it down and relaunch it.  The WM owns every client
-         * surface, so clear the whole table before relaunching;
-         * otherwise a crashed WM leaks surfaces and the next instance
-         * can never allocate a slot (COPLAND_MAX_SURFACES=16). */
-        if (shm->heartbeat != last_beat) {
-            last_beat = shm->heartbeat;
-            stale_ticks = 0;
-        } else if (++stale_ticks > 60) {
-            ser_puts("[COPLAND] WM heartbeat stalled, restarting Sprach...\n");
-            if (wm_pid > 0)
-                m4k_kill(wm_pid, COPLAND_SIGKILL);
-            for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
-                if (shm->surfaces[i].in_use)
-                    shm->surfaces[i].in_use = 0;
+        /* WM watchdog (time-based): the WM beats once per frame
+         * (~50 FPS).  Under an interactive storm the server loop
+         * iterates orders of magnitude faster than the WM, and an
+         * iteration-count watchdog kills a perfectly healthy WM
+         * (hb still climbing at the kill - observed hb=223).
+         * Judge on wall-clock time instead: no beat change for
+         * 3 s = a genuinely hung WM. */
+        {
+            static uint32_t last_beat_time;
+            static int have_beat_time;
+            if (shm->heartbeat != last_beat) {
+                last_beat = shm->heartbeat;
+                last_beat_time = musr_sc_uptime();
+                have_beat_time = 1;
+            } else if (have_beat_time &&
+                       musr_sc_uptime() - last_beat_time > 3000) {
+                ser_puts("[COPLAND] WM heartbeat stalled (hb=");
+                print_u32(shm->heartbeat);
+                ser_puts("), restarting Sprach...\n");
+                if (wm_pid > 0)
+                    m4k_kill(wm_pid, COPLAND_SIGKILL);
+                for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
+                    if (shm->surfaces[i].in_use)
+                        shm->surfaces[i].in_use = 0;
+                }
+                shm->surface_count = 0;
+                shm->dirty = 1;
+                wm_pid = copland_spawn_wm(shm);
+                last_beat = shm->heartbeat;
+                last_beat_time = musr_sc_uptime();
             }
-            shm->surface_count = 0;
-            shm->dirty = 1;
-            wm_pid = copland_spawn_wm(shm);
-            last_beat = shm->heartbeat;
-            stale_ticks = 0;
         }
 
         /* Coarse frame pacing (no sleep syscall in 4P1) */
