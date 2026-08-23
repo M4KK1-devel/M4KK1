@@ -336,12 +336,19 @@ static void term_spawn_shell(void)
         return;
     }
     if (pid == 0) {
-        /* Child: wire the pipe onto stdin/stdout, close the copies,
-         * then exec the graphical shell in place. */
+        /* Child: wire the pipe onto stdin/stdout, then exec the
+         * graphical shell in place.  NOTE: the 4P1 fd table is a
+         * GLOBAL singleton — mkrn_fork_status(RFFDG) does not copy
+         * it (see process.c) — so the child and parent share the
+         * same entries.  Closing fds[0]/fds[1] here would mark the
+         * shared pipe_buffer read_closed/write_closed and free it
+         * while the parent still polls it (observed: shell output
+         * never arrived, 0 bytes, terminal showed only its own
+         * cursor block).  POSIX-style close-on-exec of the originals
+         * is deliberately skipped: the parent owns fds[0]/fds[1]
+         * and keeps them open for the process lifetime. */
         musr_sc_dup2(fds[0], 0);
         musr_sc_dup2(fds[1], 1);
-        musr_sc_close(fds[0]);
-        musr_sc_close(fds[1]);
         int r = m4k_spawn("/bin/m4shg", 0);
         (void)r;
         m4k_exit(127);       /* exec failed */
