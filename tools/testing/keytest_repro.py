@@ -5,9 +5,9 @@ reach the kernel keyboard buffer. Also test 'esc' and a letter with
 no modifiers as control."""
 import socket, subprocess, time, json, sys
 
-ISO = "/tmp/mtQ.iso"
-SER = "/tmp/keytest_run8.log"
-PORT = 4468
+ISO = "/mnt/f/M4KK1/output/m4kk1_0.0.1_build5-alpha1-full-test.iso"
+SER = "/tmp/keytest_loop1.log"
+PORT = 4474
 
 qemu = subprocess.Popen(
     ["qemu-system-i386", "-boot", "d", "-cdrom", ISO, "-m", "512",

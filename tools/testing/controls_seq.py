@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Controls repro v3: window controls after spawning terminal.
-Sequence:
-  1. far-right launcher -> spawn terminal, wait for slot= registration
-  2. click dock terminal icon -> expect "Dock icon clicked: terminal"
-  3. click terminal window close button (TERMINAL CLOSE)
-  4. click dock terminal icon again -> re-show (window was closed)
-Terminal geometry: need title bar coords. sprach windows: title bar
-buttons at window left; terminal default position from sprach.c.
+"""Full window-controls sequence test (black-box):
+spawn terminal via far-right dock launcher, then exercise every title
+bar button IN THE RIGHT ORDER so each gets validated:
+  MIN (hide) -> dock restore -> MAX (fullscreen) -> RESTORE -> CLOSE.
+Button geometry (sprach.h): window at (60,40); CTRL_Y=4, CTRL_SIZE=10;
+CLOSE x=8, MIN x=22, MAX x=36 → centers: close(73,49) min(87,49) max(101,49).
 """
-import socket, subprocess, sys, time, json
+import socket, subprocess, sys, time, json, os
 
 ISO = "/mnt/f/M4KK1/output/m4kk1_0.0.1_build5-alpha1-full-test.iso"
-SER = "/tmp/ctrl_loop1.log"
-PORT = 4472
+SER = "/tmp/ctrl_seq5.log"
+PORT = 4479
+
+if not os.path.exists(ISO):
+    sys.exit(f"FAIL: ISO missing: {ISO}")
 
 def qmp(s, cmd):
     s.sendall((json.dumps(cmd) + "\n").encode())
@@ -83,7 +84,7 @@ try:
         with open(SER, "rb") as f:
             return f.read().decode(errors="replace")
 
-    # 1. spawn terminal
+    # spawn terminal via far-right dock launcher
     goto(s, 776, 588); time.sleep(0.3); click(s)
     for _ in range(60):
         time.sleep(1)
@@ -92,36 +93,32 @@ try:
     time.sleep(4)
     print("terminal up:", "terminal window registered" in serial())
 
-    # 2. dock terminal icon: after launchpad icon + window icons.
-    # launchpad at x 8..40; window icons start bx=52 pitch 44.
-    # Only terminal exists -> its icon at x 52..84.
-    goto(s, 68, 588); time.sleep(0.3); click(s)
-    time.sleep(2)
-    print("dock focus marker:", "Dock icon clicked: terminal" in serial())
+    # 1. MIN -> expect TERMINAL MIN
+    goto(s, 87, 49); time.sleep(0.3); click(s); time.sleep(2)
+    print("MIN:", "HIT" if "TERMINAL MIN" in serial() else "MISS")
+    # hidden -> restore via terminal dock icon. Dock order: launchpad
+    # (x8..40), then window icons starting bx=52 pitch 44. cptest
+    # claims slot for window 0 at 52..84, cptest fills windows 0+1+2 (bx 52..184), so terminal icon = 184..216.
+    goto(s, 200, 588); time.sleep(0.3); click(s); time.sleep(2)
 
-    # 3. window close button — terminal title bar. Terminal window
-    # default geometry from sprach.c: around x=200,y=100 (guess A);
-    # we will scan: click at leftmost title bar pixel rows.
-    # Instead of guessing, use TERMINAL CLOSE marker via min/close
-    # buttons at title-left. Try a few candidate spots.
-    for (cx, cy) in [(73, 49), (87, 49), (101, 49)]:
-        goto(s, cx, cy); time.sleep(0.3); click(s)
-        time.sleep(1.5)
-        if "TERMINAL CLOSE" in serial() or "TERMINAL MIN" in serial():
-            print(f"window button HIT at ({cx},{cy})")
-            break
-    else:
-        print("window buttons: no hit (geometry unknown)")
-    time.sleep(2)
+    # 2. MAX -> expect TERMINAL MAX
+    goto(s, 101, 49); time.sleep(0.3); click(s); time.sleep(2)
+    print("MAX:", "HIT" if "TERMINAL MAX" in serial() else "MISS")
+
+    # 3. RESTORE (max button again) -> expect TERMINAL RESTORE.
+    # While maximized the window spans the work area (0,24)-(800,600),
+    # so the title bar buttons sit at CTRL offsets from (0,24):
+    # max=(36+5, 24+4+5)=(41,33), close=(8+5,24+4+5)=(13,33).
+    goto(s, 41, 33); time.sleep(0.3); click(s); time.sleep(2)
+    print("RESTORE:", "HIT" if "TERMINAL RESTORE" in serial() else "MISS")
+
+    # 4. CLOSE -> expect TERMINAL CLOSE (back at normal geometry)
+    goto(s, 73, 49); time.sleep(0.3); click(s); time.sleep(2)
+    print("CLOSE:", "HIT" if "TERMINAL CLOSE" in serial() else "MISS")
 
     log = serial()
-    print("---- markers ----")
-    for m in ["dock launch: terminal", "terminal window registered",
-              "Dock icon clicked: terminal", "TERMINAL CLOSE",
-              "TERMINAL MIN", "TERMINAL MAX", "TERMINAL RESTORE"]:
+    print("---- summary ----")
+    for m in ["TERMINAL MIN", "TERMINAL MAX", "TERMINAL RESTORE", "TERMINAL CLOSE"]:
         print(f"{m}: {'HIT' if m in log else 'MISS'}")
-    print("---- tail ----")
-    for line in log.splitlines()[-15:]:
-        print(line)
 finally:
     qemu.kill()

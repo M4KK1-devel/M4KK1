@@ -11,9 +11,9 @@ Coordinates follow sprach.c hit-tests:
 """
 import socket, subprocess, sys, time, json
 
-ISO = "/tmp/mtM.iso"
-SER = "/tmp/ctrl_run1.log"
-PORT = 4451
+ISO = "/mnt/f/M4KK1/output/m4kk1_0.0.1_build5-alpha1-full-test.iso"
+SER = "/tmp/ctrl_loop2.log"
+PORT = 4473
 
 def qmp(s, cmd):
     s.sendall((json.dumps(cmd) + "\n").encode())
