@@ -47,6 +47,10 @@ extern unsigned char m4sh_init_elf[];
 extern unsigned int m4sh_init_elf_len;
 extern unsigned char m4shg_init_elf[];
 extern unsigned int m4shg_init_elf_len;
+#ifdef M4K_TEST_AUTOLOGIN
+extern unsigned char m4sht_init_elf[];
+extern unsigned int m4sht_init_elf_len;
+#endif
 #ifdef M4K_FULL
 extern unsigned char mdm_init_elf[];
 extern unsigned int mdm_init_elf_len;
@@ -379,6 +383,25 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
             mkrn_console_write("   WARNING: failed to create /bin/m4shg\n");
         }
     }
+#ifdef M4K_TEST_AUTOLOGIN
+    /* Serial test shell for headless verification: MDM spawns it
+     * beside the autologin desktop session (see mdm.c).  Linked at
+     * 0xF00000 so it never overlaps live MDM code at 0x800000. */
+    {
+        int fd = mkrn_vfs_open("/bin/m4sht",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, m4sht_init_elf,
+                m4sht_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/m4sht written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/m4sht\n");
+        }
+    }
+#endif
 #endif /* M4K_MINIMAL */
 
 #ifdef M4K_FULL

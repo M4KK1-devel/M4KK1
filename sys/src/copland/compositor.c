@@ -42,18 +42,40 @@ cp_evt_send(struct cp_client *cl, struct cp_msgbuf *m)
 	cp_ring_write(&r, cp_scratch, m->len);
 }
 
-/* ══════════ Object lookup ══════════ */
+/* ══════════ Object lookup ══════════
+ * BUGFIX (client-scoped lookup): every client hands out ids from
+ * the same counter starting at 2 (Wayland-style client-chosen ids,
+ * cp_objmap_new_id), so obj_id 7 means "my 7" to BOTH sprach and
+ * cptest.  The old global scans silently resolved a client's object
+ * to ANOTHER client's object with the same id: sprach's chrome
+ * surface (id 7) attached cptest's buffer/surface, so the dock and
+ * menubar never painted while cptest's 128x128 surface got the
+ * chrome commits.  Buffers and pools are private: always scope the
+ * lookup to the owning client.  Surfaces stay global-unique per
+ * client as a set, but lookup prefers the requesting client's own
+ * object; the WM cross-client set_position path addresses surfaces
+ * by id explicitly (spec §15) and keeps working through the
+ * fallback scan. */
 
 struct cp_surface_state *
 cp_find_surface(struct cp_compositor *c, uint32_t obj_id)
 {
 	int i;
+	struct cp_surface_state *fallback = 0;
 
-	for (i = 0; i < CP_MAX_SURFACES; i++)
-		if (c->surfaces[i].obj_id == obj_id
-		    && c->surfaces[i].obj_id != 0)
-			return &c->surfaces[i];
-	return 0;
+	for (i = 0; i < CP_MAX_SURFACES; i++) {
+		if (c->surfaces[i].obj_id == 0)
+			continue;
+		if (c->surfaces[i].obj_id == obj_id) {
+			if (c->lookup_client_id == 0
+			    || c->surfaces[i].client_id
+			       == c->lookup_client_id)
+				return &c->surfaces[i];
+			if (!fallback)
+				fallback = &c->surfaces[i];
+		}
+	}
+	return fallback;
 }
 
 struct cp_buffer_state *
@@ -63,7 +85,10 @@ cp_find_buffer(struct cp_compositor *c, uint32_t obj_id)
 
 	for (i = 0; i < CP_MAX_BUFFERS; i++)
 		if (c->buffers[i].obj_id == obj_id
-		    && c->buffers[i].obj_id != 0)
+		    && c->buffers[i].obj_id != 0
+		    && (c->lookup_client_id == 0
+			|| c->buffers[i].client_id
+			   == c->lookup_client_id))
 			return &c->buffers[i];
 	return 0;
 }
@@ -75,7 +100,10 @@ cp_find_pool(struct cp_compositor *c, uint32_t obj_id)
 
 	for (i = 0; i < CP_MAX_POOLS; i++)
 		if (c->pools[i].obj_id == obj_id
-		    && c->pools[i].obj_id != 0)
+		    && c->pools[i].obj_id != 0
+		    && (c->lookup_client_id == 0
+			|| c->pools[i].client_id
+			   == c->lookup_client_id))
 			return &c->pools[i];
 	return 0;
 }
@@ -208,10 +236,30 @@ cp_compositor_attach_client(struct cp_compositor *c, struct cp_conn *conn)
 	c->clients[i].client_id = conn->client_id;
 	c->clients[i].active = 1;
 	c->clients[i].protocol_errors = 0;
+	c->clients[i].conn_pid = conn->client_pid;
 	cp_objmap_init(&c->clients[i].map);
 	cp_objmap_insert(&c->clients[i].map, CP_ID_DISPLAY,
 			 CP_IF_DISPLAY);
 	return i;
+}
+
+void
+cp_compositor_set_wm_pid(struct cp_compositor *c, uint32_t pid)
+{
+	/* BUGFIX (WM identity, spec §15): "first bind wins" let the
+	 * protocol smoke client (cptest, spawned before the slower
+	 * sprach ELF finished loading) claim the layout privilege;
+	 * every sprach SET_POSITION got ACCESS_DENIED and both chrome
+	 * surfaces stayed parked at (0,0).  The daemon knows the real
+	 * WM pid (it forked it) — pin the privilege to that pid.  A
+	 * stale holder (e.g. the test client) is revoked here. */
+	c->wm_pid = pid;
+	if (pid != 0 && c->wm_client_id != 0) {
+		struct cp_client *holder =
+		    &c->clients[c->wm_client_id - 1];
+		if (holder->conn_pid != pid)
+			c->wm_client_id = 0;
+	}
 }
 
 /* ══════════ display / registry requests ══════════ */
@@ -306,9 +354,16 @@ cp_handle_registry(struct cp_compositor *c, struct cp_client *cl,
 				cp_put_u32(&m, 0);  /* xrgb8888 */
 				cp_evt_send(cl, &m);
 			} else if (iface == CP_IF_COMPOSITOR) {
-				/* WM identity (spec §15): the FIRST client that
-				 * binds copland_compositor owns the layout
-				 * privilege (surface.set_position). */
+				/* WM identity (spec §15): the layout
+				 * privilege belongs to the daemon-pinned
+				 * WM pid (cp_compositor_set_wm_pid).
+				 * "First bind wins" let the protocol
+				 * smoke client steal it when it attached
+				 * before the slower sprach ELF — see
+				 * the BUGFIX note there. */
+				if (c->wm_pid != 0
+				    && cl->conn_pid != c->wm_pid)
+					break;  /* non-WM bind: no claim */
 				if (c->wm_client_id == 0)
 					c->wm_client_id = cl->client_id;
 			} else if (iface == CP_IF_SEAT) {
@@ -672,8 +727,20 @@ cp_handle_surface(struct cp_compositor *c, struct cp_client *cl,
 		uint32_t old = s->buffer_obj;
 		int32_t old_x = s->x, old_y = s->y;
 
-		s->buffer_obj = s->pending_buffer;
-		s->pending_buffer = 0;
+		/* BUGFIX (buffer lifetime): a commit without a preceding
+		 * attach must KEEP the current buffer (Wayland semantics:
+		 * only an explicit new attach replaces it).  The old
+		 * unconditional assign copied pending_buffer == 0 over
+		 * buffer_obj on every repaint commit, so after the first
+		 * frame the paint pass could never resolve the surface's
+		 * buffer again — wallpaper rendered, chrome silently
+		 * skipped (observed: initial flip with CCCCCC back-buffer
+		 * pixels, then every later flip showed wallpaper 0x44 in
+		 * the menubar rows). */
+		if (s->pending_buffer) {
+			s->buffer_obj = s->pending_buffer;
+			s->pending_buffer = 0;
+		}
 		if (s->buffer_obj) {
 			struct cp_buffer_state *b =
 				cp_find_buffer(c, s->buffer_obj);
@@ -708,6 +775,22 @@ cp_handle_surface(struct cp_compositor *c, struct cp_client *cl,
 			s->dmg_h = s->pdmg_h;
 			s->pdmg_w = 0;
 			s->pdmg_h = 0;
+			/* BUGFIX: a commit on an ALREADY-mapped surface
+			 * must feed the frame accumulator, otherwise
+			 * frame_dirty never sets, the frame branch of
+			 * the daemon tick never runs, and every chrome
+			 * repaint (menubar clock, dock redraw) plus
+			 * client frame callbacks are silently dropped
+			 * (observed: serial=1 frozen, fdirty=0 for
+			 * 300 s, cptest "no 2nd frame callback").
+			 * Damage is buffer-local: translate to screen
+			 * space by the surface position. */
+			cp_frame_accum(c, s->x + s->dmg_x, s->y + s->dmg_y,
+				       s->dmg_w, s->dmg_h);
+		} else if (s->buffer_obj != old) {
+			/* New buffer committed without explicit damage:
+			 * repaint the whole surface. */
+			cp_frame_accum(c, s->x, s->y, s->w, s->h);
 		}
 		if (old && old != s->buffer_obj) {
 			cp_evt_begin(&m, old, CP_BUFFER_RELEASE);
@@ -877,12 +960,16 @@ cp_compositor_dispatch(struct cp_compositor *c, struct cp_client *cl)
 	    | ((uint32_t)cp_scratch[5] << 8);
 	iface = (uint8_t)cp_objmap_iface(&cl->map, obj);
 	cp_reader_init(&r, cp_scratch, (uint32_t)rc);
+	/* Scope object lookups to THIS client while dispatching its
+	 * request (BUGFIX client-scoped lookup). */
+	c->lookup_client_id = cl->client_id;
 	/* WM layout channel (spec §15): set_position addresses
 	 * server-global surface ids, which may belong to OTHER
 	 * clients and are therefore absent from the WM's object
 	 * map.  Route it ahead of the per-client iface gate. */
 	if (opcode == CP_SURFACE_SET_POSITION) {
 		cp_handle_surface(c, cl, obj, opcode, &r);
+		c->lookup_client_id = 0;
 		return 1;
 	}
 	switch (iface) {
@@ -919,8 +1006,10 @@ cp_compositor_dispatch(struct cp_compositor *c, struct cp_client *cl)
 		cp_put_u32(&m, CP_ERR_INVALID_OBJECT);
 		cp_evt_send(cl, &m);
 		cl->protocol_errors++;
+		c->lookup_client_id = 0;
 		return -1;
 	}
+	c->lookup_client_id = 0;
 	return 1;
 }
 
@@ -941,12 +1030,30 @@ cp_compositor_paint(struct cp_compositor *c)
 		s = &c->surfaces[i];
 		if (s->obj_id == 0 || !s->mapped || !s->visible)
 			continue;
+		/* Scope buffer/pool lookup to the surface's owner
+		 * (BUGFIX client-scoped lookup): client-chosen ids
+		 * collide across clients, and the paint path runs
+		 * outside dispatch where lookup_client_id is 0. */
+		c->lookup_client_id = s->client_id;
 		b = cp_find_buffer(c, s->buffer_obj);
-		if (!b)
+		if (!b) {
+			c->lookup_client_id = 0;
 			continue;
+		}
 		p = cp_find_pool(c, b->pool_obj);
+		c->lookup_client_id = 0;
 		if (!p)
 			continue;
+#ifdef CP_PAINT_DEBUG
+		{
+			static int npd;
+			if (npd++ < 10)
+				cp_debug_blit(s->obj_id, s->client_id,
+					s->buffer_obj, b->pool_obj,
+					(uint32_t)p->addr, b->offset,
+					(uint32_t)(p->addr + b->offset));
+		}
+#endif
 		if (cp_backend && cp_backend->blit)
 			cp_backend->blit(s->x, s->y, s->w, s->h,
 			    (const uint8_t *)(uintptr_t)(p->addr

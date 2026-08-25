@@ -148,6 +148,17 @@ static void copland_composite_region(struct copland_shm *shm,
         }
     }
 
+    /* New-protocol surfaces must ride on top of the legacy pass in
+     * the INCREMENTAL path too: this repaint redraws the wallpaper
+     * and every legacy surface in the damaged region, which erases
+     * any chrome (menubar/dock) the protocol compositor previously
+     * blitted there.  Without this call the legacy clock/demo
+     * animation wiped the chrome within one frame of it appearing
+     * (observed: chrome pixels present in sprach BSS, blits running,
+     * screen showing only wallpaper).  paint() blits full surfaces
+     * (bounded overdraw), occlusion stays correct. */
+    cp_compositor_paint(&cp_comp);
+
     m4k_flip_rect(rx, ry, rw, rh);
 }
 
@@ -258,6 +269,19 @@ static void copland_handle_commands(struct copland_shm *shm)
 static void cp_daemon_blit(int x, int y, int w, int h,
 			   const uint8_t *src, uint32_t stride)
 {
+#ifdef COPLAND_FRAME_DEBUG
+    {
+        static int nblit;
+        if (nblit++ < 12) {
+            ser_puts("[COPLAND] blit ");
+            print_u32((uint32_t)x); ser_puts(",");
+            print_u32((uint32_t)y); ser_puts(" ");
+            print_u32((uint32_t)w); ser_puts("x");
+            print_u32((uint32_t)h); ser_puts(" src=0x");
+            print_u32((uint32_t)(uintptr_t)src); ser_puts("\n");
+        }
+    }
+#endif
     /* The kernel blit uses w*4 stride; new-protocol buffers may
      * carry a larger stride.  Row-by-row fallback keeps correctness
      * (v1: only when stride != w*4). */
@@ -289,6 +313,23 @@ static const struct cp_backend cp_daemon_backend = {
     cp_daemon_blit, cp_daemon_fill, cp_daemon_wallpaper
 };
 
+#ifdef CP_PAINT_DEBUG_BRIDGE
+/* bridge: called from compositor.c under CP_PAINT_DEBUG */
+void cp_debug_blit(uint32_t surf, uint32_t client, uint32_t buf,
+                   uint32_t pool, uint32_t paddr, uint32_t poff,
+                   uint32_t src)
+{
+    ser_puts("[PAINT] surf=");  print_u32(surf);
+    ser_puts(" cl=");          print_u32(client);
+    ser_puts(" buf=");         print_u32(buf);
+    ser_puts(" pool=");        print_u32(pool);
+    ser_puts(" addr=0x");      print_u32(paddr);
+    ser_puts(" off=");         print_u32(poff);
+    ser_puts(" => src=0x");    print_u32(src);
+    ser_puts("\n");
+}
+#endif
+
 /* One round of new-protocol service: adopt new connections,
  * dispatch one request per client, and run one frame cycle. */
 static void copland_protocol_tick(void)
@@ -314,6 +355,18 @@ static void copland_protocol_tick(void)
         /* present the damaged region (frame() blits into the
          * back buffer; the legacy path flips full-screen) */
         m4k_flip_rect(fx, fy, fw, fh);
+#ifdef COPLAND_FRAME_DEBUG
+        {
+            static int ndbg;
+            if (ndbg++ < 8) {
+                ser_puts("[COPLAND] frame dmg=");
+                print_u32((uint32_t)fx); ser_puts(",");
+                print_u32((uint32_t)fy); ser_puts(" ");
+                print_u32((uint32_t)fw); ser_puts("x");
+                print_u32((uint32_t)fh); ser_puts("\n");
+            }
+        }
+#endif
     }
 }
 
@@ -421,6 +474,10 @@ void _start(void)
     /* Bring up the Sprach window manager */
     uint32_t last_beat = 0;
     int wm_pid = copland_spawn_wm(shm);
+    /* Pin the layout privilege to the WM process BEFORE any client
+     * (including our own smoke client below) can claim it by racing
+     * the bind. */
+    cp_compositor_set_wm_pid(&cp_comp, (uint32_t)wm_pid);
 
     /* Phase 2 verification: also start the protocol smoke client.
      * It connects through the new connection table, runs the full
@@ -464,6 +521,33 @@ void _start(void)
             had_commands = (shm->cmd_read_idx != saved_r);
         }
         copland_protocol_tick();
+
+        /* Proto-frame telemetry: one line per 30 s wall-clock.  If the
+         * proto frame path stalls (frame callbacks never fire, chrome
+         * never repaints), this pinpoints WHEN it died. */
+        {
+            static uint32_t last_tel;
+            uint32_t now = musr_sc_uptime();
+            if (now - last_tel >= 30000) {
+                int ncl = 0, nmap = 0;
+                for (int i = 0; i < CP_MAX_CLIENTS; i++)
+                    if (cp_comp.clients[i].active)
+                        ncl++;
+                for (int i = 0; i < CP_MAX_SURFACES; i++)
+                    if (cp_comp.surfaces[i].mapped)
+                        nmap++;
+                last_tel = now;
+                ser_puts("[COPLAND] tel serial=");
+                print_u32(cp_comp.serial);
+                ser_puts(" clients=");
+                print_u32((uint32_t)ncl);
+                ser_puts(" mapped=");
+                print_u32((uint32_t)nmap);
+                ser_puts(" fdirty=");
+                ser_puts(cp_comp.frame_dirty ? "1" : "0");
+                ser_puts("\n");
+            }
+        }
 
         if (shm->dirty || had_commands) {
             copland_composite(shm);

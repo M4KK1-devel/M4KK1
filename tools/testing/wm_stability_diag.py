@@ -4,10 +4,14 @@ Reports: WM restart count (serial), heartbeat liveness via serial tail,
 Dock/Bar pixel assertions from periodic screendumps."""
 import socket, subprocess, time, json, sys, os
 
-ISO = "/mnt/f/M4KK1/output/m4kk1_0.0.1_build5-alpha1-full-test.iso"
+import glob
+ISO = (sorted(glob.glob("/mnt/f/M4KK1/output/m4kk1_*-full-test.iso"))
+        or [""])[-1]
 SER = "/tmp/wm_diag_serial.log"
 PORT = 4483
 SHOTS = "/tmp/wm_diag"
+if not ISO:
+    sys.exit("no full-test ISO found")
 
 subprocess.run(["rm", "-f", SER] + [f"{SHOTS}_{i}.ppm" for i in range(4)], check=False)
 

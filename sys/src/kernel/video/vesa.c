@@ -181,6 +181,29 @@ void mkrn_vesa_flip_rect(int x, int y, int w, int h)
     uint32_t *src = back_buffer + y * scr_w + x;
     uint32_t *dst = lfb + y * scr_w + x;
 
+#ifdef M4K_FLIP_DEBUG
+    {
+        static int nflips;
+        if (nflips++ < 16) {
+            extern void mkrn_console_write(const char *);
+            extern void mkrn_console_write_hex(uint32_t);
+            mkrn_console_write("[FLIP] rect ");
+            mkrn_console_write_hex((uint32_t)x);
+            mkrn_console_write(",");
+            mkrn_console_write_hex((uint32_t)y);
+            mkrn_console_write(" ");
+            mkrn_console_write_hex((uint32_t)w);
+            mkrn_console_write("x");
+            mkrn_console_write_hex((uint32_t)h);
+            mkrn_console_write(" bb_px=");
+            mkrn_console_write_hex(src[0]);
+            mkrn_console_write(" lfb_px_before=");
+            mkrn_console_write_hex(dst[0]);
+            mkrn_console_write("\n");
+        }
+    }
+#endif
+
     for (int row = 0; row < h; row++) {
         uint32_t pixels = (uint32_t)w;
         uint32_t *s = src + row * scr_w;

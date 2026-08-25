@@ -73,7 +73,7 @@ case "$BUILD_MODE" in
     cmd-only)  MODE_DEFINES="-DM4K_CMD_ONLY";  NEED_USER=1; NEED_GRAPHICS=0; NEED_RECOVERY=0 ;;
     recovery)  MODE_DEFINES="-DM4K_RECOVERY -DM4K_CMD_ONLY"; NEED_USER=1; NEED_GRAPHICS=0; NEED_RECOVERY=1 ;;
     full)      MODE_DEFINES="-DM4K_FULL";      NEED_USER=1; NEED_GRAPHICS=1; NEED_RECOVERY=0 ;;
-    full-test) MODE_DEFINES="-DM4K_FULL -DM4K_TEST_AUTOLOGIN"; NEED_USER=1; NEED_GRAPHICS=1; NEED_RECOVERY=0 ;;
+    full-test) MODE_DEFINES="-DM4K_FULL -DM4K_TEST_AUTOLOGIN -DM4SH_NO_LOGIN_GATE"; NEED_USER=1; NEED_GRAPHICS=1; NEED_RECOVERY=0 ;;
     *) echo "ERROR: Invalid build mode '$BUILD_MODE'" >&2; exit 1 ;;
 esac
 echo "=== Build mode: $BUILD_MODE ==="
@@ -258,6 +258,21 @@ $LD -m elf_i386 -T m4sh/m4shg.ld -nostdlib -z max-page-size=0x1000 -o m4sh/m4shg
 echo "   M4SHG ELF: m4sh/m4shg.elf ($(stat -c%s m4sh/m4shg.elf) bytes)"
 find m4sh usr/src/cmd -name '*.g.o' -type f -delete
 
+echo "=== Building M4SHT (serial test shell, full-test builds) ==="
+# Same sources as m4sh, but linked at 0xF00000: MDM itself occupies
+# 0x800000, so spawning a second m4sh there overwrites live MDM code
+# (observed: EIP in set_env mid-instruction -> GPF).  This variant is
+# spawned by MDM under M4K_TEST_AUTOLOGIN for headless shell tests.
+OBJS_T=""
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/lib/*' | sort); do
+    o="${f%.c}.t.o"
+    $UCC $M4SH_CFLAGS -DM4SH_NO_LOGIN_GATE -c "$f" -o "$o"
+    OBJS_T="$OBJS_T $o"
+done
+$LD -m elf_i386 -T m4sh/m4sht.ld -nostdlib -z max-page-size=0x1000 -o m4sh/m4sht.elf $OBJS_T $PCC_RUNTIME
+echo "   M4SHT ELF: m4sh/m4sht.elf ($(stat -c%s m4sh/m4sht.elf) bytes)"
+find m4sh usr/src/cmd -name '*.t.o' -type f -delete
+
 echo "=== Building standalone login ELF ==="
 $UCC $M4SH_CFLAGS -c m4sh/login/login_standalone.c -o m4sh/login/login_standalone.o
 $UCC $M4SH_CFLAGS -c m4sh/lib/pwd.c -o m4sh/lib/pwd_login.o
@@ -390,6 +405,13 @@ sed 's/m4sh_m4shg_elf/m4shg_init_elf/g; s/m4sh_m4shg_elf_len/m4shg_init_elf_len/
 rm -f init/m4shg_elf_.c
 echo "   Generated init/m4shg_elf.c"
 
+if [ "$BUILD_MODE" = "full-test" ] && [ -f m4sh/m4sht.elf ]; then
+xxd -i m4sh/m4sht.elf > init/m4sht_elf_.c
+sed 's/m4sh_m4sht_elf/m4sht_init_elf/g; s/m4sh_m4sht_elf_len/m4sht_init_elf_len/g' init/m4sht_elf_.c > init/m4sht_elf.c
+rm -f init/m4sht_elf_.c
+echo "   Generated init/m4sht_elf.c"
+fi
+
 xxd -i m4sh/login/login.elf > init/login_elf_.c
 sed 's/m4sh_login_login_elf/login_init_elf/g; s/m4sh_login_login_elf_len/login_init_elf_len/g' init/login_elf_.c > init/login_elf.c
 rm -f init/login_elf_.c
@@ -480,6 +502,9 @@ if [ "$NEED_USER" = 1 ]; then
 cp -f m4sh/m4sh.elf ./usr/bin/m4sh
 cp -f m4sh/login/login.elf ./usr/bin/login
 cp -f init/init.elf ./usr/bin/init
+if [ -f m4sh/m4sht.elf ]; then
+    cp -f m4sh/m4sht.elf ./usr/bin/m4sht
+fi
 fi
 if [ "$NEED_GRAPHICS" = 1 ]; then
 cp -f usr/src/cmd/mdm.elf ./usr/bin/mdm
@@ -512,6 +537,9 @@ if [ "$NEED_USER" = 1 ]; then
 $KCC $CFLAGS -c init/init_elf.c -o $OBJDIR/init_elf.o
 $KCC $CFLAGS -c init/m4sh_elf.c -o $OBJDIR/m4sh_elf.o
 $KCC $CFLAGS -c init/m4shg_elf.c -o $OBJDIR/m4shg_elf.o
+if [ "$BUILD_MODE" = "full-test" ] && [ -f init/m4sht_elf.c ]; then
+    $KCC $CFLAGS -c init/m4sht_elf.c -o $OBJDIR/m4sht_elf.o
+fi
 $KCC $CFLAGS -c init/login_elf.c -o $OBJDIR/login_elf.o
 fi
 if [ "$NEED_GRAPHICS" = 1 ]; then
@@ -608,6 +636,9 @@ if [ "$NEED_USER" = 1 ]; then
     $OBJDIR/m4shg_elf.o \
     $OBJDIR/login_elf.o \
     $OBJDIR/man_pages.o"
+    if [ "$BUILD_MODE" = "full-test" ] && [ -f $OBJDIR/m4sht_elf.o ]; then
+        KRN_OBJS="$KRN_OBJS $OBJDIR/m4sht_elf.o"
+    fi
 fi
 if [ "$NEED_RECOVERY" = 1 ]; then
     if [ -f $OBJDIR/fsck_elf.o ]; then

@@ -637,7 +637,7 @@ static int sprach_proto_connect(void)
      * carries COPLAND_CONN_MAGIC and cp_client_connect refuses it
      * ("new protocol unavailable, legacy surfaces"). */
     cp_client_conn_init(&sp_conn);
-    if (cp_client_connect(&sp_conn, 0) < 0)
+    if (cp_client_connect(&sp_conn, (uint32_t)m4k_getpid()) < 0)
         return -1;
     cp_objmap_init(&sp_map);
 
@@ -696,6 +696,13 @@ static int sprach_proto_chrome(uint32_t *surf_out, uint32_t *buf_out,
         uint32_t base = (uint32_t)(uintptr_t)taskbar_buf;
         uint32_t end = (uint32_t)(uintptr_t)menubar_buf
                      + SCREEN_W * MENUBAR_H * 4;
+#ifdef SPRACH_POOL_DEBUG
+        ser_puts("[SPRACH] pool base=0x");
+        print_u32(base);
+        ser_puts(" end=0x");
+        print_u32(end);
+        ser_puts("\n");
+#endif
         sp_id_pool = cp_objmap_new_id(&sp_map);
         sp_req(sp_id_shm, CP_SHM_CREATE_POOL);
         cp_put_u32(&sp_mb, sp_id_pool);
@@ -2590,11 +2597,22 @@ void _start(void)
         ser_puts("[SPRACH] warning: launchpad creation failed\n");
 
     /* Initial full draw + composite */
+    ser_puts("[SPRACH] painting initial scene (");
+    print_u32(SPRACH_WINDOW_COUNT);
+    ser_puts(" windows)\n");
     for (int i = 0; i < SPRACH_WINDOW_COUNT; i++) {
         if (ctx.wins[i].slot >= 0 && !ctx.wins[i].hidden)
             sprach_paint_window(&ctx, &ctx.wins[i]);
     }
+    ser_puts("[SPRACH] Dock init OK (taskbar painted, proto=");
+    ser_puts(sp_proto_ready ? "1" : "0");
+    ser_puts(", slot=");
+    print_u32((uint32_t)ctx.taskbar_slot);
+    ser_puts(")\n");
     sprach_draw_taskbar(&ctx);
+    ser_puts("[SPRACH] Bar init OK (menubar painted, slot=");
+    print_u32((uint32_t)ctx.menubar_slot);
+    ser_puts(")\n");
     sprach_draw_menubar(&ctx);
     sprach_commit_layout(&ctx);
     shm->dirty = 1;
@@ -2602,6 +2620,7 @@ void _start(void)
     ser_puts("[SPRACH] mode '");
     ser_puts(sprach_mode_name());
     ser_puts("' initialized\n");
+    ser_puts("[SPRACH] Entering main loop\n");
 
     /*
      * ── MAIN LOOP (refactored) ──

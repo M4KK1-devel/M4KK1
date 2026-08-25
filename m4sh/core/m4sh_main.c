@@ -65,6 +65,9 @@ musr_cmd_t musr_cmd_table[] = {
     {"pcc",    musr_cmd_pcc,     "Self-hosted C compiler"},
     {"cc",     musr_cmd_cc,      "C compiler (alias for pcc)"},
     {"man",    musr_cmd_man,     "Show manual page (man <name>)"},
+    {"eval",   musr_cmd_eval,    "Evaluate arguments as a command"},
+    {"shift",  musr_cmd_shift,   "Shift positional parameters"},
+    {"trap",   musr_cmd_trap,    "Trap signals (trap CMD INT|TERM|EXIT|ERR)"},
     {NULL, NULL, NULL}
 };
 
@@ -85,12 +88,16 @@ static int expand_vars(char *out, const char *in, int osize)
     while (*in && oi < osize - 1) {
         if (*in == '\'' && !in_double_quote) {
             in_single_quote = !in_single_quote;
-            in++;
+            /* pass the quote through: tokenize_quoted() performs
+             * the actual argument grouping — stripping it here
+             * would word-split quoted arguments (e.g. trap "cmd"
+             * INT would see 'cmd' words as separate argv slots) */
+            out[oi++] = *in++;
             continue;
         }
         if (*in == '"' && !in_single_quote) {
             in_double_quote = !in_double_quote;
-            in++;
+            out[oi++] = *in++;   /* keep for tokenize_quoted() */
             continue;
         }
         if (*in == '$' && !in_single_quote) {
@@ -192,7 +199,8 @@ static int tokenize_quoted(char *s, char **av, int mx)
     return ac;
 }
 
-static int last_exit_code = 0;
+/* last_exit_code moved to global scope for eval/trap (m4sh_main.c) */
+extern int last_exit_code;
 
 static void exec_one(const char *line)
 {
@@ -403,6 +411,15 @@ static void run_pipeline(char *cmdline)
     }
 }
 
+static void execute_command_list(char *line);
+
+int last_exit_code = 0;   /* visible to eval/trap (was file-static) */
+
+void musr_exec_line(char *line)
+{
+    execute_command_list(line);
+}
+
 static void execute_command_list(char *line)
 {
     char *commands[32];
@@ -608,6 +625,10 @@ static void handle_key(char ch)
         return;
     }
     if (ch == 0x03) {
+        /* Ctrl-C: fire the INT trap if armed (shell-layer signal
+         * interception — the kernel has no user-space handlers),
+         * then clear the line as usual. */
+        musr_trap_fire("INT");
         cmd_len = 0;
         cmd_buf[0] = '\0';
         ser_puts("^C\n");
@@ -673,6 +694,12 @@ void _start(void)
      * the logged-in session — skip the serial login gate and the
      * boot-setup path entirely; go straight to the prompt on the
      * pipe. */
+    musr_login_ok = 1;
+#elif defined(M4SH_NO_LOGIN_GATE)
+    /* Test builds (autologin ISO): spawned by MDM with the session
+     * credentials already set — skip the interactive serial login
+     * gate; it would deadlock (no serial input) and crash inside
+     * the password prompt path. */
     musr_login_ok = 1;
 #else
     if (m4k_geteuid() == 0) {

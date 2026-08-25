@@ -936,3 +936,15 @@ void musr_boot_setup(void);
 void musr_setup_env(void);
 extern int musr_login_ok;
 void musr_at_check_jobs(void);
+
+/* ── flow.c: eval / shift / trap ── */
+extern int last_exit_code;
+void musr_exec_line(char *line);
+extern char musr_pos_args[9][128];
+void musr_set_args(int ac, char **av);
+int  musr_pos_param(int n, char *out, int osize);
+void musr_cmd_eval(int ac, char **av);
+void musr_cmd_shift(int ac, char **av);
+void musr_cmd_trap(int ac, char **av);
+void musr_trap_fire(const char *name);
+void musr_trap_on_exit(void);

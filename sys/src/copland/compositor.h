@@ -94,6 +94,10 @@ struct cp_client {
 	struct cp_conn *conn;
 	struct cp_objmap map;
 	uint32_t client_id;
+	/* pid of the attached process (from cp_conn.client_pid) —
+	 * used to pin the WM layout privilege to the daemon-spawned
+	 * sprach process (spec §15), not "first bind wins". */
+	uint32_t conn_pid;
 	uint8_t  active;
 	/* error counters for diagnostics */
 	uint32_t protocol_errors;
@@ -116,10 +120,18 @@ struct cp_compositor {
 	uint32_t zcount;
 	/* Serial counter for input events. */
 	uint32_t serial;
+	/* Lookup scope (BUGFIX client-scoped lookup): set to the
+	 * dispatching client's id while handling its request, 0 for
+	 * server-internal global scans.  See the object-lookup note. */
+	uint32_t lookup_client_id;
 	/* WM identity (spec §15): the FIRST client that successfully
 	 * binds copland_compositor owns the layout privilege.  0 = none;
 	 * cleared when that client's connection is torn down. */
 	uint32_t wm_client_id;
+	/* PID pinned by the daemon via cp_compositor_set_wm_pid():
+	 * only a compositor bind from THIS pid may claim the layout
+	 * privilege (see the WM-identity BUGFIX note). */
+	uint32_t wm_pid;
 };
 
 /* ── Backend hooks (implemented by the daemon; NULL = no-op) ── */
@@ -144,7 +156,9 @@ void cp_compositor_set_backend(struct cp_compositor *c,
 /* Attach a newly discovered connection (adopted via
  * cp_conn_table_poll).  Returns client index or -1. */
 int  cp_compositor_attach_client(struct cp_compositor *c,
-				 struct cp_conn *conn);
+				struct cp_conn *conn);
+/* Pin the WM layout privilege to the daemon-spawned WM pid (§15). */
+void cp_compositor_set_wm_pid(struct cp_compositor *c, uint32_t pid);
 
 /* Dispatch ONE message from a client's request ring.
  * Returns:

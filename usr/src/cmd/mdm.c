@@ -167,6 +167,21 @@ static void launch_desktop(void) {
     }
     session_copland_pid = pid;
 
+#ifdef M4K_TEST_AUTOLOGIN
+    /* Test builds only: the autologin session has no interactive
+     * login, so spawn a serial m4sh alongside the desktop for
+     * headless shell verification (QMP keyboard -> serial).  It
+     * shares the session credentials and dies with the session. */
+    {
+        int sp = musr_sc_fork();
+        if (sp == 0) {
+            int r = m4k_spawn("/bin/m4sht", 0);
+            (void)r;
+            m4k_exit(1);
+        }
+    }
+#endif
+
     /* Wait for the desktop session to end (non-blocking poll loop) */
     for (;;) {
         int st;
