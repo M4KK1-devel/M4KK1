@@ -1,4 +1,8 @@
-/*
+#!/usr/bin/env python3
+"""Emit sys/src/net/tcp.c (minimal TCP client) atomically."""
+import os
+
+BODY = r'''/*
  * M4KK1 4P1 - tcp.c
  * Description: Minimal TCP client-side implementation: SYN connect,
  * established send/receive with a single in-order byte stream per
@@ -93,7 +97,7 @@ static int tcp_emit(tcp_conn_t *c, uint8_t flags,
 {
     static uint8_t pkt[TCP_RX_BUF + 64];
     tcp_header_t *h = (tcp_header_t *)pkt;
-    if ((uint16_t)(20 + len) > (uint16_t)sizeof(pkt))
+    if (20 + len > sizeof(pkt))
         return -1;
     h->src_port = htons(c->local_port);
     h->dst_port = htons(c->remote_port);
@@ -106,8 +110,8 @@ static int tcp_emit(tcp_conn_t *c, uint8_t flags,
     h->urgent = 0;
     for (uint16_t i = 0; i < len; i++)
         pkt[20 + i] = data[i];
-    h->checksum = tcp_checksum(htonl(mkrn_net_get_ip()),
-                               htonl(c->remote_ip), pkt, 20 + len);
+    h->checksum = tcp_checksum(mkrn_net_get_ip(), c->remote_ip, pkt,
+                               20 + len);
     /* data consumes sequence space */
     if (flags & TCP_SYN)
         c->snd_nxt++;
@@ -157,7 +161,7 @@ int mkrn_tcp_send(int id, const uint8_t *data, int len)
         if (chunk > 1000)
             chunk = 1000;
         if (tcp_emit(c, TCP_ACK | TCP_PSH, data + off,
-                     (uint16_t)chunk) != 0) /*ok*/
+                     (uint16_t)chunk) != 0)
             return -1;
         off += chunk;
     }
@@ -265,3 +269,9 @@ void mkrn_tcp_handle_packet(uint8_t *packet, uint16_t len,
         }
     }
 }
+'''
+
+out = r"F:\M4KK1\sys\src\net\tcp.c"
+with open(out, "w", newline="\n") as f:
+    f.write(BODY)
+print("wrote", out, os.path.getsize(out), "bytes")

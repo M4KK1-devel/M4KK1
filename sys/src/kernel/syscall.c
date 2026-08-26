@@ -1330,6 +1330,11 @@ static void mkrn_syscall_init_handlers(void)
     mkrn_syscall_register(
         M4K_SC_TIMER_LIST, mkrn_syscall_timerlist_impl);
 
+    {
+        extern void mkrn_syscall_net_init(void);
+        mkrn_syscall_net_init();
+    }
+
     M4K_LOG_INFO("System call handlers registered");
 }
 

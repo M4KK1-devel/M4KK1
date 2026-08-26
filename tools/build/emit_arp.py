@@ -1,4 +1,8 @@
-/*
+#!/usr/bin/env python3
+"""Emit sys/src/net/arp.c atomically."""
+import os
+
+BODY = r'''/*
  * M4KK1 4P1 - arp.c
  * Description: Address Resolution Protocol (IPv4 over Ethernet).
  *
@@ -93,8 +97,8 @@ int mkrn_arp_send_request(uint32_t target_ip)
         req.sender_mac[i] = dev->mac_addr[i];
         req.target_mac[i] = 0;
     }
-    req.sender_ip = htonl(mkrn_net_get_ip());
-    req.target_ip = htonl(target_ip);
+    req.sender_ip = mkrn_net_get_ip();
+    req.target_ip = target_ip;
     {
         uint8_t bcast[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
         return mkrn_net_send_ethernet(bcast, M4K_ETH_TYPE_ARP,
@@ -117,8 +121,8 @@ static int arp_send_reply(uint32_t dst_ip, const uint8_t *dst_mac)
         rep.sender_mac[i] = dev->mac_addr[i];
         rep.target_mac[i] = dst_mac[i];
     }
-    rep.sender_ip = htonl(mkrn_net_get_ip());
-    rep.target_ip = htonl(dst_ip);
+    rep.sender_ip = mkrn_net_get_ip();
+    rep.target_ip = dst_ip;
     return mkrn_net_send_ethernet((uint8_t *)dst_mac, M4K_ETH_TYPE_ARP,
                                   (uint8_t *)&rep, sizeof(rep));
 }
@@ -135,10 +139,15 @@ void mkrn_arp_handle_packet(uint8_t *packet, uint16_t len)
     if (arp->hardware_len != 6 || arp->protocol_len != 4)
         return;
 
-    arp_cache_update(ntohl(arp->sender_ip), arp->sender_mac);
+    arp_cache_update(arp->sender_ip, arp->sender_mac);
 
     uint16_t op = ntohs(arp->operation);
-    if (op == ARP_OP_REQUEST
-        && ntohl(arp->target_ip) == mkrn_net_get_ip())
-        arp_send_reply(ntohl(arp->sender_ip), arp->sender_mac);
+    if (op == ARP_OP_REQUEST && arp->target_ip == mkrn_net_get_ip())
+        arp_send_reply(arp->sender_ip, arp->sender_mac);
 }
+'''
+
+out = r"F:\M4KK1\sys\src\net\arp.c"
+with open(out, "w", newline="\n") as f:
+    f.write(BODY)
+print("wrote", out, os.path.getsize(out), "bytes")

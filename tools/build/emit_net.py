@@ -1,4 +1,8 @@
-/*
+#!/usr/bin/env python3
+"""Emit sys/src/net/net.c (protocol stack core) atomically."""
+import os
+
+BODY = r'''/*
  * M4KK1 4P1 - net.c
  * Description: Network stack core: device registry, Ethernet/ARP/IP
  * dispatch, ICMP echo, and the e1000 backend glue.
@@ -25,8 +29,6 @@ static u32 net_gateway   = 0x0A000202;   /* 10.0.2.2 */
 static u8  net_gate_mac[6] = {0,0,0,0,0,0};
 
 /* ── Checksum ── */
-static u16 net_ip_id = 1;
-
 u16 mkrn_net_checksum(u16 *data, u16 len)
 {
     u32 sum = 0;
@@ -43,12 +45,12 @@ u32 mkrn_net_ip_to_string(u32 ip, char *buffer)
 {
     u8 *o = (u8 *)&ip;
     u32 n = 0;
-    for (int i = 3; i >= 0; i--) {
+    for (int i = 0; i < 4; i++) {
         int v = o[i];
         if (v >= 100) { buffer[n++] = '0' + v / 100; v %= 100; }
         if (v >= 10 || o[i] >= 100) buffer[n++] = '0' + v / 10;
         buffer[n++] = '0' + v % 10;
-        if (i > 0) buffer[n++] = '.';
+        if (i < 3) buffer[n++] = '.';
     }
     buffer[n] = 0;
     return n;
@@ -116,8 +118,8 @@ int mkrn_net_send_packet(u32 dst_ip, u8 protocol, u8 *data, u16 len)
     ip->ttl = 64;
     ip->protocol = protocol;
     ip->checksum = 0;
-    ip->src_ip = htonl(net_local_ip);
-    ip->dst_ip = htonl(dst_ip);
+    ip->src_ip = net_local_ip;
+    ip->dst_ip = dst_ip;
     ip->checksum = mkrn_net_checksum((u16 *)ip, 20);
     for (u16 i = 0; i < len; i++)
         frame[20 + i] = data[i];
@@ -125,17 +127,7 @@ int mkrn_net_send_packet(u32 dst_ip, u8 protocol, u8 *data, u16 len)
 }
 
 /* ── Frame ingress (called by e1000 RX) ── */
-void mkrn_udp_handle_packet(uint8_t *packet, uint16_t len,
-                            uint32_t src_ip, uint32_t dst_ip)
-{
-    /* UDP not used yet; keep the ingress contract satisfied. */
-    (void)packet;
-    (void)len;
-    (void)src_ip;
-    (void)dst_ip;
-}
-
-void mkrn_net_receive_frame(uint8_t *frame, uint16_t len)
+void mkrn_net_receive_frame(u8 *frame, u16 len)
 {
     if (len < sizeof(mkrn_eth_header_t))
         return;
@@ -158,14 +150,12 @@ void mkrn_net_receive_frame(uint8_t *frame, uint16_t len)
         return;
     u8 *payload = pkt + ihl;
     u16 plen = ntohs(ip->total_len) - ihl;
-    u32 src_host = ntohl(ip->src_ip);
-    u32 dst_host = ntohl(ip->dst_ip);
     if (ip->protocol == M4K_IP_PROTOCOL_ICMP)
-        mkrn_icmp_handle_packet(payload, plen, src_host, dst_host);
+        mkrn_icmp_handle_packet(payload, plen, ip->src_ip, ip->dst_ip);
     else if (ip->protocol == M4K_IP_PROTOCOL_TCP)
-        mkrn_tcp_handle_packet(payload, plen, src_host, dst_host);
+        mkrn_tcp_handle_packet(payload, plen, ip->src_ip, ip->dst_ip);
     else if (ip->protocol == M4K_IP_PROTOCOL_UDP)
-        mkrn_udp_handle_packet(payload, plen, src_host, net_local_ip);
+        mkrn_udp_handle_packet(payload, plen, ip->src_ip, net_local_ip);
 }
 
 /* ── e1000 backend ops ── */
@@ -280,6 +270,8 @@ void mkrn_icmp_handle_packet(u8 *packet, u16 len, u32 src_ip, u32 dst_ip)
 }
 
 /* ── Stack init ── */
+static u16 net_ip_id = 1;
+
 int mkrn_net_init(void)
 {
     net_dev_count = 0;
@@ -309,3 +301,9 @@ void mkrn_net_set_ip(u32 ip, u32 mask, u32 gw)
     net_netmask = mask;
     net_gateway = gw;
 }
+'''
+
+out = r"F:\M4KK1\sys\src\net\net.c"
+with open(out, "w", newline="\n") as f:
+    f.write(BODY)
+print("wrote", out, len(BODY), "chars")

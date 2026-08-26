@@ -27,6 +27,7 @@
 #include <pci.h>
 #include <ata.h>
 #include <sb16.h>
+#include <net.h>
 #include <yafs.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -217,6 +218,17 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
         mkrn_console_write(" device(s) detected.\n");
     } else {
         mkrn_console_write("   WARNING: No PCI devices found!\n");
+    }
+
+    mkrn_console_write("6.3b. Initializing network (e1000)...\n");
+    if (mkrn_net_init() == 0) {
+        char ipbuf[16];
+        mkrn_net_ip_to_string(mkrn_net_get_ip(), ipbuf);
+        mkrn_console_write("   Network up, IP ");
+        mkrn_console_write(ipbuf);
+        mkrn_console_write("\n");
+    } else {
+        mkrn_console_write("   No NIC found (net disabled).\n");
     }
 
     mkrn_console_write("6.4. Initializing PS/2 Keyboard...\n");

@@ -158,6 +158,14 @@
 #define M4K_SC_RTCWRITE         0x8E
 #define M4K_SC_TIMER_LIST       0x8F
 
+/* Network syscalls (kernel stack, e1000 backend) */
+#define M4K_SC_NETINFO          0x90
+#define M4K_SC_PING             0x91
+#define M4K_SC_NETTCP_CONNECT   0x92
+#define M4K_SC_NETTCP_SEND      0x93
+#define M4K_SC_NETTCP_RECV      0x94
+#define M4K_SC_NETTCP_CLOSE     0x95
+
 #define M4K_SC_SUCCESS 0
 #define M4K_SC_ERROR   (-1)
 

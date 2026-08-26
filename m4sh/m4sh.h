@@ -120,6 +120,12 @@ static int musr_strchr(const char *s, int c)
 #define S_RTCREAD   0x8D
 #define S_RTCWRITE  0x8E
 #define S_TIMERLIST 0x8F
+#define S_NETINFO   0x90
+#define S_PING      0x91
+#define S_TCPCONN   0x92
+#define S_TCPSEND   0x93
+#define S_TCPRECV   0x94
+#define S_TCPCLOSE  0x95
 #define S_BRK       0x0B
 #define S_UNAME     0x73
 #define S_SYSINFO   0x84
@@ -932,6 +938,9 @@ void musr_cmd_gfx_test(int, char **);
 void musr_cmd_pcc(int, char **);
 void musr_cmd_cc(int, char **);
 void musr_cmd_man(int, char **);
+void musr_cmd_ping(int, char **);
+void musr_cmd_wget(int, char **);
+void musr_cmd_ifconfig(int, char **);
 void musr_boot_setup(void);
 void musr_setup_env(void);
 extern int musr_login_ok;

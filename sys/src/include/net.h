@@ -153,13 +153,8 @@ int mkrn_net_send_ethernet(u8 *dst_mac, u16 type, u8 *data, u16 len);
  */
 void mkrn_net_poll(void);
 
-/* TCP functions */
+/* TCP functions (minimal client, net/tcp.c) */
 void mkrn_tcp_init(void);
-int mkrn_tcp_listen(u32 local_ip, u16 local_port);
-int mkrn_tcp_connect(u32 local_ip, u16 local_port, u32 remote_ip, u16 remote_port);
-int mkrn_tcp_send(tcp_pcb_t *pcb, u8 *data, u16 len);
-int mkrn_tcp_close(tcp_pcb_t *pcb);
-void mkrn_tcp_handle_packet(u8 *packet, u16 len, u32 src_ip, u32 dst_ip);
 
 /* UDP functions */
 int mkrn_udp_send(u32 src_ip, u16 src_port, u32 dst_ip, u16 dst_port, u8 *data, u16 len);
@@ -181,3 +176,19 @@ u16 mkrn_net_checksum(u16 *data, u16 len);
 u32 mkrn_net_ip_to_string(u32 ip, char *buffer);
 u32 mkrn_net_string_to_ip(const char *string);
 void mkrn_net_print_packet(u8 *packet, u16 len);
+
+/* Config accessors */
+u32 mkrn_net_get_ip(void);
+u32 mkrn_net_get_gateway(void);
+u32 mkrn_net_get_netmask(void);
+void mkrn_net_set_ip(u32 ip, u32 netmask, u32 gateway);
+
+/* Minimal TCP client API (net/tcp.c) */
+int mkrn_tcp_connect(u32 remote_ip, u16 remote_port);
+int mkrn_tcp_send(int conn_id, const u8 *data, int len);
+int mkrn_tcp_recv(int conn_id, u8 *buf, int maxlen);
+int mkrn_tcp_state(int conn_id);
+int mkrn_tcp_close(int conn_id);
+
+/* ICMP echo (net/net.c) */
+int mkrn_icmp_send_echo_request(u32 dst_ip, u16 id, u16 seq);

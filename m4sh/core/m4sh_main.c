@@ -68,6 +68,9 @@ musr_cmd_t musr_cmd_table[] = {
     {"eval",   musr_cmd_eval,    "Evaluate arguments as a command"},
     {"shift",  musr_cmd_shift,   "Shift positional parameters"},
     {"trap",   musr_cmd_trap,    "Trap signals (trap CMD INT|TERM|EXIT|ERR)"},
+    {"ping",   musr_cmd_ping,    "Send ICMP echo (ping <ip>)"},
+    {"wget",   musr_cmd_wget,    "HTTP GET (wget http://ip/path)"},
+    {"ifconfig", musr_cmd_ifconfig, "Show network config"},
     {NULL, NULL, NULL}
 };
 

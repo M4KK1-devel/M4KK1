@@ -288,6 +288,13 @@ mkrn_timer_handler(uint32_t *frame)
 
     if (pfnTimerCallback)
         pfnTimerCallback();
+
+    /* Network RX polling fallback: cheap when the NIC is idle (one
+     * register-free descriptor check per ring slot). */
+    {
+        extern void mkrn_net_poll(void);
+        mkrn_net_poll();
+    }
 }
 
 /**
