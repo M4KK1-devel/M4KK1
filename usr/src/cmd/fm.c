@@ -19,6 +19,7 @@
 #include "../lib/libcopland.h"
 #include "../lib/musr_inline.h"
 #include "../lib/icons.h"
+#include "../lib/icons_data.h"
 
 /* Globals required by m4sh.h */
 int out_fd = 1;
@@ -186,6 +187,15 @@ static int fm_strlen(const char *s)
     return n;
 }
 
+static int fm_streq(const char *a, const char *b)
+{
+    while (*a && *a == *b) {
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
 /* ── Home directory: mini passwd.db lookup ──
  * passwd.db lines are "name:uid:gid:home:shell:gecos:hash".  We only
  * need uid → home, so a minimal field walker suffices (musr_getpwuid
@@ -255,11 +265,33 @@ static void fm_icon16(uint32_t *ic, int x, int y)
         }
 }
 
-/* Entry icon by name: folder / .txt / .c / .h / generic file. */
+/* Entry icon by name: directory variants, extension match, generic. */
 static uint32_t *fm_entry_icon(int idx)
 {
-    if (fm_entries[idx].is_dir)
+    if (fm_entries[idx].is_dir) {
+        /* Named folder variants (home/config/...) fall back to the
+         * plain folder icon from the procedural set. */
+        const char *nm = fm_entries[idx].name;
+        uint32_t *dir_ic = (uint32_t *)icons_data_find("dir");
+        if (!dir_ic)
+            return icon_folder;
+        if (fm_streq(nm, "home") || fm_streq(nm, "root"))
+            dir_ic = (uint32_t *)icons_data_find("dir_home");
+        else if (fm_streq(nm, "etc"))
+            dir_ic = (uint32_t *)icons_data_find("dir_config");
+        else if (fm_streq(nm, "doc") || fm_streq(nm, "docs")
+                 || fm_streq(nm, "documents"))
+            dir_ic = (uint32_t *)icons_data_find("dir_documents");
+        else if (fm_streq(nm, "download") || fm_streq(nm, "downloads"))
+            dir_ic = (uint32_t *)icons_data_find("dir_downloads");
+        else if (fm_streq(nm, "music") || fm_streq(nm, "audio"))
+            dir_ic = (uint32_t *)icons_data_find("dir_music");
+        else if (fm_streq(nm, "desktop"))
+            dir_ic = (uint32_t *)icons_data_find("dir_desktop");
+        if (dir_ic)
+            return dir_ic;
         return icon_folder;
+    }
     const char *nm = fm_entries[idx].name;
     int len = fm_strlen(nm);
     if (len >= 4 && nm[len-4]=='.' && nm[len-3]=='t' && nm[len-2]=='x'

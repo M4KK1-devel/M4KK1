@@ -35,6 +35,7 @@
 
 #include "../lib/libgui.h"
 #include "../lib/icons.h"
+#include "../lib/icons_data.h"
 #include "../lib/musr_inline.h"
 #include "../../../sys/src/copland/copland_proto.h"
 #include "sprach.h"
@@ -392,6 +393,25 @@ static void sp_draw_str_bold(uint32_t *buf, int bw, int bh, int x, int y,
 }
 
 /* ── Dock icons (32x32, pixel-drawn) ── */
+
+/* Blit a real 32x32 RGBA bitmap (from icons_data.c) with transparency;
+ * falls back to nothing when the named asset is missing. */
+static void sp_icon_blit32(uint32_t *buf, int bw, int bh, int x, int y,
+                           const char *name)
+{
+    uint32_t *ic = icons_data_find(name);
+    if (!ic)
+        return;
+    for (int yy = 0; yy < 32; yy++)
+        for (int xx = 0; xx < 32; xx++) {
+            uint32_t px = ic[yy * 32 + xx];
+            if (!(px >> 24))
+                continue;
+            if (x + xx < 0 || x + xx >= bw || y + yy < 0 || y + yy >= bh)
+                continue;
+            buf[(y + yy) * bw + x + xx] = px;
+        }
+}
 
 /* Terminal icon: dark screen with a ">_" prompt, Mac-ish rounded top. */
 static void sp_icon_terminal(uint32_t *buf, int bw, int bh, int x, int y,
@@ -800,19 +820,25 @@ void sprach_draw_taskbar(struct sprach_ctx *ctx)
     int bx = DOCK_PAD;
 
     /* Far-left: the Launchpad grid icon (nine-square).  Opens the
-     * app launcher overlay. */
+     * app launcher overlay.  Uses the PNG grid icon when available,
+     * pixel-drawn fallback otherwise. */
     {
-        sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, bx, icon_y,
-                DOCK_ICON_SIZE, DOCK_ICON_SIZE, 0x00506070);
-        sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, bx + 1, icon_y + 1,
-                DOCK_ICON_SIZE - 2, DOCK_ICON_SIZE - 2, 0x0080A0B0);
-        for (int gy = 0; gy < 3; gy++)
-            for (int gx = 0; gx < 3; gx++) {
-                int c = bx + 6 + gx * 8;
-                int r = icon_y + 6 + gy * 8;
-                sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, c, r, 5, 5,
-                        ctx->lp_open ? 0x00FFFFFF : 0x00203040);
-            }
+        if (icons_data_find("launchpad")) {
+            sp_icon_blit32(taskbar_buf, SCREEN_W, TASKBAR_H, bx, icon_y,
+                           "launchpad");
+        } else {
+            sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, bx, icon_y,
+                    DOCK_ICON_SIZE, DOCK_ICON_SIZE, 0x00506070);
+            sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, bx + 1, icon_y + 1,
+                    DOCK_ICON_SIZE - 2, DOCK_ICON_SIZE - 2, 0x0080A0B0);
+            for (int gy = 0; gy < 3; gy++)
+                for (int gx = 0; gx < 3; gx++) {
+                    int c = bx + 6 + gx * 8;
+                    int r = icon_y + 6 + gy * 8;
+                    sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, c, r, 5, 5,
+                            ctx->lp_open ? 0x00FFFFFF : 0x00203040);
+                }
+        }
         bx += DOCK_ICON_PITCH;
     }
 
@@ -1386,6 +1412,20 @@ static const char *lp_hidden_apps[] = {
 
 static uint32_t *lp_icon_for(struct lp_app *a)
 {
+    /* Named PNG assets first: app basename matches an icons_data
+     * entry (e.g. "clock", "altr", "logview"). */
+    uint32_t *pic = icons_data_find(a->name);
+    if (pic)
+        return (uint32_t *)pic;
+    /* Network tools get the net icon set. */
+    if (a->name[0] == 'p' && a->name[1] == 'i' && a->name[2] == 'n'
+        && a->name[3] == 'g')
+        return (uint32_t *)icons_data_find("net_056");
+    if (a->name[0] == 'w' && a->name[1] == 'g' && a->name[2] == 'e'
+        && a->name[3] == 't')
+        return (uint32_t *)icons_data_find("net_057");
+    if (a->name[0] == 'i' && a->name[1] == 'f')
+        return (uint32_t *)icons_data_find("net_058");
     switch (a->icon) {
     case LP_ICON_TERMINAL: return icon_terminal;
     case LP_ICON_GEAR:     return icon_gear;
