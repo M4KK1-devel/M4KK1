@@ -100,16 +100,29 @@ static u32 mkrn_syscall_tcp_connect_impl(
 {
     (void)uArg3; (void)uArg4; (void)uArg5;
     int id = mkrn_tcp_connect(uArg1, (uint16_t)uArg2);
-    if (id < 0)
+    if (id < 0) {
+        extern int mkrn_arp_resolve(uint32_t, uint8_t *);
+        extern void mkrn_arp_dump(void);
+        uint8_t dbgmac[6];
+        int dbg_r = mkrn_arp_resolve(uArg1, dbgmac);
+        mkrn_console_write("[tcp] emit fail, resolve=");
+        mkrn_console_write_hex((uint32_t)dbg_r);
+        mkrn_console_write("\n");
+        mkrn_arp_dump();
+        {
+            extern void mkrn_e1000_tx_debug(void);
+            mkrn_e1000_tx_debug();
+        }
         return (u32)-1;
+    }
     /* wait for ESTABLISHED; drive RX explicitly (IF=0 in syscall) */
     {
         extern void mkrn_net_poll(void);
-        for (int i = 0; i < 400; i++) {
+        for (int i = 0; i < 3000; i++) {
             if (mkrn_tcp_state(id) == 2)   /* TS_ESTABLISHED */
                 return (u32)id;
             mkrn_net_poll();
-            for (volatile int d = 0; d < 20000; d++)
+            for (volatile int d = 0; d < 50000; d++)
                 ;
         }
     }

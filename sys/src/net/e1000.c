@@ -160,6 +160,33 @@ int mkrn_e1000_transmit(const uint8_t *data, uint32_t len)
     return (int)len;
 }
 
+/* Debug: dump TX ring state over serial. */
+void mkrn_e1000_tx_debug(void)
+{
+    extern void mkrn_console_write(const char *);
+    extern void mkrn_console_write_hex(uint32_t);
+    mkrn_console_write("[e1000] ready=");
+    mkrn_console_write_hex((uint32_t)e1000_ready);
+    mkrn_console_write(" TDH=");
+    mkrn_console_write_hex(e1000_read(E1000_TDH));
+    mkrn_console_write(" TDT=");
+    mkrn_console_write_hex(e1000_read(E1000_TDT));
+    mkrn_console_write(" tail=");
+    mkrn_console_write_hex((uint32_t)tx_tail);
+    mkrn_console_write("\n");
+    for (int i = 0; i < E1000_NUM_TX; i++) {
+        mkrn_console_write(" d");
+        mkrn_console_write_hex((uint32_t)i);
+        mkrn_console_write(":sta=");
+        mkrn_console_write_hex((uint32_t)tx_desc[i].sta);
+        mkrn_console_write(",cmd=");
+        mkrn_console_write_hex((uint32_t)tx_desc[i].cmd);
+        mkrn_console_write(",len=");
+        mkrn_console_write_hex((uint32_t)tx_desc[i].length);
+        mkrn_console_write("\n");
+    }
+}
+
 void mkrn_e1000_poll(void)
 {
     if (e1000_ready)

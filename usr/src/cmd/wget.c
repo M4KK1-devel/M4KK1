@@ -113,15 +113,16 @@ void musr_cmd_wget(int argc, char **argv)
         uint32_t n = musr_sc3(S_TCPRECV, cid, (uint32_t)buf, 2048);
         if (n == 0xFFFFFFFFu)
             break;
+        static int idle;
         if (n == 0) {
             /* no data yet: spin a bit; give up after quiet period */
-            static int idle;
             for (volatile int d = 0; d < 500000; d++)
                 ;
-            if (++idle > 40)
+            if (++idle > 200)
                 break;
             continue;
         }
+        idle = 0;   /* got data: reset the quiet-period counter */
         int off = 0;
         if (!header_done) {
             for (int i = 0; i + 3 < (int)n; i++) {
@@ -136,7 +137,7 @@ void musr_cmd_wget(int argc, char **argv)
                 continue;   /* header not complete yet */
         }
         if (out_fd < 0) {
-            out_fd = musr_sc_open((char *)outfile, 0x101 /*O_WRONLY|O_CREAT*/);
+            out_fd = musr_sc_open((char *)outfile, 0x102 /*O_WRONLY|O_CREAT*/);
             if (out_fd < 0) {
                 out_puts("wget: cannot create ");
                 out_puts((char *)outfile);
