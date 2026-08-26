@@ -33,7 +33,7 @@ while off + 16 <= len(d) and n < 200:
     elif et == 0x0800:
         p = pkt[23]
         ihl = (pkt[14] & 0xF) * 4
-        if p == 6:
+        if p == 6 and len(pkt) >= 14 + ihl + 20:
             sp, dp = struct.unpack(">HH", pkt[14+ihl:16+ihl+2])
             fl = pkt[14+ihl+13]
             seq = struct.unpack(">I", pkt[14+ihl+4:18+ihl])[0]

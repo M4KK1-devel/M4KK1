@@ -135,56 +135,46 @@ int mkrn_e1000_transmit(const uint8_t *data, uint32_t len)
     if (!e1000_ready || !data || len == 0 || len >= E1000_BUF_SIZE)
         return -1;
 
-    /* If the previous descriptor on this slot never completed, drop
-     * the frame rather than overwrite a live DMA (QEMU completes
-     * synchronously, so this is only a safety net). */
+    /* Synchronous single-frame TX: wait until the card has consumed
+     * every previously submitted descriptor (TDH == TDT), fill one
+     * descriptor, kick TDT, then wait for TDH to catch up.  Keeping
+     * at most one outstanding frame sidesteps the descriptor DD
+     * writeback/batching quirks of the QEMU e1000 model; ring state
+     * is read from MMIO (TDH) rather than trusting writeback.
+     * Spin caps stay modest: MMIO reads trap into QEMU, so a stuck
+     * card must fail fast instead of stalling the guest. */
+    uint32_t tdt = e1000_read(E1000_TDT);
+    int spin = 0;
+    while (e1000_read(E1000_TDH) != tdt && spin++ < 100000)
+        ;
+    if (e1000_read(E1000_TDH) != tdt)
+        return -1;                     /* card stuck; drop the frame */
+
     e1000_tx_desc_t *d = &tx_desc[tx_tail];
-    if (d->sta & 0x01) {
-        d->sta = 0;
-    } else {
-        int spin = 0;
-        while (!(d->sta & 0x01) && spin++ < 2000000)
-            ;
-        if (!(d->sta & 0x01))
-            return -1;
-    }
     for (uint32_t i = 0; i < len; i++)
         tx_buf[tx_tail][i] = data[i];
     d->addr = (uint32_t)(uintptr_t)tx_buf[tx_tail];
     d->length = (uint16_t)len;
-    d->cmd = 0x0B;   /* EOP | IFCS | RS */
+    d->cmd = 0x0B;                     /* EOP | IFCS | RS */
     d->sta = 0;
     __asm__ volatile("" ::: "memory");
-    tx_tail = (tx_tail + 1) % E1000_NUM_TX;
-    e1000_write(E1000_TDT, tx_tail);
-    return (int)len;
-}
 
-/* Debug: dump TX ring state over serial. */
-void mkrn_e1000_tx_debug(void)
-{
-    extern void mkrn_console_write(const char *);
-    extern void mkrn_console_write_hex(uint32_t);
-    mkrn_console_write("[e1000] ready=");
-    mkrn_console_write_hex((uint32_t)e1000_ready);
-    mkrn_console_write(" TDH=");
-    mkrn_console_write_hex(e1000_read(E1000_TDH));
-    mkrn_console_write(" TDT=");
-    mkrn_console_write_hex(e1000_read(E1000_TDT));
-    mkrn_console_write(" tail=");
-    mkrn_console_write_hex((uint32_t)tx_tail);
-    mkrn_console_write("\n");
-    for (int i = 0; i < E1000_NUM_TX; i++) {
-        mkrn_console_write(" d");
-        mkrn_console_write_hex((uint32_t)i);
-        mkrn_console_write(":sta=");
-        mkrn_console_write_hex((uint32_t)tx_desc[i].sta);
-        mkrn_console_write(",cmd=");
-        mkrn_console_write_hex((uint32_t)tx_desc[i].cmd);
-        mkrn_console_write(",len=");
-        mkrn_console_write_hex((uint32_t)tx_desc[i].length);
-        mkrn_console_write("\n");
-    }
+    uint32_t next = (tx_tail + 1) % E1000_NUM_TX;
+    e1000_write(E1000_TDT, next);
+    tx_tail = next;
+
+    spin = 0;
+    while (e1000_read(E1000_TDH) != next && spin++ < 100000)
+        ;
+    if (e1000_read(E1000_TDH) != next)
+        return -1;
+    /* Reset the ring to slot 0: with at most one outstanding frame the
+     * head/tail wrap path never has to exist, which sidesteps the QEMU
+     * legacy e1000 ring-wrap quirk (TDH freezes once TDT wraps). */
+    e1000_write(E1000_TDH, 0);
+    e1000_write(E1000_TDT, 0);
+    tx_tail = 0;
+    return (int)len;
 }
 
 void mkrn_e1000_poll(void)
@@ -258,7 +248,7 @@ int mkrn_e1000_init(void)
     /* TX ring */
     for (int i = 0; i < E1000_NUM_TX; i++) {
         tx_desc[i].addr = (uint32_t)(uintptr_t)tx_buf[i];
-        tx_desc[i].sta = 0x01;   /* pre-mark done so the first xmit passes */
+        tx_desc[i].sta = 0;
         tx_desc[i].cmd = 0;
         tx_desc[i].length = 0;
     }

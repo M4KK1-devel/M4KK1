@@ -66,25 +66,6 @@ static void arp_cache_update(uint32_t ip, const uint8_t *mac)
     arp_cache[slot].valid = 1;
 }
 
-/* Debug helper: dump the ARP cache over the serial console. */
-void mkrn_arp_dump(void)
-{
-    extern void mkrn_console_write(const char *);
-    extern void mkrn_console_write_hex(uint32_t);
-    for (int i = 0; i < ARP_CACHE_SIZE; i++) {
-        if (!arp_cache[i].valid)
-            continue;
-        mkrn_console_write("arp[");
-        mkrn_console_write_hex((uint32_t)i);
-        mkrn_console_write("] ip=");
-        mkrn_console_write_hex(arp_cache[i].ip);
-        mkrn_console_write(" mac=");
-        for (int k = 0; k < 6; k++)
-            mkrn_console_write_hex(arp_cache[i].mac[k]);
-        mkrn_console_write("\n");
-    }
-}
-
 int mkrn_arp_resolve(uint32_t ip, uint8_t *mac)
 {
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {

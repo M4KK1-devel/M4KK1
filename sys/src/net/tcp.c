@@ -67,7 +67,13 @@ void mkrn_tcp_init(void)
     tcp_next_port = 1024;
 }
 
-/* IPv4 pseudo-header checksum for TCP */
+/* IPv4 pseudo-header checksum for TCP.
+ * All additions happen in a byte-swapped domain: payload words are
+ * loaded as native LE u16 from network-order bytes (a self-consistent
+ * swap), so the pseudo-header fields must enter the sum swapped too
+ * (htonl-passed src/dst already are; proto and len must be <<8).
+ * The final ~sum stored LE lands on the wire byte-swapped back to
+ * the RFC order, matching what the IP header checksum does. */
 static uint16_t tcp_checksum(uint32_t src, uint32_t dst,
                              uint8_t *payload, uint16_t len)
 {
@@ -81,8 +87,8 @@ static uint16_t tcp_checksum(uint32_t src, uint32_t dst,
     sum += src & 0xFFFF;
     sum += (dst >> 16) & 0xFFFF;
     sum += dst & 0xFFFF;
-    sum += 6;              /* protocol TCP */
-    sum += len;
+    sum += 6U << 8;        /* protocol TCP, swapped domain */
+    sum += (uint32_t)len << 8;
     while (sum >> 16)
         sum = (sum & 0xFFFF) + (sum >> 16);
     return (uint16_t)(~sum);
@@ -137,7 +143,7 @@ int mkrn_tcp_connect(uint32_t remote_ip, uint16_t remote_port)
     c->snd_nxt = 0x1000;
     c->rcv_nxt = 0;
     c->rlen = 0;
-    if (tcp_emit(c, TCP_SYN, 0, 0) != 0) {
+    if (tcp_emit(c, TCP_SYN, 0, 0) < 0) {
         c->used = 0;
         return -1;
     }
@@ -157,7 +163,7 @@ int mkrn_tcp_send(int id, const uint8_t *data, int len)
         if (chunk > 1000)
             chunk = 1000;
         if (tcp_emit(c, TCP_ACK | TCP_PSH, data + off,
-                     (uint16_t)chunk) != 0) /*ok*/
+                     (uint16_t)chunk) < 0)
             return -1;
         off += chunk;
     }
@@ -220,9 +226,19 @@ void mkrn_tcp_handle_packet(uint8_t *packet, uint16_t len,
         tcp_conn_t *c = &tcp_conns[i];
         if (!c->used || c->remote_ip != src_ip)
             continue;
-        if (ntohs(h->src_port) != c->remote_port ||
-            ntohs(h->dst_port) != c->local_port)
+        if (ntohs(h->dst_port) != c->local_port)
             continue;
+        /* QEMU user networking (slirp) acts as a NAT proxy: the
+         * SYN-ACK comes back from slirp's own ephemeral port, not
+         * the original destination port.  While shaking hands,
+         * match on local port + remote IP only, then latch the
+         * peer's actual source port. */
+        if (c->state == TS_SYN_SENT) {
+            if (ntohs(h->src_port) != c->remote_port)
+                c->remote_port = ntohs(h->src_port);
+        } else if (ntohs(h->src_port) != c->remote_port) {
+            continue;
+        }
 
         if (c->state == TS_SYN_SENT && (h->flags & TCP_SYN)
             && (h->flags & TCP_ACK)) {
