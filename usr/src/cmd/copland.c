@@ -93,18 +93,30 @@ static void copland_render_surface(const struct copland_surface *s)
 /* Wallpaper gradient fill clipped to a region (incremental path).
  * One kernel fill_gradient syscall paints the clipped rect with the
  * same full-screen gradient math (top at y=0, bottom at fb height-1)
- * the boot composite uses. */
+ * the boot composite uses.  Colors come from the active theme in
+ * copland_shm->wallpaper_theme so both composite paths and the WM's
+ * Settings panel agree on one palette. */
+static const struct { uint32_t top, bottom; } copland_wallpapers[] = {
+    { 0x00000044u, 0x0066FFu },   /* 0: classic blue (default) */
+    { 0x00224488u, 0x0044AACCu }, /* 1: ocean */
+    { 0x00331166u, 0x00AA44CCu }, /* 2: twilight */
+    { 0x001A1A2Eu, 0x00444466u }, /* 3: graphite */
+    { 0x00663300u, 0x00CCAA33u }, /* 4: desert */
+    { 0x00104010u, 0x0030A030u }, /* 5: forest */
+};
+#define COPLAND_WALLPAPER_THEMES 6
+
 static void copland_wallpaper_rect(int x, int y, int w, int h)
 {
     struct m4k_framebuffer_info fb;
     if (m4k_get_framebuffer_info(&fb) != 0 || fb.height <= 1)
         return;
-    /* Same palette as the boot composite's gui_draw_gradient call —
-     * the old code used top green=0x44 here vs 0x00 in the full
-     * composite, leaving a visible color seam on incremental
-     * repaints.  Unified now that both paths share the kernel
-     * gradient primitive. */
-    m4k_fill_gradient(x, y, w, h, 0x00000044, 0x000066FF);
+    uint32_t theme = shm_wallpaper_theme();
+    if (theme >= COPLAND_WALLPAPER_THEMES)
+        theme = 0;
+    m4k_fill_gradient(x, y, w, h,
+                      copland_wallpapers[theme].top,
+                      copland_wallpapers[theme].bottom);
 }
 
 static void copland_composite_region(struct copland_shm *shm,

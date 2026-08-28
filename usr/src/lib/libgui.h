@@ -31,8 +31,10 @@ int gui_draw_button(int x, int y, int w, int h, const char *label, int pressed);
 int gui_clear(uint32_t color);
 int gui_draw_gradient(uint32_t color_top, uint32_t color_bottom);
 
-/* Unified system wallpaper (blue gradient 0x000044 → 0x0066FF) */
+/* Unified system wallpaper (theme-aware; see libgui.c) */
 int gui_draw_wallpaper(void);
+int gui_wallpaper_set_theme(int theme);
+int gui_wallpaper_get_theme(void);
 int gui_flip(void);
 
 /* Input events */

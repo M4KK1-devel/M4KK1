@@ -116,6 +116,13 @@ struct copland_shm {
     uint32_t cmd_read_idx;        /* consumer (server) side */
     struct copland_command
         cmd_ring[COPLAND_CMD_RING_SIZE];
+
+    /* Wallpaper theme id (see libgui gui_wallpapers[]).  Appended at
+     * the tail: every existing offset is stable (no MMU — sprach and
+     * copland map this struct at 0x700000 and both are rebuilt
+     * together, but keeping the field order append-only preserves
+     * compatibility with older ELF pairs). */
+    uint32_t wallpaper_theme;      /* 0 = classic blue gradient */
 };
 
 /* ── Accessors ── */
@@ -123,6 +130,16 @@ struct copland_shm {
 static inline struct copland_shm *copland_shm_get(void)
 {
     return (struct copland_shm *)COPLAND_SHM_BASE;
+}
+
+/* Active wallpaper theme id (tail field of copland_shm).  Returns 0
+ * when the region is not yet initialized (classic blue). */
+static inline uint32_t shm_wallpaper_theme(void)
+{
+    struct copland_shm *shm = copland_shm_get();
+    if (shm->magic != COPLAND_SHM_MAGIC)
+        return 0;
+    return shm->wallpaper_theme;
 }
 
 /* Find a free surface slot; returns index or -1.  The caller fills

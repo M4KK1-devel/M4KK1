@@ -7,6 +7,7 @@
  */
 
 #include "m4sh.h"
+#include "libcopland.h"
 
 /* Color constants */
 #define GUI_COLOR_BLACK   0x00000000
@@ -21,6 +22,11 @@
 /* Framebuffer info cache */
 static struct m4k_framebuffer_info fb_cache;
 static int fb_cached = 0;
+
+/* Active wallpaper theme id (0 = classic blue).  Mirrored into
+ * copland_shm->wallpaper_theme so Copland's compositor paths paint
+ * the same theme even though it is a separate process. */
+static int gui_wallpaper_theme = 0;
 
 /* Get framebuffer info (cached) */
 static int gui_get_fb_info(void) {
@@ -102,17 +108,54 @@ int gui_draw_gradient(uint32_t color_top, uint32_t color_bottom) {
                              color_top, color_bottom);
 }
 
-/* Unified system wallpaper: vertical blue gradient 0x000044 → 0x0066FF.
- * Both MDM (login) and Sprach/Copland (desktop) call this so the boot
- * chain never flashes a mismatched background.  Single kernel
+/* Unified system wallpaper: theme-aware.  The active theme id lives
+ * in copland_shm->wallpaper_theme (set by the WM Settings panel);
+ * theme 0 is the historical blue gradient 0x000044 → 0x0066FF so the
+ * boot chain never flashes a mismatched background.  Single kernel
  * fill_gradient syscall — no separate flip needed (next composite
  * presents it). */
-#define GUI_WALLPAPER_TOP    0x00000044u
-#define GUI_WALLPAPER_BOTTOM 0x000066FFu
+
+struct gui_wallpaper_theme {
+    uint32_t top, bottom;
+    uint8_t gradient;   /* 1 = vertical gradient, 0 = solid top */
+};
+
+#define GUI_WALLPAPER_THEMES 6
+static const struct gui_wallpaper_theme gui_wallpapers[] = {
+    { 0x00000044u, 0x0066FFu, 1 },   /* 0: classic blue (default) */
+    { 0x00224488u, 0x0044AACCu, 1 }, /* 1: ocean */
+    { 0x00331166u, 0x00AA44CCu, 1 }, /* 2: twilight */
+    { 0x001A1A2Eu, 0x00444466u, 1 }, /* 3: graphite */
+    { 0x00663300u, 0x00CCAA33u, 1 }, /* 4: desert */
+    { 0x00104010u, 0x0030A030u, 1 }, /* 5: forest */
+};
+
+int gui_wallpaper_set_theme(int theme)
+{
+    if (theme < 0 || theme >= GUI_WALLPAPER_THEMES)
+        return -1;
+    struct copland_shm *shm = copland_shm_get();
+    if (shm && shm->magic == COPLAND_SHM_MAGIC)
+        shm->wallpaper_theme = (uint32_t)theme;
+    gui_wallpaper_theme = theme;
+    return 0;
+}
+
+int gui_wallpaper_get_theme(void)
+{
+    struct copland_shm *shm = copland_shm_get();
+    if (shm && shm->magic == COPLAND_SHM_MAGIC)
+        return (int)shm->wallpaper_theme;
+    return gui_wallpaper_theme;
+}
 
 int gui_draw_wallpaper(void)
 {
-    return gui_draw_gradient(GUI_WALLPAPER_TOP, GUI_WALLPAPER_BOTTOM);
+    int t = gui_wallpaper_theme;
+    if (t < 0 || t >= GUI_WALLPAPER_THEMES)
+        t = 0;
+    return gui_draw_gradient(gui_wallpapers[t].top,
+                             gui_wallpapers[t].bottom);
 }
 
 /* Present back buffer to screen */

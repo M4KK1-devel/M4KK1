@@ -168,8 +168,17 @@ struct sprach_ctx {
     int clock_about;     /* 1 = popup shows "About This PC" info */
     int clock_settings;  /* 1 = About panel is the settings placeholder */
 
+    /* Tray control-panel mode when the popup was opened from a tray
+     * glyph: 0 = normal clock/About, 1 = volume, 2 = network, 3 = bt */
+    int tray_mode;
+
     /* Desktop index shown in the menubar center ("Desktop N") */
     int desktop_idx;
+
+    /* Bluetooth radio state for the tray icon / control panel.
+     * QEMU i386 has no HCI hardware; the panel toggles the software
+     * radio state and reports adapter presence from the PCI scan. */
+    int bt_on;
 
     /* Apple-menu dropdown (click the "M4KK1" brand): 1 = open.
      * Drawn on its own surface (menu_slot) below the brand text. */

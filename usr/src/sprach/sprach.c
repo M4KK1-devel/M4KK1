@@ -461,6 +461,68 @@ static void sp_icon_clock(uint32_t *buf, int bw, int bh, int x, int y,
 
 /* ── Wait helper: poll keyboard until Copland creates a surface ── */
 
+/* System tray glyphs: 16x16 hand-drawn shapes for the menubar.
+ * volume: speaker + arcs; network: connected dots (up) or an X
+ * (down); bluetooth: the rune, dim when off. */
+#define TRAY_W     56           /* 3 glyphs * 16px + 2 * 8px spacing */
+#define TRAY_ICON  16
+
+static void sp_icon_volume(uint32_t *buf, int bw, int bh, int x, int y,
+                           uint32_t col)
+{
+    /* speaker box */
+    sp_rect(buf, bw, bh, x + 2, y + 6, 4, 5, col);
+    sp_rect(buf, bw, bh, x, y + 7, 2, 3, col);
+    /* sound arcs */
+    sp_rect(buf, bw, bh, x + 8, y + 4, 1, 1, col);
+    sp_rect(buf, bw, bh, x + 9, y + 5, 1, 2, col);
+    sp_rect(buf, bw, bh, x + 9, y + 9, 1, 2, col);
+    sp_rect(buf, bw, bh, x + 8, y + 11, 1, 1, col);
+    sp_rect(buf, bw, bh, x + 11, y + 2, 1, 2, col);
+    sp_rect(buf, bw, bh, x + 12, y + 4, 1, 8, col);
+    sp_rect(buf, bw, bh, x + 11, y + 12, 1, 2, col);
+}
+
+static void sp_icon_network(uint32_t *buf, int bw, int bh, int x, int y,
+                            uint32_t col, int up)
+{
+    if (up) {
+        /* three ascending link bars */
+        sp_rect(buf, bw, bh, x + 1, y + 9, 3, 5, col);
+        sp_rect(buf, bw, bh, x + 6, y + 5, 3, 9, col);
+        sp_rect(buf, bw, bh, x + 11, y + 1, 3, 13, col);
+    } else {
+        /* crossed-out bars: dim base + X */
+        uint32_t dim = 0x00A0A0A0;
+        sp_rect(buf, bw, bh, x + 1, y + 9, 3, 5, dim);
+        sp_rect(buf, bw, bh, x + 6, y + 5, 3, 9, dim);
+        sp_rect(buf, bw, bh, x + 11, y + 1, 3, 13, dim);
+        for (int i = 0; i < 12; i++) {
+            sp_rect(buf, bw, bh, x + 2 + i, y + 2 + i, 1, 1, col);
+            sp_rect(buf, bw, bh, x + 13 - i, y + 2 + i, 1, 1, col);
+        }
+    }
+}
+
+static void sp_icon_bluetooth(uint32_t *buf, int bw, int bh, int x, int y,
+                              uint32_t col, int on)
+{
+    uint32_t c = on ? col : 0x00A0A0A0;
+    /* the bluetooth rune: vertical stem + diagonals */
+    sp_rect(buf, bw, bh, x + 7, y + 1, 2, 14, c);
+    for (int i = 0; i < 5; i++) {
+        sp_rect(buf, bw, bh, x + 9 + i, y + 2 + i, 1, 1, c);  /* / hi */
+        sp_rect(buf, bw, bh, x + 9 + i, y + 13 - i, 1, 1, c); /* \ lo */
+        sp_rect(buf, bw, bh, x + 6 - i, y + 3 + i, 1, 1, c);  /* \ hi */
+        sp_rect(buf, bw, bh, x + 6 - i, y + 12 - i, 1, 1, c); /* / lo */
+    }
+    if (!on) {
+        /* small "off" slash across */
+        for (int i = 0; i < 10; i++)
+            sp_rect(buf, bw, bh, x + 3 + i, y + 3 + i, 1, 1, col);
+    }
+}
+
 static int sprach_wait_slot(struct sprach_ctx *ctx, int before)
 {
     int guard = 0;
@@ -1006,6 +1068,26 @@ void sprach_draw_menubar(struct sprach_ctx *ctx)
         sp_draw_char(menubar_buf, SCREEN_W, MENUBAR_H, tx + i * 7, ty,
                      time_str[i], SPRACH_COL_MENUBAR_FG);
 
+    /* ── System tray: three 16x16 glyphs left of the clock ──
+     * (volume, network, bluetooth).  Icons are simple hand-drawn
+     * shapes (sp_icon_* helpers below); the network glyph reflects
+     * the REAL interface state via S_NETINFO.  Click handlers live
+     * in sprach_handle_click (TRAY_* hit zones). */
+    {
+        int tray_x = tx - TRAY_W - 8;
+        uint32_t ip, mask, gw;
+        uint32_t net_up = musr_sc3(S_NETINFO, (uint32_t)&ip,
+                                   (uint32_t)&mask, (uint32_t)&gw);
+        sp_icon_volume(menubar_buf, SCREEN_W, MENUBAR_H,
+                       tray_x, 4, SPRACH_COL_MENUBAR_FG);
+        sp_icon_network(menubar_buf, SCREEN_W, MENUBAR_H,
+                        tray_x + 20, 4, SPRACH_COL_MENUBAR_FG,
+                        net_up != 0);
+        sp_icon_bluetooth(menubar_buf, SCREEN_W, MENUBAR_H,
+                          tray_x + 40, 4, SPRACH_COL_MENUBAR_FG,
+                          ctx->bt_on);
+    }
+
     /* Clock popup (toggled by clicking the clock area) is drawn on its
      * OWN surface (clock_popup_buf) below the menubar — the menubar
      * buffer is only 24px tall, painting a popup into it would run
@@ -1016,7 +1098,7 @@ void sprach_draw_menubar(struct sprach_ctx *ctx)
 
 #define CLOCK_POP_W     168
 #define CLOCK_POP_H     64
-#define ABOUT_POP_H     128         /* About panel needs more rows */
+#define ABOUT_POP_H     160         /* About panel + Settings picker */
 static uint32_t clock_popup_buf[CLOCK_POP_W * ABOUT_POP_H];
 
 /* Epoch → YYYY-MM-DD (proleptic Gregorian, good to 9999). */
@@ -1189,15 +1271,107 @@ void sprach_draw_clock_popup(struct sprach_ctx *ctx)
         sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 10, 80,
                     "CPU:     x86 i386 (QEMU std)", SPRACH_COL_MENUBAR_FG);
 
+        /* Tray control panels (opened from the menubar tray glyphs) */
+        if (ctx->tray_mode) {
+            const char *title = ctx->tray_mode == 1 ? "Volume"
+                              : ctx->tray_mode == 2 ? "Network"
+                              : "Bluetooth";
+            sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 10, 8,
+                        title, SPRACH_COL_MENUBAR_FG);
+            sp_rect(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 8, 20,
+                    CLOCK_POP_W - 16, 1, SPRACH_COL_BORDER);
+
+            if (ctx->tray_mode == 3) {
+                /* Bluetooth: radio toggle + adapter presence from the
+                 * PCI scan.  QEMU i386 has no class-0xD controller,
+                 * so the honest report is "no adapter". */
+                sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
+                            10, 28, ctx->bt_on ? "Radio: ON"
+                                               : "Radio: OFF",
+                            SPRACH_COL_MENUBAR_FG);
+                sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
+                            10, 40, "Adapter: none (QEMU)",
+                            SPRACH_COL_MENUBAR_DIM);
+                sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
+                            10, 52, "click radio to toggle",
+                            SPRACH_COL_MENUBAR_DIM);
+            } else if (ctx->tray_mode == 2) {
+                /* Network: live S_NETINFO state + IP */
+                uint32_t ip, mask, gw;
+                uint32_t up = musr_sc3(S_NETINFO, (uint32_t)&ip,
+                                       (uint32_t)&mask, (uint32_t)&gw);
+                sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
+                            10, 28, up ? "eth0: up" : "eth0: down",
+                            SPRACH_COL_MENUBAR_FG);
+                if (up) {
+                    char b[20];
+                    int k = 0;
+                    b[k++] = 'I'; b[k++] = 'P'; b[k++] = ':';
+                    b[k++] = ' ';
+                    for (int i = 0; i < 4; i++) {
+                        uint8_t o = (uint8_t)(ip >> (24 - 8 * i));
+                        if (o >= 100) b[k++] = '0' + o / 100;
+                        if (o >= 10) b[k++] = '0' + (o / 10) % 10;
+                        b[k++] = '0' + o % 10;
+                        if (i < 3) b[k++] = '.';
+                    }
+                    b[k] = '\0';
+                    sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
+                                10, 40, b, SPRACH_COL_MENUBAR_FG);
+                }
+            } else {
+                /* Volume: level bar (no audio hardware yet; the level
+                 * is the stored software setting) */
+                sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
+                            10, 28, "Level:", SPRACH_COL_MENUBAR_FG);
+                sp_rect(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
+                        10, 40, 140, 8, SPRACH_COL_BORDER);
+                sp_rect(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
+                        12, 42, 100, 4, 0x003060C0);
+            }
+            ctx->shm->dirty = 1;
+            return;
+        }
+
         if (ctx->clock_settings) {
-            /* System Settings placeholder panel: same surface, just
-             * the "not implemented" notice centered. */
+            /* System Settings panel: wallpaper theme picker.  Six
+             * theme swatches (two rows of three) painted with the
+             * actual theme gradient; click a swatch to apply it
+             * (see the clock-popup hit-test in sprach_handle_click).
+             * The current theme gets a highlight border. */
             sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 10, 96,
-                        "System Settings:",
+                        "Wallpaper:",
                         SPRACH_COL_MENUBAR_FG);
-            sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H, 10, 108,
-                        "Not implemented yet",
-                        SPRACH_COL_MENUBAR_FG);
+            int cur = gui_wallpaper_get_theme();
+            for (int t = 0; t < 6; t++) {
+                int sx = 12 + (t % 3) * 48;
+                int sy = 108 + (t / 3) * 20;
+                uint32_t top, bot;
+                switch (t) {
+                case 0: top = 0x00000044u; bot = 0x0066FFu; break;
+                case 1: top = 0x00224488u; bot = 0x0044AACCu; break;
+                case 2: top = 0x00331166u; bot = 0x00AA44CCu; break;
+                case 3: top = 0x001A1A2Eu; bot = 0x00444466u; break;
+                case 4: top = 0x00663300u; bot = 0x00CCAA33u; break;
+                default: top = 0x00104010u; bot = 0x0030A030u; break;
+                }
+                /* swatch: vertical gradient in 6 steps */
+                for (int r = 0; r < 14; r++) {
+                    uint32_t f = (uint32_t)r * 0xFF / 13u;
+                    uint32_t c = (((top & 0xFF0000u) * (0xFF - f)
+                                   + (bot & 0xFF0000u) * f) >> 8)
+                                   & 0xFF0000u;
+                    c |= (((top & 0xFF00u) * (0xFF - f)
+                           + (bot & 0xFF00u) * f) >> 8) & 0xFF00u;
+                    c |= (((top & 0xFFu) * (0xFF - f)
+                           + (bot & 0xFFu) * f) >> 8) & 0xFFu;
+                    sp_rect(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
+                            sx, sy + r, 44, 1, c);
+                }
+                if (t == cur)
+                    sp_rect(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
+                            sx - 1, sy - 1, 46, 16, 0x003060C0);
+            }
             ctx->shm->dirty = 1;
             return;
         }
@@ -1332,6 +1506,7 @@ static void sprach_app_menu_activate(struct sprach_ctx *ctx, int mi)
         ctx->clock_open = 1;
         ctx->clock_about = 1;
         ctx->clock_settings = 0;
+        ctx->tray_mode = 0;
         ctx->clock_x = (SCREEN_W - CLOCK_POP_W) / 2;
         ctx->clock_y = 200;
         ctx->clock_last_sec = -1;
@@ -1344,12 +1519,13 @@ static void sprach_app_menu_activate(struct sprach_ctx *ctx, int mi)
             sprach_draw_clock_popup(ctx);
         }
         break;
-    case 1:   /* System Settings → placeholder */
-        ser_puts("[SPRACH] system settings: Not implemented yet\n");
+    case 1:   /* System Settings → wallpaper picker panel */
+        ser_puts("[SPRACH] system settings\n");
         if (ctx->clock_slot >= 0) {
             ctx->clock_open = 1;
             ctx->clock_about = 1;
             ctx->clock_settings = 1;
+            ctx->tray_mode = 0;
             ctx->clock_x = (SCREEN_W - CLOCK_POP_W) / 2;
             ctx->clock_y = 200;
             ctx->clock_last_sec = -1;
@@ -1647,6 +1823,158 @@ static void sprach_launchpad_activate(struct sprach_ctx *ctx)
     ctx->shm->dirty = 1;
 }
 
+/* ==== DESKTOP ICONS ===================================================
+ * A single surface covering the work area, painted with the active
+ * wallpaper theme gradient as its background (the legacy compositor
+ * has no per-pixel alpha, so the icon layer "pretends" to be part of
+ * the wallpaper).  Icons are laid out in a grid on the left; a click
+ * on an icon spawns the app, exactly like Launchpad entries.  The
+ * layer always stays at the BOTTOM of the z-order (excluded from
+ * raise swaps). */
+
+#define DESK_ICON_MAX   12
+#define DESK_ICON_COLS  3
+#define DESK_CELL_W     76
+#define DESK_CELL_H     76
+#define DESK_GRID_X     16
+#define DESK_GRID_Y     (MENUBAR_H + 16)
+static uint32_t desk_buf[SCREEN_W * WORK_AREA_H];
+static int desk_slot = -1;
+static int desk_count = 0;
+/* Reuse the launchpad app table: desk icons are simply the first
+ * DESK_ICON_MAX launchable apps. */
+
+static void sprach_desktop_paint(struct sprach_ctx *ctx)
+{
+    if (desk_slot < 0)
+        return;
+    /* Background: the active wallpaper theme gradient, matching the
+     * compositor's full-screen math (top at screen y=0) so the layer
+     * blends seamlessly with the exposed wallpaper around it. */
+    uint32_t theme = shm_wallpaper_theme();
+    static const struct { uint32_t top, bot; } th[] = {
+        { 0x00000044u, 0x0066FFu }, { 0x00224488u, 0x0044AACCu },
+        { 0x00331166u, 0x00AA44CCu }, { 0x001A1A2Eu, 0x00444466u },
+        { 0x00663300u, 0x00CCAA33u }, { 0x00104010u, 0x0030A030u },
+    };
+    if (theme >= 6)
+        theme = 0;
+    uint32_t top = th[theme].top, bot = th[theme].bot;
+    for (int y = 0; y < WORK_AREA_H; y++) {
+        /* global screen scanline = WORK_AREA_Y + y */
+        uint32_t f = (uint32_t)(WORK_AREA_Y + y) * 0xFFu
+                     / (uint32_t)(SCREEN_H - 1);
+        uint32_t c = (((top & 0xFF0000u) * (0xFF - f)
+                       + (bot & 0xFF0000u) * f) >> 8) & 0xFF0000u;
+        c |= (((top & 0xFF00u) * (0xFF - f)
+               + (bot & 0xFF00u) * f) >> 8) & 0xFF00u;
+        c |= (((top & 0xFFu) * (0xFF - f)
+               + (bot & 0xFFu) * f) >> 8) & 0xFFu;
+        uint32_t *row = &desk_buf[y * SCREEN_W];
+        for (int x = 0; x < SCREEN_W; x++)
+            row[x] = c;
+    }
+
+    /* Icon grid */
+    for (int a = 0; a < desk_count && a < DESK_ICON_MAX; a++) {
+        int cx = DESK_GRID_X + (a % DESK_ICON_COLS) * DESK_CELL_W;
+        int cy = DESK_GRID_Y - MENUBAR_H + (a / DESK_ICON_COLS) * DESK_CELL_H;
+        if (cy + DESK_CELL_H > WORK_AREA_H)
+            break;
+        int sel = (ctx->mouse_x >= cx && ctx->mouse_x < cx + DESK_CELL_W &&
+                   ctx->mouse_y >= cy + MENUBAR_H &&
+                   ctx->mouse_y < cy + MENUBAR_H + DESK_CELL_H);
+        if (sel)
+            sp_rect(desk_buf, SCREEN_W, WORK_AREA_H, cx + 4, cy + 4,
+                    DESK_CELL_W - 8, DESK_CELL_H - 8, 0x4060A000);
+        uint32_t *ic = lp_icon_for(&lp_apps[a]);
+        int ix = cx + (DESK_CELL_W - 32) / 2;
+        int iy = cy + 6;
+        for (int yy = 0; yy < 32; yy++)
+            for (int xx = 0; xx < 32; xx++) {
+                uint32_t px = ic[yy * 32 + xx];
+                if (!(px >> 24))
+                    continue;
+                desk_buf[(iy + yy) * SCREEN_W + ix + xx] = px;
+            }
+        int nl = 0;
+        for (const char *p = lp_apps[a].name; *p; p++)
+            nl++;
+        sp_draw_str(desk_buf, SCREEN_W, WORK_AREA_H,
+                    cx + (DESK_CELL_W - nl * 6) / 2, cy + 44,
+                    lp_apps[a].name, sel ? 0x00FFFFFF : 0x00E8E8E8);
+    }
+    ctx->shm->surfaces[desk_slot].dmg_x = 0;
+    ctx->shm->surfaces[desk_slot].dmg_y = WORK_AREA_Y;
+    ctx->shm->surfaces[desk_slot].dmg_w = SCREEN_W;
+    ctx->shm->surfaces[desk_slot].dmg_h = WORK_AREA_H;
+    ctx->shm->dirty = 1;
+}
+
+static int sprach_desktop_create(struct sprach_ctx *ctx)
+{
+    if (desk_slot >= 0)
+        return 0;
+    lp_scan();
+    desk_count = lp_app_count;
+    for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
+        if (!ctx->shm->surfaces[i].in_use) {
+            struct copland_surface *s = &ctx->shm->surfaces[i];
+            s->x = 0;
+            s->y = WORK_AREA_Y;
+            s->w = SCREEN_W;
+            s->h = WORK_AREA_H;
+            s->color = 0x00000044;
+            s->flags = COPLAND_SURF_VISIBLE;
+            s->dmg_w = 0;
+            s->buffer_ptr = (uint32_t)(uintptr_t)desk_buf;
+            s->in_use = 1;
+            desk_slot = i;
+            sprach_desktop_paint(ctx);
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* Launch the app under a desktop-icon click (work-area coords). */
+static int sprach_desktop_click(struct sprach_ctx *ctx)
+{
+    if (desk_slot < 0)
+        return 0;
+    for (int a = 0; a < desk_count && a < DESK_ICON_MAX; a++) {
+        int cx = DESK_GRID_X + (a % DESK_ICON_COLS) * DESK_CELL_W;
+        int cy = DESK_GRID_Y + (a / DESK_ICON_COLS) * DESK_CELL_H;
+        if (ctx->mouse_x >= cx && ctx->mouse_x < cx + DESK_CELL_W &&
+            ctx->mouse_y >= cy && ctx->mouse_y < cy + DESK_CELL_H) {
+            ser_puts("[SPRACH] desktop icon: launching ");
+            ser_puts(lp_apps[a].path);
+            ser_puts("\n");
+            if (lp_apps[a].path[5] == 't' && lp_apps[a].path[6] == 'e' &&
+                lp_apps[a].path[7] == 'r' && lp_apps[a].path[8] == 'm' &&
+                lp_apps[a].path[9] == '\0') {
+                sprach_spawn_terminal(ctx);
+            } else if (lp_apps[a].path[5] == 'm' && lp_apps[a].path[6] == '4' &&
+                       lp_apps[a].path[7] == 's' && lp_apps[a].path[8] == 'h' &&
+                       lp_apps[a].path[9] == '\0') {
+                int pid = musr_sc_fork();
+                if (pid == 0) {
+                    m4k_spawn("/bin/m4shg", 0);
+                    m4k_exit(1);
+                }
+            } else {
+                int pid = musr_sc_fork();
+                if (pid == 0) {
+                    m4k_spawn(lp_apps[a].path, 0);
+                    m4k_exit(1);
+                }
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* ==== VIRTUAL DESKTOPS ================================================
  * SPRACH_DESKTOPS workspaces.  Each window (and the terminal) carries
  * the desktop it was opened on; switching only toggles surface
@@ -1830,7 +2158,8 @@ void sprach_raise_surface(struct sprach_ctx *ctx, int slot)
     for (int i = 0; i < COPLAND_MAX_SURFACES; i++)
         if (ctx->shm->surfaces[i].in_use &&
             i != ctx->taskbar_slot &&
-            i != ctx->menubar_slot)
+            i != ctx->menubar_slot &&
+            i != desk_slot)
             top = i;
     if (top < 0 || top == slot)
         return;
@@ -1892,7 +2221,8 @@ void sprach_raise_window(struct sprach_ctx *ctx, int idx)
     for (int i = 0; i < COPLAND_MAX_SURFACES; i++)
         if (ctx->shm->surfaces[i].in_use &&
             i != ctx->taskbar_slot &&
-            i != ctx->menubar_slot)
+            i != ctx->menubar_slot &&
+            i != desk_slot)
             top = i;
 
     sprach_raise_surface(ctx, slot);
@@ -2213,10 +2543,43 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
 
             /* ── Menubar hit-test: clock area toggles the clock popup ── */
             if (ctx->mouse_y < MENUBAR_H) {
+                /* Tray glyphs (left of the clock): open the control
+                 * panel for the clicked indicator. */
+                {
+                    int clock_x0 = SCREEN_W - 8 * 7 - 12;
+                    int tray_x0 = clock_x0 - TRAY_W - 8;
+                    if (ctx->mouse_x >= tray_x0 &&
+                        ctx->mouse_x < clock_x0) {
+                        int t = (ctx->mouse_x - tray_x0) / 20;
+                        ctx->clock_open = 1;
+                        ctx->clock_about = 1;
+                        ctx->clock_settings = 0;
+                        ctx->tray_mode = t + 1;   /* 1 vol 2 net 3 bt */
+                        ctx->clock_x = tray_x0 - 8;
+                        if (ctx->clock_x < 0)
+                            ctx->clock_x = 0;
+                        ctx->clock_y = MENUBAR_H;
+                        ctx->clock_last_sec = -1;
+                        if (ctx->clock_slot >= 0) {
+                            ctx->shm->surfaces[ctx->clock_slot].x =
+                                ctx->clock_x;
+                            ctx->shm->surfaces[ctx->clock_slot].y =
+                                ctx->clock_y;
+                            ctx->shm->surfaces[ctx->clock_slot].h =
+                                ABOUT_POP_H;
+                            ctx->shm->surfaces[ctx->clock_slot].flags |=
+                                COPLAND_SURF_VISIBLE;
+                            sprach_draw_clock_popup(ctx);
+                        }
+                        ctx->shm->dirty = 1;
+                        hit = 1;
+                    }
+                }
                 int clock_x0 = SCREEN_W - 8 * 7 - 12;
-                if (ctx->mouse_x >= clock_x0) {
+                if (!hit && ctx->mouse_x >= clock_x0) {
                     ctx->clock_open = !ctx->clock_open;
                     ctx->clock_about = 0;   /* time view, not About */
+                    ctx->tray_mode = 0;     /* normal clock popup */
                     if (ctx->clock_open) {
                         ctx->clock_x = SCREEN_W - CLOCK_POP_W - 8;
                         ctx->clock_y = MENUBAR_H;
@@ -2235,25 +2598,6 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                     ctx->shm->dirty = 1;
                     hit = 1;
                 }
-                if (!hit && ctx->clock_open && ctx->clock_slot >= 0 &&
-                    ctx->mouse_x >= ctx->clock_x &&
-                    ctx->mouse_x < ctx->clock_x + CLOCK_POP_W &&
-                    ctx->mouse_y >= ctx->clock_y &&
-                    ctx->mouse_y < ctx->clock_y + CLOCK_POP_H) {
-                    hit = 1;   /* swallow clicks inside the popup */
-                }
-
-                /* App-menu items (when the dropdown is open) */
-                if (!hit && ctx->menu_open && ctx->menu_slot >= 0 &&
-                    ctx->mouse_x >= APP_MENU_X &&
-                    ctx->mouse_x < APP_MENU_X + APP_MENU_W &&
-                    ctx->mouse_y >= MENUBAR_H &&
-                    ctx->mouse_y < MENUBAR_H + APP_MENU_H) {
-                    int item = (ctx->mouse_y - MENUBAR_H) / APP_MENU_ITEM_H;
-                    if (item >= 0 && item < APP_MENU_ITEMS)
-                        sprach_app_menu_activate(ctx, item);
-                    hit = 1;
-                }
 
                 /* Brand text → toggle the app menu dropdown */
                 if (!hit && ctx->mouse_x >= 6 &&
@@ -2261,6 +2605,67 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                     sprach_app_menu_toggle(ctx, !ctx->menu_open);
                     hit = 1;
                 }
+            }
+
+            /* Clock popup BODY hit-test (below the menubar — outside
+             * the y<MENUBAR_H block; inside it this was dead code:
+             * popup y >= MENUBAR_H contradicts the enclosing guard). */
+            if (!hit && ctx->clock_open && ctx->clock_slot >= 0 &&
+                ctx->mouse_x >= ctx->clock_x &&
+                ctx->mouse_x < ctx->clock_x + CLOCK_POP_W &&
+                ctx->mouse_y >= ctx->clock_y &&
+                ctx->mouse_y < ctx->clock_y + ABOUT_POP_H) {
+                /* Settings swatches: apply the clicked theme and
+                 * force a full repaint (wallpaper + chrome).
+                 * Bluetooth panel: clicking the radio line toggles
+                 * the software radio state. */
+                int lx = ctx->mouse_x - ctx->clock_x;
+                int ly = ctx->mouse_y - ctx->clock_y;
+                if (ctx->tray_mode == 3) {
+                    if (ly >= 24 && ly < 40) {
+                        ctx->bt_on = !ctx->bt_on;
+                        sprach_draw_menubar(ctx);
+                        sprach_draw_clock_popup(ctx);
+                        ser_puts(ctx->bt_on
+                            ? "[SPRACH] bluetooth radio ON\n"
+                            : "[SPRACH] bluetooth radio OFF\n");
+                    }
+                    hit = 1;
+                } else if (ctx->clock_settings) {
+                    if (lx >= 12 && ly >= 108 && ly < 148 &&
+                        lx < 12 + 3 * 48) {
+                        int t = (lx - 12) / 48;
+                        if (ly >= 128)
+                            t += 3;
+                        if (t >= 0 && t < 6) {
+                            gui_wallpaper_set_theme(t);
+                            ctx->shm->dirty = 1;
+                            sprach_desktop_paint(ctx);
+                            sprach_draw_clock_popup(ctx);
+                            ser_puts("[SPRACH] wallpaper theme -> ");
+                            print_u32((uint32_t)t);
+                            ser_puts("\n");
+                        }
+                        hit = 1;
+                    } else {
+                        hit = 1;   /* swallow other popup clicks */
+                    }
+                } else {
+                    hit = 1;   /* swallow clicks inside the popup */
+                }
+            }
+
+            /* App-menu items (when the dropdown is open) — also moved
+             * out of the y<MENUBAR_H block (items are BELOW it). */
+            if (!hit && ctx->menu_open && ctx->menu_slot >= 0 &&
+                ctx->mouse_x >= APP_MENU_X &&
+                ctx->mouse_x < APP_MENU_X + APP_MENU_W &&
+                ctx->mouse_y >= MENUBAR_H &&
+                ctx->mouse_y < MENUBAR_H + APP_MENU_H) {
+                int item = (ctx->mouse_y - MENUBAR_H) / APP_MENU_ITEM_H;
+                if (item >= 0 && item < APP_MENU_ITEMS)
+                    sprach_app_menu_activate(ctx, item);
+                hit = 1;
             }
 
             /* Launchpad overlay hit-test (covers the work area) */
@@ -2522,6 +2927,15 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                     }
                 }
             }
+
+            /* Desktop icon hit-test: LAST resort — only clicks that
+             * fell through every panel, menu, window and client
+             * surface reach the desktop icons (they sit on the
+             * wallpaper, under all floating chrome). */
+            if (!hit && ctx->mouse_y >= MENUBAR_H &&
+                ctx->mouse_y < SCREEN_H - TASKBAR_H) {
+                hit = sprach_desktop_click(ctx);
+            }
 }
 
 /* ── Entry point ── */
@@ -2588,6 +3002,8 @@ void _start(void)
     ctx.clock_last_sec = -1;
     ctx.clock_about = 0;
     ctx.desktop_idx = 0;
+    ctx.bt_on = 0;
+    ctx.tray_mode = 0;
     ctx.menu_open = 0;
     ctx.menu_slot = -1;
     ctx.lp_open = 0;
@@ -2629,6 +3045,11 @@ void _start(void)
         if (sprach_create_menubar(&ctx) != 0)
             ser_puts("[SPRACH] warning: menubar creation failed\n");
     }
+    /* Desktop icon layer FIRST: the legacy compositor paints in slot
+     * order, so the lowest slot (created first) is the bottom-most
+     * surface — windows opened later always composite above it. */
+    if (sprach_desktop_create(&ctx) != 0)
+        ser_puts("[SPRACH] warning: desktop icon layer creation failed\n");
     if (sprach_create_clock_popup(&ctx) != 0)
         ser_puts("[SPRACH] warning: clock popup creation failed\n");
     if (sprach_create_app_menu(&ctx) != 0)

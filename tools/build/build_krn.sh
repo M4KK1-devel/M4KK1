@@ -374,7 +374,7 @@ for m in stack; do
     $UCC $M4SH_CFLAGS -c sys/src/copland/copland_proto.c -o usr/src/sprach/copland_proto.o
     $LD -m elf_i386 -T usr/src/sprach/sprach.ld -nostdlib -z max-page-size=0x1000 \
         -o "usr/src/sprach/sprach_${m}" \
-        "usr/src/sprach/sprach.o" "usr/src/sprach/sprach_mode_${m}.o" usr/src/lib/icons.o usr/src/lib/icons_data.o usr/src/sprach/copland_proto.o $PCC_RUNTIME
+        "usr/src/sprach/sprach.o" "usr/src/sprach/sprach_mode_${m}.o" usr/src/lib/icons.o usr/src/lib/icons_data.o usr/src/lib/libgui.o usr/src/sprach/copland_proto.o $PCC_RUNTIME
     echo "   Sprach ${m} ELF: usr/src/sprach/sprach_${m} ($(stat -c%s "usr/src/sprach/sprach_${m}") bytes)"
 done
 cp -f usr/src/sprach/sprach_stack ./usr/bin/sprach
