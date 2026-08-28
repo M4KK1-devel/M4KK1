@@ -6,7 +6,8 @@ Sprach window manager desktop
 .SH OVERVIEW
 This page describes the M4KK1 desktop environment (Copland display
 server + Sprach WM + MDM greeter): the Bar menu, Dock quick launch,
-Launchpad, file manager (fm), virtual desktops and the wallpaper system.
+Launchpad, file manager (fm), virtual desktops, wallpaper themes,
+system tray and desktop icons.
 The \fBRule\fR key is the keyboard Win/Meta key; the current keymap maps
 it onto the \fBAlt\fR modifier slot.
 .SH BAR MENU
@@ -18,7 +19,11 @@ Info panel with OS/kernel version (uname), total/used/free memory
 (sysinfo, KB), build date and CPU model.
 .TP
 .B System Settings
-Placeholder; shows "Not implemented yet".
+Opens the wallpaper theme picker: six theme swatches (Classic Blue,
+Ocean, Dusk Purple, Graphite, Desert, Forest) in a 2x3 grid with the
+active theme highlighted. Clicking a swatch switches the wallpaper
+instantly (theme id is shared via copland_shm; both Copland composite
+paths repaint) and the desktop icon layer follows.
 .TP
 .B Lock Screen
 Ends the session; the screen returns to the MDM greeter.
@@ -76,8 +81,32 @@ Switch to desktop 1\-4. Windows show/hide per their desktop; the Bar
 center shows "Desktop N".
 .SH WALLPAPER
 The MDM greeter and the Sprach desktop background share
-\fBgui_draw_wallpaper()\fR: a vertical blue gradient (0x000044 ->
-0x0066FF).
+\fBgui_draw_wallpaper()\fR: a theme-driven vertical gradient, with the
+active theme id shared via copland_shm. Six themes: Classic Blue
+(0x000044 -> 0x0066FF), Ocean, Dusk Purple, Graphite, Desert, Forest.
+Switch via Bar menu -> System Settings.
+.SH SYSTEM TRAY
+Three status glyphs sit left of the Bar clock; each opens a control
+panel on click:
+.TP
+.B Volume
+Speaker glyph; panel shows the software volume level bar (no audio
+hardware yet).
+.TP
+.B Network
+Signal-bar glyph reflecting the live \fIS_NETINFO\fR interface state:
+three bars when up, dimmed with an X when down. The panel shows the
+eth0 state and IP address, refreshed by the 1 Hz Bar repaint.
+.TP
+.B Bluetooth
+Rune glyph; panel offers a Radio On/Off software toggle (icon follows
+the state) and reports adapter detection. QEMU i386 has no class-0xD
+wireless controller, so it honestly reports "Adapter: none".
+.SH DESKTOP ICONS
+An app icon grid sits on the work-area wallpaper (single surface,
+reusing the Launchpad /bin scan and icon assets), always at the bottom
+of the window z-order. Click an icon to launch the app; clicks reach
+the desktop only after every panel, menu and window declined them.
 .SH SEE ALSO
 .BR copland (7),
 .BR sprach (7)
