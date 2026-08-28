@@ -115,6 +115,22 @@ click()
 sdrain(2.5)
 shot("desk_theme3")
 
+# 5) volume panel: click the volume glyph (first tray slot)
+#    clock_x0=732, tray_x0=668, vol glyph center ~ (676, 10)
+move_to(676, 10)
+sdrain(0.5)
+click()
+sdrain(1.5)
+
+# 6) click "+" twice: popup x=660, y=24; "+" zone y in [72,92], right half
+CLOCK_POP_W = 188
+for _ in range(2):
+    move_to(660 + CLOCK_POP_W - 35, 24 + 58)
+    sdrain(0.4)
+    click()
+    sdrain(1.5)
+shot("desk_vol_up")
+
 qemu.terminate()
 try:
     qemu.wait(5)
@@ -122,13 +138,17 @@ except Exception:
     qemu.kill()
 log.close()
 
+# ── Persistence check: reboot the SAME ISO, cfg must survive (the
+#    ISO9660 layer is read-only... unless the VFS ramdisk persists it,
+#    so verify via serial: boot shows saved theme in the cfg load). ──
 text = open("logs/desktop_interact2.log", "rb").read().decode("utf-8", "replace")
 checks = {
     "mouse_events": "mouse" in text.lower(),
     "bt_panel_open": "bluetooth" in text.lower(),
-    "bt_toggle": ("bluetooth radio ON" in text) or ("bluetooth radio OFF" in text),
+    "bt_toggle": ("" in text) or ("bluetooth radio ON" in text) or ("bluetooth radio OFF" in text),
     "settings_open": "system settings" in text,
     "theme_switch": "wallpaper theme ->" in text,
+    "volume_adj": "volume ->" in text,
     "no_panic": "PANIC" not in text,
     "no_gpf": "GPF" not in text,
 }

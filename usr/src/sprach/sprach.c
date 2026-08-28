@@ -1169,6 +1169,75 @@ int sprach_create_clock_popup(struct sprach_ctx *ctx)
     return -1;
 }
 
+/* ── Desktop settings persistence (/etc/desktop.cfg) ──
+ *
+ * Plain-text key=value store, one line each:
+ *   theme=N vol=N bt=N
+ * Read once at boot; rewritten on every change (small file, VFS
+ * truncates on O_TRUNC reopen).  Missing file = defaults.
+ */
+#define SPRACH_CFG_PATH "/etc/desktop.cfg"
+
+static void sprach_cfg_save(struct sprach_ctx *ctx)
+{
+    char b[48];
+    int k = 0;
+    const char *s;
+
+    s = "theme="; while (*s) b[k++] = *s++;
+    b[k++] = (char)('0' + gui_wallpaper_get_theme());
+    b[k++] = '\n';
+    s = "vol=";   while (*s) b[k++] = *s++;
+    b[k++] = (char)('0' + ctx->vol_level / 100);
+    b[k++] = (char)('0' + (ctx->vol_level / 10) % 10);
+    b[k++] = (char)('0' + ctx->vol_level % 10);
+    b[k++] = '\n';
+    s = "bt=";    while (*s) b[k++] = *s++;
+    b[k++] = ctx->bt_on ? '1' : '0';
+    b[k++] = '\n';
+
+    int fd = musr_sc_open(SPRACH_CFG_PATH, O_CREAT | O_WRONLY | O_TRUNC);
+    if (fd < 0) {
+        ser_puts("[SPRACH] cfg save: open failed\n");
+        return;
+    }
+    musr_sc_write(fd, b, k);
+    musr_sc_close(fd);
+}
+
+static void sprach_cfg_load(struct sprach_ctx *ctx)
+{
+    char b[64];
+    int fd = musr_sc_open(SPRACH_CFG_PATH, O_RDONLY);
+    if (fd < 0)
+        return;                     /* first boot: keep defaults */
+    int n = musr_sc_read(fd, b, sizeof(b) - 1);
+    musr_sc_close(fd);
+    if (n <= 0)
+        return;
+    b[n] = '\0';
+
+    /* Minimal key=value scan (no sscanf in this environment). */
+    for (int i = 0; i + 6 < n; i++) {
+        if (b[i] == 't' && b[i+1] == 'h' && b[i+2] == 'e' &&
+            b[i+3] == 'm' && b[i+4] == 'e' && b[i+5] == '=') {
+            int v = b[i+6] - '0';
+            if (v >= 0 && v < 6)
+                gui_wallpaper_set_theme(v);
+        } else if (b[i] == 'v' && b[i+1] == 'o' && b[i+2] == 'l' &&
+                   b[i+3] == '=') {
+            int v = 0;
+            int j = i + 4;
+            while (j < n && b[j] >= '0' && b[j] <= '9' && v < 1000)
+                v = v * 10 + (b[j++] - '0');
+            if (v > 100) v = 100;
+            ctx->vol_level = v;
+        } else if (b[i] == 'b' && b[i+1] == 't' && b[i+2] == '=') {
+            ctx->bt_on = (b[i+3] == '1');
+        }
+    }
+}
+
 void sprach_draw_clock_popup(struct sprach_ctx *ctx)
 {
     if (ctx->clock_slot < 0 || !ctx->clock_open)
@@ -1320,14 +1389,20 @@ void sprach_draw_clock_popup(struct sprach_ctx *ctx)
                                 10, 40, b, SPRACH_COL_MENUBAR_FG);
                 }
             } else {
-                /* Volume: level bar (no audio hardware yet; the level
-                 * is the stored software setting) */
+                /* Volume: level bar + click-to-adjust (no audio
+                 * hardware yet; the level is the stored software
+                 * setting, persisted in /etc/desktop.cfg) */
                 sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
                             10, 28, "Level:", SPRACH_COL_MENUBAR_FG);
                 sp_rect(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
                         10, 40, 140, 8, SPRACH_COL_BORDER);
                 sp_rect(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
-                        12, 42, 100, 4, 0x003060C0);
+                        12, 42,
+                        (int)((uint32_t)ctx->vol_level * 136u / 100u),
+                        4, 0x003060C0);
+                sp_draw_str(clock_popup_buf, CLOCK_POP_W, ABOUT_POP_H,
+                            10, 56, "-   (click to adjust)   +",
+                            SPRACH_COL_MENUBAR_DIM);
             }
             ctx->shm->dirty = 1;
             return;
@@ -2624,11 +2699,32 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                 if (ctx->tray_mode == 3) {
                     if (ly >= 24 && ly < 40) {
                         ctx->bt_on = !ctx->bt_on;
+                        sprach_cfg_save(ctx);
                         sprach_draw_menubar(ctx);
                         sprach_draw_clock_popup(ctx);
                         ser_puts(ctx->bt_on
                             ? "[SPRACH] bluetooth radio ON\n"
                             : "[SPRACH] bluetooth radio OFF\n");
+                    }
+                    hit = 1;
+                } else if (ctx->tray_mode == 1) {
+                    /* Volume: click "-"/"+" halves to adjust ±10. */
+                    if (ly >= 48 && ly < 68) {
+                        if (lx >= 10 && lx < 60) {
+                            ctx->vol_level -= 10;
+                            if (ctx->vol_level < 0)
+                                ctx->vol_level = 0;
+                        } else if (lx >= CLOCK_POP_W - 60 &&
+                                   lx < CLOCK_POP_W - 10) {
+                            ctx->vol_level += 10;
+                            if (ctx->vol_level > 100)
+                                ctx->vol_level = 100;
+                        }
+                        sprach_cfg_save(ctx);
+                        sprach_draw_clock_popup(ctx);
+                        ser_puts("[SPRACH] volume -> ");
+                        print_u32((uint32_t)ctx->vol_level);
+                        ser_puts("\n");
                     }
                     hit = 1;
                 } else if (ctx->clock_settings) {
@@ -2639,6 +2735,7 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                             t += 3;
                         if (t >= 0 && t < 6) {
                             gui_wallpaper_set_theme(t);
+                            sprach_cfg_save(ctx);
                             ctx->shm->dirty = 1;
                             sprach_desktop_paint(ctx);
                             sprach_draw_clock_popup(ctx);
@@ -2955,7 +3052,7 @@ void _start(void)
     print_u32((uint32_t)SPRACH_MOUSE_SPEED);
     ser_puts(", speed ");
     print_u32((uint32_t)SPRACH_MOUSE_SPEED);
-    ser_puts("px/step; every move logged on serial\n");
+    ser_puts("px/step; clicks are edge-triggered\n");
     ser_puts("[SPRACH] ================================\n");
 
     struct copland_shm *shm = copland_shm_get();
@@ -3004,12 +3101,18 @@ void _start(void)
     ctx.desktop_idx = 0;
     ctx.bt_on = 0;
     ctx.tray_mode = 0;
+    ctx.vol_level = 70;
     ctx.menu_open = 0;
     ctx.menu_slot = -1;
     ctx.lp_open = 0;
     ctx.lp_slot = -1;
     ctx.lp_count = 0;
     ctx.term_desktop = 0;
+
+    /* Restore persisted desktop settings (theme/vol/bt) AFTER the
+     * defaults above so a saved value wins, but BEFORE the first
+     * paint — boot then shows the saved wallpaper immediately. */
+    sprach_cfg_load(&ctx);
 
     sprach_mode_init(&ctx);
 
@@ -3138,10 +3241,24 @@ void _start(void)
                               ctx.offs   != old_offs   ||
                               ctx.dir    != old_dir);
 
-        /* ── Repaint demo window buffers (cheap in-RAM writes) ── */
-        for (int i = 0; i < SPRACH_WINDOW_COUNT; i++) {
-            if (ctx.wins[i].slot >= 0 && !ctx.wins[i].hidden)
-                sprach_paint_window(&ctx, &ctx.wins[i]);
+        /* ── Repaint demo window buffers: ONLY on ticks whose result
+         * will actually reach the screen.  A composite happens on
+         * layout changes, per-second chrome repaints and every
+         * SPRACH_ANIM_TICKS; repainting on the other ~29/30 ticks
+         * wrote buffers nobody ever blitted (~36 MB/s of pure RAM
+         * bandwidth at 50 FPS x 3 windows). ── */
+        int epoch_now = musr_sc_time();
+        if (epoch_now < 0)
+            epoch_now = 0;
+        int need_composite =
+            layout_changed ||
+            ((epoch_now % 86400) != ctx.menu_last_second) ||
+            ((ctx.tick % SPRACH_ANIM_TICKS) == 0);
+        if (need_composite) {
+            for (int i = 0; i < SPRACH_WINDOW_COUNT; i++) {
+                if (ctx.wins[i].slot >= 0 && !ctx.wins[i].hidden)
+                    sprach_paint_window(&ctx, &ctx.wins[i]);
+            }
         }
 
         /* ── Dock: repaint only when the window set or the active
@@ -3154,9 +3271,6 @@ void _start(void)
 
         /* ── Menubar clock: repaint + composite once per second ── */
         int menubar_repainted = 0;
-        int epoch_now = musr_sc_time();
-        if (epoch_now < 0)
-            epoch_now = 0;
         int sec_now = epoch_now % 86400;
         if (sec_now != ctx.menu_last_second) {
             ctx.menu_last_second = sec_now;

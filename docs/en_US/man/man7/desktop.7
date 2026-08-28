@@ -90,7 +90,8 @@ Three status glyphs sit left of the Bar clock; each opens a control
 panel on click:
 .TP
 .B Volume
-Speaker glyph; panel shows the software volume level bar (no audio
+Speaker glyph; panel shows the software volume level bar with
+"-" / "+" buttons (click adjusts by 10, range 0-100; no audio
 hardware yet).
 .TP
 .B Network
@@ -102,6 +103,11 @@ eth0 state and IP address, refreshed by the 1 Hz Bar repaint.
 Rune glyph; panel offers a Radio On/Off software toggle (icon follows
 the state) and reports adapter detection. QEMU i386 has no class-0xD
 wireless controller, so it honestly reports "Adapter: none".
+.SH SETTINGS PERSISTENCE
+The wallpaper theme, volume and bluetooth switch persist in
+\fI/etc/desktop.cfg\fR (plain-text key=value). Every change writes
+the file immediately; Sprach reloads it before its first paint, so
+boot shows the last saved wallpaper.
 .SH DESKTOP ICONS
 An app icon grid sits on the work-area wallpaper (single surface,
 reusing the Launchpad /bin scan and icon assets), always at the bottom

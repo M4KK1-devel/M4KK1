@@ -180,6 +180,10 @@ struct sprach_ctx {
      * radio state and reports adapter presence from the PCI scan. */
     int bt_on;
 
+    /* Software volume level 0..100 (tray panel +/- buttons adjust;
+     * persisted in /etc/desktop.cfg with the theme and bt state). */
+    int vol_level;
+
     /* Apple-menu dropdown (click the "M4KK1" brand): 1 = open.
      * Drawn on its own surface (menu_slot) below the brand text. */
     int menu_open;
