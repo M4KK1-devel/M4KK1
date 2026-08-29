@@ -535,6 +535,9 @@ xxd -i init/init.elf > init/init_elf.c
 echo "   Generated init/init_elf.c"
 fi
 
+echo "=== Flat-address-space ELF overlap check ==="
+python3 tools/build/check_elf_overlap.py || exit 1
+
 echo "=== Copying ELFs to ./usr/bin/ ==="
 if [ "$NEED_USER" = 1 ]; then
 cp -f m4sh/m4sh.elf ./usr/bin/m4sh

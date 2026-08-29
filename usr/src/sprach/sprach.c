@@ -1856,6 +1856,35 @@ static void lp_scan(void)
             lp_app_count++;
         }
     }
+    /* Sort: user-facing apps first (fm = file manager, terminal,
+     * m4sh), then alphabetical.  The raw getdents order put altr
+     * (a CLI helper) at desktop cell 0, so double-clicking the first
+     * desktop icon launched the wrong app entirely. */
+    for (int a = 1; a < lp_app_count; a++) {
+        struct lp_app tmp = lp_apps[a];
+        int b = a - 1;
+        while (b >= 0 && lp_app_prio(&lp_apps[b]) > lp_app_prio(&tmp)) {
+            lp_apps[b + 1] = lp_apps[b];
+            b--;
+        }
+        lp_apps[b + 1] = tmp;
+    }
+}
+
+/* Priority for desktop/launchpad ordering (lower = closer to front).
+ * 0: fm (file manager — the icon users actually look for)
+ * 1: terminal family
+ * 2: everything else (alphabetical via stable insertion) */
+static int lp_app_prio(const struct lp_app *a)
+{
+    const char *n = a->name;
+    if (n[0] == 'f' && n[1] == 'm' && n[2] == '\0')
+        return 0;
+    if (n[0] == 't' && n[1] == 'e' && n[2] == 'r' && n[3] == 'm')
+        return 1;
+    if (n[0] == 'm' && n[1] == '4' && n[2] == 's' && n[3] == 'h')
+        return 1;
+    return 2;
 }
 
 #define LP_COLS     4

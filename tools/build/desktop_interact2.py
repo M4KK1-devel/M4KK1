@@ -5,11 +5,25 @@ import os, socket, subprocess, time
 
 os.chdir("/mnt/f/M4KK1")
 # Accept both the manual-test ISO (full-test.iso) and the cron job1
-# artifact (full.iso) — whichever is newest.
+# artifact (full.iso) — whichever is newest.  NOTE: full.iso is built
+# WITHOUT -DM4K_TEST_AUTOLOGIN, so MDM parks on the login form and
+# every desktop assertion fails; prefer the autologin full-test ISO
+# whenever it exists, regardless of mtime — and if it's missing
+# (cron job1 cleans output/ on every run), rebuild it first.
 isos = sorted([f for f in os.listdir("output")
                if f.endswith("full-test.iso") or f.endswith("full.iso")],
-              key=lambda f: os.path.getmtime(os.path.join("output", f)))
+              key=lambda f: (not f.endswith("full-test.iso"),
+                             os.path.getmtime(os.path.join("output", f))))
 iso = os.path.join("output", isos[-1])
+if not iso.endswith("full-test.iso"):
+    print("[interact2] no full-test ISO (cron cleaned output/), rebuilding...")
+    subprocess.run(["bash", "tools/build/build_neticons.sh"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+                   timeout=480)
+    iso = os.path.join("output", max(
+        (f for f in os.listdir("output") if f.endswith("full-test.iso")),
+        key=lambda f: os.path.getmtime(os.path.join("output", f))))
+print("[interact2] using", iso)
 sock = "/tmp/m4k_desk3.sock"
 mon = "/tmp/m4k_desk3.mon"
 for f in (sock, mon):

@@ -585,15 +585,22 @@ static uint32_t m4k_syscall_spawn_impl(uint32_t arg1, uint32_t arg2, uint32_t ar
 
     for (;;) {
         int n = mkrn_vfs_read(fd, elf_buf + total, cap - total);
-        if (n < 0)
-            goto out;
+        if (n < 0) {
+            mkrn_memory_free_page(elf_buf, cap / 4096);
+            elf_buf = NULL;
+            mkrn_vfs_close(fd);
+            return (uint32_t)-1;
+        }
         if (n == 0)
             break;
         total += (uint32_t)n;
     }
 
-    if (total == 0)
-        goto out;
+    if (total == 0) {
+        mkrn_memory_free_page(elf_buf, cap / 4096);
+        mkrn_vfs_close(fd);
+        return (uint32_t)-1;
+    }
 
     const char *slash = path;
     const char *last_slash = path;
@@ -604,13 +611,27 @@ static uint32_t m4k_syscall_spawn_impl(uint32_t arg1, uint32_t arg2, uint32_t ar
     }
     ret = mkrn_execve(elf_buf, total, last_slash);
 
-out:
-    if (elf_buf)
-        mkrn_memory_free_page(elf_buf, cap / 4096);
+    /* execve has consumed the buffer (segments copied out); release it
+     * BEFORE the critical section — free may touch allocator locks we
+     * do not want inside a cli window. */
+    mkrn_memory_free_page(elf_buf, cap / 4096);
+    elf_buf = NULL;
     mkrn_vfs_close(fd);
+
     if (ret != 0)
         return (uint32_t)-1;
 
+    /* mkrn_execve has replaced our image and rewired thread_esp to the
+     * fresh ring-3 entry frame.  The hand-rolled stack switch below
+     * must be atomic w.r.t. the timer: a preemption between
+     * mkrn_execve and the esp swap would run the scheduler with a
+     * thread_esp that points at the NEW frame while our kernel stack
+     * still holds syscall frames for the OLD image — the saved
+     * g_switch_esp then captures a half-switched context and the
+     * process silently vanishes (observed: fm freezes at a random
+     * early print, drifts between runs, no EXC).  IF is restored by
+     * the iret into ring 3 (entry frame eflags = 0x3202). */
+    __asm__ volatile("cli");
     mkrn_process_t *pCur = mkrn_process_get_current();
     pCur->state_tags = M4K_SCHED_RUNNING;
     __asm__ volatile(
