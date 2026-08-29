@@ -8,7 +8,10 @@ CPU burn under TCG. Usage: desktop_cpu_bench.py <iso> <label>
 """
 import os, socket, subprocess, sys, time
 
-iso, label = sys.argv[1], sys.argv[2]
+iso, label = (sys.argv[1:3] + ["", ""])[:2]
+if not iso or not label:
+    print("usage: desktop_cpu_bench.py <iso> <label>")
+    raise SystemExit(2)
 os.chdir("/mnt/f/M4KK1")
 sock, mon = "/tmp/m4k_bench.sock", "/tmp/m4k_bench.mon"
 for f in (sock, mon):
