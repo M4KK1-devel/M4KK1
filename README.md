@@ -75,6 +75,9 @@ There is no Makefile for the kernel build — the build script is the source of 
 - GNU ld (i386 support)
 - grub-mkrescue (from GRUB utilities)
 - QEMU (for testing)
+- Zig 0.13.0 (optional; `~/zig-0.13.0/zig` — enables the Zig hot-path
+  pixel primitives, see `docs/zig-standard.md`. Absent toolchain
+  falls back to pure C automatically.)
 
 ### Build
 

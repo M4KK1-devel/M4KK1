@@ -44,6 +44,25 @@
 int out_fd = 1;
 char cwd[256] = "/";
 
+/* ── Zig hot-path pixel primitives (docs/zig-standard.md) ──
+ * Build with -DUSE_ZIG_DRAW routes sp_fill/sp_rect/sp_draw_char/
+ * sp_draw_str/sp_draw_str_bold to the Zig exports in spr_draw.zig
+ * (byte-equivalent, verified by tools/build/zig_equivalence_test.py).
+ * Without the define the pure-C originals below stay in use. */
+#ifdef USE_ZIG_DRAW
+extern void zsp_fill(uint32_t *buf, int n, uint32_t c);
+extern void zsp_rect(uint32_t *buf, int bw, int bh, int x, int y,
+                     int rw, int rh, uint32_t c);
+extern void zsp_px(uint32_t *buf, int bw, int bh, int x, int y,
+                   uint32_t c);
+extern void zsp_draw_char(uint32_t *buf, int bw, int bh, int x, int y,
+                          unsigned char ch, uint32_t fg);
+extern void zsp_draw_str(uint32_t *buf, int bw, int bh, int x, int y,
+                         const char *s, uint32_t fg);
+extern void zsp_draw_str_bold(uint32_t *buf, int bw, int bh, int x, int y,
+                              const char *s, uint32_t fg);
+#endif
+
 /* ── Copland new-protocol client state (phase 3: WM identity) ──
  *
  * Sprach connects through the same connection table as cptest, but
@@ -277,18 +296,29 @@ static const unsigned char font5x7[95][7] = {
 
 static void sp_px(uint32_t *buf, int bw, int bh, int x, int y, uint32_t c)
 {
+#ifdef USE_ZIG_DRAW
+    zsp_px(buf, bw, bh, x, y, c);
+#else
     if (x >= 0 && x < bw && y >= 0 && y < bh)
         buf[y * bw + x] = c;
+#endif
 }
 
 static void sp_fill(uint32_t *buf, int n, uint32_t c)
 {
+#ifdef USE_ZIG_DRAW
+    zsp_fill(buf, n, c);
+#else
     musr_fill32(buf, (size_t)n, c);
+#endif
 }
 
 static void sp_rect(uint32_t *buf, int bw, int bh, int x, int y,
                     int rw, int rh, uint32_t c)
 {
+#ifdef USE_ZIG_DRAW
+    zsp_rect(buf, bw, bh, x, y, rw, rh, c);
+#else
     /* Per-row dword fill with full clipping: (bw,bh) is the buffer's
      * true geometry — never SCREEN_W/SCREEN_H, which are only correct
      * for full-screen buffers (taskbar/menubar pass bigger bh on
@@ -304,6 +334,7 @@ static void sp_rect(uint32_t *buf, int bw, int bh, int x, int y,
     for (int py = y0; py < y1; py++)
         musr_fill32(buf + (size_t)py * bw + x0,
                     (size_t)(x1 - x0), c);
+#endif
 }
 
 /* ── Window-buffer helpers (type-safe) ── */
@@ -343,6 +374,9 @@ static void sp_buf_rect(struct sprach_window *w, int x, int y,
 static void sp_draw_char(uint32_t *buf, int bw, int bh, int x, int y,
                          char ch, uint32_t fg)
 {
+#ifdef USE_ZIG_DRAW
+    zsp_draw_char(buf, bw, bh, x, y, (unsigned char)ch, fg);
+#else
     int idx;
     if (ch >= 0x20 && ch <= 0x7E)
         idx = ch - 0x20;
@@ -356,12 +390,16 @@ static void sp_draw_char(uint32_t *buf, int bw, int bh, int x, int y,
                 sp_px(buf, bw, bh, x + col, y + row, fg);
         }
     }
+#endif
 }
 
 /* Draw a NUL-terminated string, 6px advance per char (5 + 1 gap). */
 static void sp_draw_str(uint32_t *buf, int bw, int bh, int x, int y,
                         const char *s, uint32_t fg)
 {
+#ifdef USE_ZIG_DRAW
+    zsp_draw_str(buf, bw, bh, x, y, s, fg);
+#else
     if (!s)
         return;
     while (*s) {
@@ -369,6 +407,7 @@ static void sp_draw_str(uint32_t *buf, int bw, int bh, int x, int y,
         x += 6;
         s++;
     }
+#endif
 }
 
 /* Draw bold by double-striking: 1px right + 1px down offset. */
@@ -383,6 +422,9 @@ static void sp_draw_char_bold(uint32_t *buf, int bw, int bh, int x, int y,
 static void sp_draw_str_bold(uint32_t *buf, int bw, int bh, int x, int y,
                              const char *s, uint32_t fg)
 {
+#ifdef USE_ZIG_DRAW
+    zsp_draw_str_bold(buf, bw, bh, x, y, s, fg);
+#else
     if (!s)
         return;
     while (*s) {
@@ -390,6 +432,7 @@ static void sp_draw_str_bold(uint32_t *buf, int bw, int bh, int x, int y,
         x += 7;
         s++;
     }
+#endif
 }
 
 /* ── Dock icons (32x32, pixel-drawn) ── */

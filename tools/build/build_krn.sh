@@ -368,13 +368,33 @@ $LD -m elf_i386 -T usr/src/cmd/calc_gui.ld -nostdlib -z max-page-size=0x1000 -o 
 echo "   CALC GUI ELF: usr/src/cmd/calc_gui.elf ($(stat -c%s usr/src/cmd/calc_gui.elf) bytes)"
 
 echo "=== Building Sprach (window manager) ELFs ==="
-$UCC $M4SH_CFLAGS -c usr/src/sprach/sprach.c -o usr/src/sprach/sprach.o
+# Zig hot-path pixel primitives (docs/zig-standard.md): i386
+# freestanding object linked beside the C objects; falls back to
+# pure-C primitives when the toolchain is absent.
+ZIG_BIN="${ZIG_BIN:-$HOME/zig-0.13.0/zig}"
+SPR_DRAW_OBJS=""
+if [ -x "$ZIG_BIN" ]; then
+    "$ZIG_BIN" build-obj usr/src/sprach/spr_draw.zig \
+        -target x86-freestanding -mcpu "baseline-sse-sse2" -O ReleaseFast \
+        -femit-bin=usr/src/sprach/spr_draw.o \
+        && SPR_DRAW_OBJS="usr/src/sprach/spr_draw.o" \
+        && echo "   spr_draw.zig -> spr_draw.o (Zig hot path)" \
+        || { echo "   WARN: zig build-obj failed; using C primitives"; SPR_DRAW_OBJS=""; }
+else
+    echo "   WARN: zig not found at $ZIG_BIN; using C primitives"
+fi
+if [ -n "$SPR_DRAW_OBJS" ]; then
+    UCC_FLAGS_ZIG="-DUSE_ZIG_DRAW"
+else
+    UCC_FLAGS_ZIG=""
+fi
+$UCC $M4SH_CFLAGS $UCC_FLAGS_ZIG -c usr/src/sprach/sprach.c -o usr/src/sprach/sprach.o
 for m in stack; do
     $UCC $M4SH_CFLAGS -c "usr/src/sprach/sprach_mode_${m}.c" -o "usr/src/sprach/sprach_mode_${m}.o"
     $UCC $M4SH_CFLAGS -c sys/src/copland/copland_proto.c -o usr/src/sprach/copland_proto.o
     $LD -m elf_i386 -T usr/src/sprach/sprach.ld -nostdlib -z max-page-size=0x1000 \
         -o "usr/src/sprach/sprach_${m}" \
-        "usr/src/sprach/sprach.o" "usr/src/sprach/sprach_mode_${m}.o" usr/src/lib/icons.o usr/src/lib/icons_data.o usr/src/lib/libgui.o usr/src/sprach/copland_proto.o $PCC_RUNTIME
+        "usr/src/sprach/sprach.o" "usr/src/sprach/sprach_mode_${m}.o" usr/src/lib/icons.o usr/src/lib/icons_data.o usr/src/lib/libgui.o usr/src/sprach/copland_proto.o $SPR_DRAW_OBJS $PCC_RUNTIME
     echo "   Sprach ${m} ELF: usr/src/sprach/sprach_${m} ($(stat -c%s "usr/src/sprach/sprach_${m}") bytes)"
 done
 cp -f usr/src/sprach/sprach_stack ./usr/bin/sprach
