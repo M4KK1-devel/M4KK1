@@ -200,6 +200,18 @@ struct sprach_ctx {
 
     /* Launchpad app list (scanned from /bin at open time) */
     int lp_count;
+
+    /* Context menu (right-click, conditional): rmenu_mode 0 = closed,
+     * 1 = desktop wallpaper menu (New Terminal / Change Wallpaper /
+     * Launchpad), 2 = desktop-icon menu (Open / Properties).  Painted
+     * as an overlay on the desktop surface buffer at rmenu_x/rmenu_y
+     * (screen space, clamped on-screen), item height RMENU_ITEM_H. */
+    int rmenu_mode;
+    int rmenu_x, rmenu_y;
+    int rmenu_items;    /* item count of the open menu */
+    int rmenu_sel_icon; /* icon index for mode 2, -1 otherwise */
+    /* Right-button edge tracking (btn2_was_down mirrors btn_was_down) */
+    int btn2_was_down;
 };
 
 /* Core services (sprach.c) */

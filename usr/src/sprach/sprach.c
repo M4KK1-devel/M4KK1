@@ -2107,6 +2107,8 @@ static void sprach_desktop_paint(struct sprach_ctx *ctx)
     ctx->shm->surfaces[desk_slot].dmg_w = SCREEN_W;
     ctx->shm->surfaces[desk_slot].dmg_h = WORK_AREA_H;
     ctx->shm->dirty = 1;
+    /* Context-menu overlay paints LAST so it floats above icons. */
+    sprach_draw_rmenu(ctx);
 }
 
 static int sprach_desktop_create(struct sprach_ctx *ctx)
@@ -2133,6 +2135,167 @@ static int sprach_desktop_create(struct sprach_ctx *ctx)
         }
     }
     return -1;
+}
+
+/* ── Conditional context menu (right-click) ──
+ *
+ * Two different menus depending on WHERE the right-click landed:
+ *   - on a desktop icon cell  → "Open" / "Properties" (mode 2)
+ *   - on the bare wallpaper   → "New Terminal" / "Change Wallpaper" /
+ *                               "Launchpad"          (mode 1)
+ * The menu is painted as an overlay at the END of
+ * sprach_desktop_paint(), so any desktop repaint refreshes it, and
+ * hitting an item re-enters the normal sprach_handle_click path. */
+
+static void sprach_draw_rmenu(struct sprach_ctx *ctx);
+
+#define RMENU_ITEM_H   22
+#define RMENU_ITEM_W   150
+#define RMENU_PAD      2
+
+static const char *const rmenu_desktop_labels[3] = {
+    "New Terminal", "Change Wallpaper", "Launchpad",
+};
+static const char *const rmenu_icon_labels[2] = {
+    "Open", "Properties",
+};
+
+/* Paint the open context menu into the desktop overlay buffer. */
+static void sprach_draw_rmenu(struct sprach_ctx *ctx)
+{
+    if (!ctx->rmenu_mode || desk_slot < 0)
+        return;
+    const char *const *labels = ctx->rmenu_mode == 2
+        ? rmenu_icon_labels : rmenu_desktop_labels;
+    int n = ctx->rmenu_items;
+    int h = n * RMENU_ITEM_H + RMENU_PAD * 2;
+    int w = RMENU_ITEM_W;
+    /* work-area-local coords: desk_buf covers y >= MENUBAR_H only */
+    int x = ctx->rmenu_x;
+    int y = ctx->rmenu_y - MENUBAR_H;
+    if (x < 0)
+        x = 0;
+    if (x + w > SCREEN_W)
+        x = SCREEN_W - w;
+    if (y < 0)
+        y = 0;
+    if (y + h > WORK_AREA_H)
+        y = WORK_AREA_H - h;
+    /* panel */
+    sp_rect(desk_buf, SCREEN_W, WORK_AREA_H, x, y, w, h, 0x00E8E8EC);
+    sp_rect(desk_buf, SCREEN_W, WORK_AREA_H, x, y, w, 1, 0x00FFFFFF);
+    sp_rect(desk_buf, SCREEN_W, WORK_AREA_H, x, y, 1, h, 0x00FFFFFF);
+    sp_rect(desk_buf, SCREEN_W, WORK_AREA_H, x + w - 1, y, 1, h,
+            0x00909098);
+    sp_rect(desk_buf, SCREEN_W, WORK_AREA_H, x, y + h - 1, w, 1,
+            0x00909098);
+    /* hover highlight + label */
+    for (int i = 0; i < n; i++) {
+        int iy = y + RMENU_PAD + i * RMENU_ITEM_H;
+        if (ctx->mouse_y >= iy + MENUBAR_H &&
+            ctx->mouse_y < iy + MENUBAR_H + RMENU_ITEM_H &&
+            ctx->mouse_x >= x && ctx->mouse_x < x + w)
+            sp_rect(desk_buf, SCREEN_W, WORK_AREA_H, x + 1, iy,
+                    w - 2, RMENU_ITEM_H, 0x00347BC2);
+        sp_draw_str(desk_buf, SCREEN_W, WORK_AREA_H,
+                    x + 10, iy + (RMENU_ITEM_H - 8) / 2,
+                    labels[i], 0x001A1A1A);
+    }
+    ctx->shm->surfaces[desk_slot].dmg_x = 0;
+    ctx->shm->surfaces[desk_slot].dmg_y = WORK_AREA_Y;
+    ctx->shm->surfaces[desk_slot].dmg_w = SCREEN_W;
+    ctx->shm->surfaces[desk_slot].dmg_h = WORK_AREA_H;
+    ctx->shm->dirty = 1;
+}
+
+/* Right-button press: open the menu appropriate for the click
+ * target (icon cell vs bare wallpaper).  Falls through silently
+ * outside the work area (menubar/dock keep their own behaviour). */
+static void sprach_handle_rclick(struct sprach_ctx *ctx)
+{
+    if (ctx->mouse_y < MENUBAR_H ||
+        ctx->mouse_y >= SCREEN_H - TASKBAR_H)
+        return;
+    ctx->rmenu_sel_icon = -1;
+    /* icon cell? */
+    for (int a = 0; a < desk_count && a < DESK_ICON_MAX; a++) {
+        int cx = DESK_GRID_X + (a % DESK_ICON_COLS) * DESK_CELL_W;
+        int cy = DESK_GRID_Y + (a / DESK_ICON_COLS) * DESK_CELL_H;
+        if (ctx->mouse_x >= cx && ctx->mouse_x < cx + DESK_CELL_W &&
+            ctx->mouse_y >= cy && ctx->mouse_y < cy + DESK_CELL_H) {
+            ctx->rmenu_mode = 2;
+            ctx->rmenu_items = 2;
+            ctx->rmenu_sel_icon = a;
+            ctx->rmenu_x = ctx->mouse_x;
+            ctx->rmenu_y = ctx->mouse_y;
+            sprach_desktop_paint(ctx);   /* repaint incl. menu overlay */
+            ser_puts("[SPRACH] rmenu: icon menu\n");
+            return;
+        }
+    }
+    /* bare wallpaper */
+    ctx->rmenu_mode = 1;
+    ctx->rmenu_items = 3;
+    ctx->rmenu_x = ctx->mouse_x;
+    ctx->rmenu_y = ctx->mouse_y;
+    sprach_desktop_paint(ctx);
+    ser_puts("[SPRACH] rmenu: desktop menu\n");
+}
+
+/* Left-click while a context menu is open: run the hovered item or
+ * close on any miss.  Returns 1 when the click was consumed. */
+static int sprach_rmenu_activate(struct sprach_ctx *ctx)
+{
+    if (!ctx->rmenu_mode)
+        return 0;
+    int x = ctx->rmenu_x, y = ctx->rmenu_y - MENUBAR_H;
+    int w = RMENU_ITEM_W;
+    int h = ctx->rmenu_items * RMENU_ITEM_H + RMENU_PAD * 2;
+    if (x + w > SCREEN_W)
+        x = SCREEN_W - w;
+    if (y + h > WORK_AREA_H)
+        y = WORK_AREA_H - h;
+    int item = -1;
+    if (ctx->mouse_x >= x && ctx->mouse_x < x + w &&
+        ctx->mouse_y - MENUBAR_H >= y &&
+        ctx->mouse_y - MENUBAR_H < y + h)
+        item = (ctx->mouse_y - MENUBAR_H - y - RMENU_PAD)
+               / RMENU_ITEM_H;
+    int mode = ctx->rmenu_mode;
+    int icon = ctx->rmenu_sel_icon;
+    ctx->rmenu_mode = 0;
+    ctx->rmenu_sel_icon = -1;
+    sprach_desktop_paint(ctx);   /* menu overlay off */
+    if (item < 0 || item >= (mode == 2 ? 2 : 3))
+        return 1;   /* miss = close, swallow */
+    if (mode == 2) {
+        if (item == 0) {
+            /* Open = same path as a normal icon click */
+            ctx->mouse_y = ctx->mouse_y;   /* unchanged */
+            if (sprach_desktop_click(ctx))
+                ser_puts("[SPRACH] rmenu: open\n");
+        } else {
+            ser_puts("[SPRACH] rmenu: properties -> ");
+            if (icon >= 0 && icon < desk_count)
+                ser_puts(lp_apps[icon].path);
+            ser_puts("\n");
+        }
+    } else {
+        if (item == 0) {
+            sprach_spawn_terminal(ctx);
+        } else if (item == 1) {
+            /* Change Wallpaper: cycle theme + persist, like the
+             * settings swatch path. */
+            uint32_t t = shm_wallpaper_theme();
+            gui_wallpaper_set_theme((t + 1) % 6);
+            sprach_cfg_save(ctx);
+            sprach_desktop_paint(ctx);
+            ser_puts("[SPRACH] rmenu: wallpaper cycled\n");
+        } else {
+            sprach_launchpad_toggle(ctx, 1);
+        }
+    }
+    return 1;
 }
 
 /* Launch the app under a desktop-icon click (work-area coords). */
@@ -2448,12 +2611,33 @@ void sprach_handle_mouse(struct sprach_ctx *ctx)
         if (ev.dx || ev.dy)
             cursor_moved = 1;
 
-        if (ev.buttons & 1) {
+        /* Right button: conditional context menu (icon vs wallpaper),
+         * same edge-trigger discipline as the left button.  Checked
+         * FIRST so an L+R chord (how the QEMU HMP test path injects
+         * the right bit) opens the menu instead of left-clicking
+         * through it. */
+        if (ev.buttons & 2) {
+            if (!ctx->btn2_was_down) {
+                m4k_get_mouse_pos(&ctx->mouse_x, &ctx->mouse_y);
+                sprach_handle_rclick(ctx);
+            }
+            ctx->btn2_was_down = 1;
+        } else {
+            ctx->btn2_was_down = 0;
+        }
+
+        if ((ev.buttons & 1) && !(ev.buttons & 2)) {
             /* Edge-trigger: fire the click only on the press edge, not on
              * every event that still carries the held button (trailing
              * move events would otherwise double-fire toggle actions). */
             if (!ctx->btn_was_down) {
                 m4k_get_mouse_pos(&ctx->mouse_x, &ctx->mouse_y);
+                /* An open context menu consumes ANY left click first:
+                 * item hit runs it, any miss closes it. */
+                if (sprach_rmenu_activate(ctx)) {
+                    ctx->btn_was_down = 1;
+                    continue;
+                }
                 sprach_handle_click(ctx);
             }
             ctx->btn_was_down = 1;
@@ -3231,6 +3415,12 @@ void _start(void)
     ctx.lp_slot = -1;
     ctx.lp_count = 0;
     ctx.term_desktop = 0;
+    ctx.rmenu_mode = 0;
+    ctx.rmenu_x = 0;
+    ctx.rmenu_y = 0;
+    ctx.rmenu_items = 0;
+    ctx.rmenu_sel_icon = -1;
+    ctx.btn2_was_down = 0;
 
     /* Restore persisted desktop settings (theme/vol/bt) AFTER the
      * defaults above so a saved value wins, but BEFORE the first
