@@ -199,6 +199,28 @@ export fn zsp_icon_blit32(buf: PixBuf, bw: i32, x: i32, y: i32,
     }
 }
 
+/// 32x32 RGBA icon blit WITH clipping — mirrors the C sp_icon_blit32
+/// pixel loop (bounds check per pixel, alpha 0 skips).  Used by the
+/// taskbar where x/y come from live layout math.
+export fn zsp_icon_blit(buf: PixBuf, bw: i32, bh: i32, x: i32, y: i32,
+                        icon: [*]const u32) void {
+    if (bw <= 0 or bh <= 0) return;
+    const stride: usize = @intCast(bw);
+    var row: i32 = 0;
+    while (row < 32) : (row += 1) {
+        const yy = y + row;
+        if (yy < 0 or yy >= bh) continue;
+        var col: i32 = 0;
+        while (col < 32) : (col += 1) {
+            const xx = x + col;
+            if (xx < 0 or xx >= bw) continue;
+            const px = icon[@as(usize, @intCast(row)) * 32 + @as(usize, @intCast(col))];
+            if (px >> 24 != 0)
+                buf[@as(usize, @intCast(yy)) * stride + @as(usize, @intCast(xx))] = px;
+        }
+    }
+}
+
 /// sp_draw_circle equivalent: per-row span fill, walking dx outward
 /// while dx^2 fits rem (same integer math as the C original — no
 /// sqrt, byte-identical spans).

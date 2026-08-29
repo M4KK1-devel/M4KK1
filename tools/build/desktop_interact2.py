@@ -4,7 +4,10 @@ mouse_button commands (they drive the PS/2 device directly)."""
 import os, socket, subprocess, time
 
 os.chdir("/mnt/f/M4KK1")
-isos = sorted([f for f in os.listdir("output") if f.endswith("full-test.iso")],
+# Accept both the manual-test ISO (full-test.iso) and the cron job1
+# artifact (full.iso) — whichever is newest.
+isos = sorted([f for f in os.listdir("output")
+               if f.endswith("full-test.iso") or f.endswith("full.iso")],
               key=lambda f: os.path.getmtime(os.path.join("output", f)))
 iso = os.path.join("output", isos[-1])
 sock = "/tmp/m4k_desk3.sock"

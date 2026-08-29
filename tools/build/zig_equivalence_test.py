@@ -70,6 +70,8 @@ extern void zsp_draw_circle(uint32_t *buf, int bw, int bh, int cx, int cy,
                             int r, uint32_t c);
 extern void zsp_icon_blit32(uint32_t *buf, int bw, int x, int y,
                             const uint32_t *icon);
+extern void zsp_icon_blit(uint32_t *buf, int bw, int bh, int x, int y,
+                          const uint32_t *icon);
 
 int main(int argc, char **argv)
 {
@@ -119,6 +121,15 @@ int main(int argc, char **argv)
                 if (!(px >> 24)) continue;
                 buf[(24 + yy) * %(W)d + 30 + xx] = px;
             }
+        /* icon blit WITH clipping: partially off-buffer (-10,-6) */
+        for (int yy = 0; yy < 32; yy++)
+            for (int xx = 0; xx < 32; xx++) {
+                int X = -10 + xx, Y = 26 + yy;
+                if (X < 0 || X >= %(W)d || Y < 0 || Y >= %(H)d) continue;
+                uint32_t px = icon[yy * 32 + xx];
+                if (!(px >> 24)) continue;
+                buf[Y * %(W)d + X] = px;
+            }
     } else {
         zsp_fill(buf, 64, 0x11223344);
         zsp_rect(buf, %(W)d, %(H)d, -5, -3, 20, 10, 0xFF0000);
@@ -127,6 +138,7 @@ int main(int argc, char **argv)
         zsp_gradient(buf, %(W)d, %(H)d, 0x00000044, 0x0066FF, 24, %(H)d - 1);
         zsp_draw_circle(buf, %(W)d, %(H)d, 45, 20, 5, 0x00FFFF00);
         zsp_icon_blit32(buf, %(W)d, 30, 24, icon);
+        zsp_icon_blit(buf, %(W)d, %(H)d, -10, 26, icon);
     }
     fwrite(buf, sizeof(uint32_t), %(W)d * %(H)d, stdout);
     return 0;

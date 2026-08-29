@@ -65,6 +65,8 @@ extern void zsp_gradient(uint32_t *buf, int bw, int bh, uint32_t top,
                          uint32_t bot, int gbase, int gmax);
 extern void zsp_icon_blit32(uint32_t *buf, int bw, int x, int y,
                             const uint32_t *icon);
+extern void zsp_icon_blit(uint32_t *buf, int bw, int bh, int x, int y,
+                          const uint32_t *icon);
 extern void zsp_draw_circle(uint32_t *buf, int bw, int bh, int cx, int cy,
                             int r, uint32_t c);
 #endif
@@ -444,13 +446,41 @@ static void sp_draw_str_bold(uint32_t *buf, int bw, int bh, int x, int y,
 /* ── Dock icons (32x32, pixel-drawn) ── */
 
 /* Blit a real 32x32 RGBA bitmap (from icons_data.c) with transparency;
- * falls back to nothing when the named asset is missing. */
+ * falls back to nothing when the named asset is missing.  The lookup
+ * result is cached per name (taskbar repaints hit the same handful of
+ * names every second — the old per-call linear scan walked the whole
+ * table for every icon on every repaint). */
+static uint32_t *sp_icon_lookup(const char *name)
+{
+    /* tiny 8-entry direct-mapped cache: key = name pointer identity +
+     * strcmp fallback (callers pass static literals, so pointer hits
+     * are the common case and strcmp only validates first miss). */
+    static const char *nk[8];
+    static uint32_t *nv[8];
+    static uint8_t init;
+    if (!init) {
+        for (int i = 0; i < 8; i++)
+            nv[i] = (uint32_t *)0;
+        init = 1;
+    }
+    uint8_t h = (uint8_t)(((uintptr_t)name >> 4) & 7);
+    if (nk[h] == name && name)
+        return nv[h];
+    uint32_t *ic = icons_data_find(name);
+    nk[h] = name;
+    nv[h] = ic;
+    return ic;
+}
+
 static void sp_icon_blit32(uint32_t *buf, int bw, int bh, int x, int y,
                            const char *name)
 {
-    uint32_t *ic = icons_data_find(name);
+    uint32_t *ic = sp_icon_lookup(name);
     if (!ic)
         return;
+#ifdef USE_ZIG_DRAW
+    zsp_icon_blit(buf, bw, bh, x, y, ic);
+#else
     for (int yy = 0; yy < 32; yy++)
         for (int xx = 0; xx < 32; xx++) {
             uint32_t px = ic[yy * 32 + xx];
@@ -460,6 +490,7 @@ static void sp_icon_blit32(uint32_t *buf, int bw, int bh, int x, int y,
                 continue;
             buf[(y + yy) * bw + x + xx] = px;
         }
+#endif
 }
 
 /* Terminal icon: dark screen with a ">_" prompt, Mac-ish rounded top. */
