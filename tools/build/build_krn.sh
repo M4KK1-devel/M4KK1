@@ -377,9 +377,17 @@ if [ -x "$ZIG_BIN" ]; then
     "$ZIG_BIN" build-obj usr/src/sprach/spr_draw.zig \
         -target x86-freestanding -mcpu "baseline-sse-sse2" -O ReleaseFast \
         -femit-bin=usr/src/sprach/spr_draw.o \
-        && SPR_DRAW_OBJS="usr/src/sprach/spr_draw.o" \
-        && echo "   spr_draw.zig -> spr_draw.o (Zig hot path)" \
-        || { echo "   WARN: zig build-obj failed; using C primitives"; SPR_DRAW_OBJS=""; }
+        && nm -u usr/src/sprach/spr_draw.o | grep -q . \
+        && { echo "   ERROR: spr_draw.o has undefined symbols (missing builtin lib)"; nm -u usr/src/sprach/spr_draw.o; SPR_DRAW_OBJS=""; } \
+        || true
+    if [ -f usr/src/sprach/spr_draw.o ] && [ -z "$SPR_DRAW_OBJS" ]; then
+        if nm -u usr/src/sprach/spr_draw.o | grep -q .; then
+            rm -f usr/src/sprach/spr_draw.o
+        else
+            SPR_DRAW_OBJS="usr/src/sprach/spr_draw.o"
+            echo "   spr_draw.zig -> spr_draw.o (Zig hot path)"
+        fi
+    fi
 else
     echo "   WARN: zig not found at $ZIG_BIN; using C primitives"
 fi

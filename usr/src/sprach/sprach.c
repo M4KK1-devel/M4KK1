@@ -61,6 +61,12 @@ extern void zsp_draw_str(uint32_t *buf, int bw, int bh, int x, int y,
                          const char *s, uint32_t fg);
 extern void zsp_draw_str_bold(uint32_t *buf, int bw, int bh, int x, int y,
                               const char *s, uint32_t fg);
+extern void zsp_gradient(uint32_t *buf, int bw, int bh, uint32_t top,
+                         uint32_t bot, int gbase, int gmax);
+extern void zsp_icon_blit32(uint32_t *buf, int bw, int x, int y,
+                            const uint32_t *icon);
+extern void zsp_draw_circle(uint32_t *buf, int bw, int bh, int cx, int cy,
+                            int r, uint32_t c);
 #endif
 
 /* ── Copland new-protocol client state (phase 3: WM identity) ──
@@ -644,6 +650,9 @@ int sprach_create_window(struct sprach_ctx *ctx, int idx, int x, int y,
 static void sp_draw_circle(struct sprach_window *w, int cx, int cy,
                             int r, uint32_t c)
 {
+#ifdef USE_ZIG_DRAW
+    zsp_draw_circle(w->buf, w->w, w->h, cx, cy, r, c);
+#else
     /* Per-row span fill: the old loop pushed every pixel through
      * sp_buf_px's bounds check (r^2 calls for one button).  Here
      * each scanline costs one clip check plus one contiguous fill;
@@ -668,6 +677,7 @@ static void sp_draw_circle(struct sprach_window *w, int cx, int cy,
             musr_fill32(w->buf + (size_t)yy * w->w + x0,
                         (size_t)(x1 - x0), c);
     }
+#endif
 }
 
 void sprach_paint_window(struct sprach_ctx *ctx, struct sprach_window *w)
@@ -1977,6 +1987,11 @@ static void sprach_desktop_paint(struct sprach_ctx *ctx)
     };
     if (theme >= 6)
         theme = 0;
+#ifdef USE_ZIG_DRAW
+    /* Zig row-LUT gradient: one bulk fill per scanline. */
+    zsp_gradient(desk_buf, SCREEN_W, WORK_AREA_H, th[theme].top,
+                 th[theme].bot, WORK_AREA_Y, SCREEN_H - 1);
+#else
     uint32_t top = th[theme].top, bot = th[theme].bot;
     for (int y = 0; y < WORK_AREA_H; y++) {
         /* global screen scanline = WORK_AREA_Y + y */
@@ -1992,6 +2007,7 @@ static void sprach_desktop_paint(struct sprach_ctx *ctx)
         for (int x = 0; x < SCREEN_W; x++)
             row[x] = c;
     }
+#endif
 
     /* Icon grid */
     for (int a = 0; a < desk_count && a < DESK_ICON_MAX; a++) {
@@ -2008,6 +2024,9 @@ static void sprach_desktop_paint(struct sprach_ctx *ctx)
         uint32_t *ic = lp_icon_for(&lp_apps[a]);
         int ix = cx + (DESK_CELL_W - 32) / 2;
         int iy = cy + 6;
+#ifdef USE_ZIG_DRAW
+        zsp_icon_blit32(desk_buf, SCREEN_W, ix, iy, ic);
+#else
         for (int yy = 0; yy < 32; yy++)
             for (int xx = 0; xx < 32; xx++) {
                 uint32_t px = ic[yy * 32 + xx];
@@ -2015,6 +2034,7 @@ static void sprach_desktop_paint(struct sprach_ctx *ctx)
                     continue;
                 desk_buf[(iy + yy) * SCREEN_W + ix + xx] = px;
             }
+#endif
         int nl = 0;
         for (const char *p = lp_apps[a].name; *p; p++)
             nl++;

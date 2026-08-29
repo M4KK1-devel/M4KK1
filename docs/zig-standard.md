@@ -65,6 +65,10 @@ font5x7: [96*7]u8` 引用同一符号。**改动字形表必须同步两侧布�
   包裹算术，边界输入（负数、极大值）必须先 clamp 后索引。
 - 分配器禁用：Zig 侧不申请内存，只操作调用者传入的缓冲。
 - 内联汇编可用但需注释等效 C 原语（对照 musr_fill32）。
+- **禁 i64 除法**：i386 freestanding 无 `__divdi3`，i64 `/` 会留下
+  undefined symbol，链接侥幸通过但调用即挂死（无 EXC 无 panic，
+  WM 静默卡住——2026-08-29 zsp_gradient 实际踩过）。除法一律
+  u32 域；`build_krn.sh` 已加 `nm -u` 空查防线兜底。
 
 ## 5a. 编译期求值（comptime）规范
 
@@ -105,3 +109,4 @@ comptime 是 Zig 的核心优势，但目标产物必须可验证：
 | 模块 | C 边界 | 状态 |
 |---|---|---|
 | `usr/src/sprach/spr_draw.zig` | sprach.c（sp_* 原语） | v1 已落地：等价性 PASS + 交互 8/8 + make test 28/0（2026-08-29） |
+| 同上，v2 扩展 | + zsp_gradient / zsp_icon_blit32 / zsp_draw_circle | 已落地（2026-08-29）：桌面梯度行 LUT、图标 blit、按钮圆 span-fill |

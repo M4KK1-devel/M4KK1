@@ -155,6 +155,84 @@ export fn zsp_draw_str_bold(buf: PixBuf, bw: i32, bh: i32, x: i32, y: i32,
     }
 }
 
+/// Desktop wallpaper gradient into (bw x bh): row color = lerp(top,
+/// bot, f) with f = (gbase + y) * 255 / gmax — mirrors the compositor
+/// math in sprach_desktop_paint (global scanline = gbase + y).  Row
+/// LUT replaces the old per-pixel loop; each row is one bulk fill.
+export fn zsp_gradient(buf: PixBuf, bw: i32, bh: i32, top: u32, bot: u32,
+                       gbase: i32, gmax: i32) void {
+    if (bw <= 0 or bh <= 0 or gmax <= 0) return;
+    const stride: usize = @intCast(bw);
+    const w: usize = @intCast(bw);
+    var y: i32 = 0;
+    while (y < bh) : (y += 1) {
+        // u32 arithmetic EXACTLY like the C original ((gbase+y)*0xFF/gmax)
+        // — no i64: freestanding i386 has no __divdi3, an i64 divide
+        // leaves an undefined symbol that silently hangs the WM.
+        const lin: u32 = @bitCast(gbase +% y);
+        const f: u32 = lin *% 0xFF / @as(u32, @bitCast(gmax));
+        const c = lerp_rgb(top, bot, f);
+        const base = @as(usize, @intCast(y)) * stride;
+        @memset(buf[base .. base + w], c);
+    }
+}
+
+/// 32x32 RGBA icon blit with transparency (alpha 0 skips) — mirrors
+/// the desktop icon loop in sprach_desktop_paint: NO clipping (the
+/// caller guarantees x/y place the 32x32 cell fully in-bounds).
+export fn zsp_icon_blit32(buf: PixBuf, bw: i32, x: i32, y: i32,
+                          icon: [*]const u32) void {
+    if (bw <= 0) return;
+    const stride: usize = @intCast(bw);
+    const fx: usize = @intCast(x);
+    const fy: usize = @intCast(y);
+    var row: usize = 0;
+    while (row < 32) : (row += 1) {
+        const src = icon[row * 32 .. row * 32 + 32];
+        const dst_base = (fy + row) * stride + fx;
+        var col: usize = 0;
+        while (col < 32) : (col += 1) {
+            const px = src[col];
+            if (px >> 24 != 0)
+                buf[dst_base + col] = px;
+        }
+    }
+}
+
+/// sp_draw_circle equivalent: per-row span fill, walking dx outward
+/// while dx^2 fits rem (same integer math as the C original — no
+/// sqrt, byte-identical spans).
+export fn zsp_draw_circle(buf: PixBuf, bw: i32, bh: i32, cx: i32, cy: i32,
+                          r: i32, c: u32) void {
+    if (bw <= 0 or bh <= 0 or r < 0) return;
+    const stride: usize = @intCast(bw);
+    var dy: i32 = -r;
+    while (dy <= r) : (dy += 1) {
+        const yy = cy + dy;
+        if (yy < 0 or yy >= bh) continue;
+        const rem = r * r - dy * dy;
+        var dx: i32 = 0;
+        while ((dx + 1) * (dx + 1) <= rem) dx += 1;
+        var x0 = cx - dx;
+        var x1 = cx + dx + 1;
+        if (x0 < 0) x0 = 0;
+        if (x1 > bw) x1 = bw;
+        if (x0 < x1) {
+            const base = @as(usize, @intCast(yy)) * stride + @as(usize, @intCast(x0));
+            @memset(buf[base .. base + @as(usize, @intCast(x1 - x0))], c);
+        }
+    }
+}
+
+/// Channel-wise 8-bit lerp of two packed RGB colors (no alpha).
+fn lerp_rgb(top: u32, bot: u32, f: u32) u32 {
+    const inv = 255 - f;
+    const r = ((top & 0xFF0000) * inv + (bot & 0xFF0000) * f) >> 8 & 0xFF0000;
+    const g = ((top & 0xFF00) * inv + (bot & 0xFF00) * f) >> 8 & 0xFF00;
+    const b = ((top & 0xFF) * inv + (bot & 0xFF) * f) >> 8 & 0xFF;
+    return r | g | b;
+}
+
 // ─── self-test (zig test / native; run on build host) ──────────
 // Tests below avoid zsp_draw_char (needs the C-side font table);
 // they cover fill/rect/px clipping paths.  Glyph rendering is

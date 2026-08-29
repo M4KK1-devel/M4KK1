@@ -64,6 +64,12 @@ extern void zsp_draw_char(uint32_t *buf, int bw, int bh, int x, int y,
                           unsigned char ch, uint32_t fg);
 extern void zsp_draw_str(uint32_t *buf, int bw, int bh, int x, int y,
                          const char *s, uint32_t fg);
+extern void zsp_gradient(uint32_t *buf, int bw, int bh, uint32_t top,
+                         uint32_t bot, int gbase, int gmax);
+extern void zsp_draw_circle(uint32_t *buf, int bw, int bh, int cx, int cy,
+                            int r, uint32_t c);
+extern void zsp_icon_blit32(uint32_t *buf, int bw, int x, int y,
+                            const uint32_t *icon);
 
 int main(int argc, char **argv)
 {
@@ -71,16 +77,56 @@ int main(int argc, char **argv)
     static uint32_t buf[%(W)d * %(H)d];
     memset(buf, 0, sizeof(buf));
 
+    static uint32_t icon[32 * 32];
+    for (int i = 0; i < 32 * 32; i++)
+        icon[i] = ((i * 7) %% 5 == 0) ? 0 : (uint32_t)(0xFF000000u | i);
+
     if (mode == 0) {
         c_sp_fill(buf, 64, 0x11223344);
         c_sp_rect(buf, %(W)d, %(H)d, -5, -3, 20, 10, 0xFF0000);
         c_sp_rect(buf, %(W)d, %(H)d, 50, 25, 30, 30, 0x00FF00);
         c_sp_draw_str(buf, %(W)d, %(H)d, 3, 15, "M4KK1 zig!", 0xFFFFFF);
+        /* gradient: mirrors sprach_desktop_paint math (full row) */
+        for (int y = 0; y < %(H)d; y++) {
+            uint32_t f = (uint32_t)(24 + y) * 0xFFu / (uint32_t)(%(H)d - 1);
+            uint32_t c = (((0x00000044u & 0xFF0000u) * (0xFF - f)
+                           + (0x0066FFu & 0xFF0000u) * f) >> 8) & 0xFF0000u;
+            c |= (((0x00000044u & 0xFF00u) * (0xFF - f)
+                   + (0x0066FFu & 0xFF00u) * f) >> 8) & 0xFF00u;
+            c |= (((0x00000044u & 0xFFu) * (0xFF - f)
+                   + (0x0066FFu & 0xFFu) * f) >> 8) & 0xFFu;
+            uint32_t *row = &buf[y * %(W)d];
+            for (int x = 0; x < %(W)d; x++)
+                row[x] = c;
+        }
+        /* circle: same span math as sp_draw_circle */
+        for (int dy = -5; dy <= 5; dy++) {
+            int yy = 20 + dy;
+            if (yy < 0 || yy >= %(H)d) continue;
+            int rem = 25 - dy * dy;
+            int dx = 0;
+            while ((dx + 1) * (dx + 1) <= rem) dx++;
+            int x0 = 45 - dx, x1 = 45 + dx + 1;
+            if (x0 < 0) x0 = 0;
+            if (x1 > %(W)d) x1 = %(W)d;
+            for (int px = x0; px < x1; px++)
+                buf[yy * %(W)d + px] = 0x00FFFF00;
+        }
+        /* icon blit */
+        for (int yy = 0; yy < 32; yy++)
+            for (int xx = 0; xx < 32; xx++) {
+                uint32_t px = icon[yy * 32 + xx];
+                if (!(px >> 24)) continue;
+                buf[(24 + yy) * %(W)d + 30 + xx] = px;
+            }
     } else {
         zsp_fill(buf, 64, 0x11223344);
         zsp_rect(buf, %(W)d, %(H)d, -5, -3, 20, 10, 0xFF0000);
         zsp_rect(buf, %(W)d, %(H)d, 50, 25, 30, 30, 0x00FF00);
         zsp_draw_str(buf, %(W)d, %(H)d, 3, 15, "M4KK1 zig!", 0xFFFFFF);
+        zsp_gradient(buf, %(W)d, %(H)d, 0x00000044, 0x0066FF, 24, %(H)d - 1);
+        zsp_draw_circle(buf, %(W)d, %(H)d, 45, 20, 5, 0x00FFFF00);
+        zsp_icon_blit32(buf, %(W)d, 30, 24, icon);
     }
     fwrite(buf, sizeof(uint32_t), %(W)d * %(H)d, stdout);
     return 0;
