@@ -149,8 +149,7 @@ static int sp_wait_evt(uint32_t obj, uint32_t op, int spins)
  * the whole file compiles cleanly under -Werror=implicit-function-
  * declaration (GCC >= 14 treats implicit declarations as errors). */
 static void sprach_handle_click(struct sprach_ctx *ctx);
-
-/* ── Pixel buffers (BSS, aligned for Copland blit) ── */
+static void sprach_terminal_key(struct sprach_ctx *ctx, unsigned char ch);
 
 static uint32_t sprach_bufs[SPRACH_WINDOW_COUNT]
                           [SPRACH_WIN_W * SPRACH_WIN_H]
@@ -2640,6 +2639,16 @@ void sprach_handle_mouse(struct sprach_ctx *ctx)
             ctx->btn_was_down = 1;
         } else {
             ctx->btn_was_down = 0;
+        }
+
+        /* Mouse wheel: forward to the focused terminal as the same
+         * internal codes PageUp/PageDown use (0x01/0x02) — one notch
+         * scrolls a viewport page of scrollback. */
+        if (ev.dz && ctx->active < 0 && ctx->term_slot >= 0) {
+            if ((int8_t)ev.dz < 0)
+                sprach_terminal_key(ctx, 0x01);   /* wheel up */
+            else
+                sprach_terminal_key(ctx, 0x02);   /* wheel down */
         }
     }
 

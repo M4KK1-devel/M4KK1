@@ -47,3 +47,4 @@ CLAUDE.md
 /diagnosis_report.txt
 /docs/real.patch
 __pycache__/
+build.config

@@ -69,6 +69,12 @@ iso:
 test:
 	@bash tools/testing/test_all.sh
 
+# TUI build configuration menu (whiptail/dialog, bash fallback).
+# Writes build.config, sourced by tools/build/build_krn.sh.
+.PHONY: menuconfig
+menuconfig:
+	@bash ./menuconfig
+
 # Compiler targets
 .PHONY: compilers
 compilers:

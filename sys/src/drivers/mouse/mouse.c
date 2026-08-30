@@ -205,7 +205,9 @@ mouse_process_packet(uint8_t *pPacket)
         mouse_event_buf[mouse_event_tail].dx = mouse_state.x_movement;
         mouse_event_buf[mouse_event_tail].dy = mouse_state.y_movement;
         mouse_event_buf[mouse_event_tail].buttons = mouse_state.buttons;
-        mouse_event_buf[mouse_event_tail].reserved = 0;
+        mouse_event_buf[mouse_event_tail].dz =
+            (uint8_t)(int8_t)mouse_state.z_movement;
+        mouse_state.z_movement = 0;   /* each notch fires once */
         mouse_event_tail = next_tail;
     }
 }

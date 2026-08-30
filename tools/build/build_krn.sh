@@ -31,6 +31,8 @@ Build modes:
                 /bin/fsck and /bin/reset-passwd tools. Run fsck at init.
 
 Common flags:
+  --tui          Open the configuration menu (same as ./menuconfig),
+                 then build using the saved build.config.
   --output <dir>  ISO output directory (default: output)
   --help          Show this help and exit.
   --version       Print build version and exit.
@@ -43,15 +45,19 @@ EOF
 
 BUILD_MODE="full"      # default
 OUTPUT_DIR="output"
+WANT_TUI=0
+CLI_MODE_GIVEN=0
+CLI_OUTPUT_GIVEN=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --cmd-only) BUILD_MODE="cmd-only"; shift ;;
-        --full) BUILD_MODE="full"; shift ;;
-        --full-test) BUILD_MODE="full-test"; shift ;;
-        --minimal) BUILD_MODE="minimal"; shift ;;
-        --recovery) BUILD_MODE="recovery"; shift ;;
-        --output) OUTPUT_DIR="$2"; shift 2 ;;
+        --cmd-only) BUILD_MODE="cmd-only"; CLI_MODE_GIVEN=1; shift ;;
+        --full) BUILD_MODE="full"; CLI_MODE_GIVEN=1; shift ;;
+        --full-test) BUILD_MODE="full-test"; CLI_MODE_GIVEN=1; shift ;;
+        --minimal) BUILD_MODE="minimal"; CLI_MODE_GIVEN=1; shift ;;
+        --recovery) BUILD_MODE="recovery"; CLI_MODE_GIVEN=1; shift ;;
+        --tui|--menuconfig) WANT_TUI=1; shift ;;
+        --output) OUTPUT_DIR="$2"; CLI_OUTPUT_GIVEN=1; shift 2 ;;
         --help) usage; exit 0 ;;
         --version)
             if [ -f VERSION ]; then
@@ -67,6 +73,21 @@ while [[ $# -gt 0 ]]; do
         *) echo "ERROR: Unknown option: $1" >&2; usage >&2; exit 1 ;;
     esac
 done
+
+# === Configuration menu (--tui / make menuconfig / ./menuconfig) ===
+# The menu writes build.config.  Priority: explicit CLI flags >
+# build.config > built-in defaults.
+if [[ $WANT_TUI -eq 1 ]]; then
+    bash ./menuconfig
+fi
+if [[ -f build.config && -r build.config ]]; then
+    CLI_MODE="$BUILD_MODE"; CLI_OUT="$OUTPUT_DIR"
+    # shellcheck disable=SC1091
+    source ./build.config
+    [[ $CLI_MODE_GIVEN -eq 1 ]] && BUILD_MODE="$CLI_MODE"
+    [[ $CLI_OUTPUT_GIVEN -eq 1 ]] && OUTPUT_DIR="$CLI_OUT"
+    echo "=== Loaded build.config (mode=$BUILD_MODE output=$OUTPUT_DIR) ==="
+fi
 
 case "$BUILD_MODE" in
     minimal)   MODE_DEFINES="-DM4K_MINIMAL";   NEED_USER=0; NEED_GRAPHICS=0; NEED_RECOVERY=0 ;;

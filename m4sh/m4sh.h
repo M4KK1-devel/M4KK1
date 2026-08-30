@@ -530,7 +530,7 @@ struct m4k_mouse_event {
     int16_t dx;
     int16_t dy;
     uint8_t buttons;
-    uint8_t reserved;
+    uint8_t dz;    /* wheel: +1 down notch, -1 up notch (int8) */
 };
 
 struct m4k_keyboard_event {
