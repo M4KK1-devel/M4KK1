@@ -70,6 +70,12 @@ extern unsigned int fm_init_elf_len;
 extern unsigned char altr_init_elf[];
 extern unsigned int altr_init_elf_len;
 extern unsigned char calc_init_elf[];
+extern unsigned char clock_init_elf[];
+extern unsigned int clock_init_elf_len;
+extern unsigned char logview_init_elf[];
+extern unsigned int logview_init_elf_len;
+extern unsigned char info_init_elf[];
+extern unsigned int info_init_elf_len;
 extern unsigned int calc_init_elf_len;
 extern unsigned char sprach_stack_init_elf[];
 extern unsigned int sprach_stack_init_elf_len;
@@ -557,6 +563,48 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
             mkrn_console_write(" bytes)\n");
         } else {
             mkrn_console_write("   WARNING: failed to create /bin/calcg\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/clock",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, clock_init_elf,
+                clock_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/clock written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/clock\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/logview",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, logview_init_elf,
+                logview_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/logview written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/logview\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/info",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, info_init_elf,
+                info_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/info written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/info\n");
         }
     }
     /* /bin/sprach_stack removed: nothing execs it (Copland spawns

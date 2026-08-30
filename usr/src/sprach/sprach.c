@@ -2925,6 +2925,63 @@ static int sprach_fm_key(struct sprach_ctx *ctx, unsigned char ch)
     mb->write_idx = next;
     return 1;
 }
+
+/* ── Generic GUI-app keyboard dispatch ──
+ * Standalone Copland clients (clock/logview/info/automission/backup,
+ * built on guiapp.h) each register a key mailbox with their own magic
+ * and a WINDOW WIDTH UNIQUE PER APP.  When such a window is the
+ * top-most non-chrome surface, keystrokes go to its mailbox. */
+#define GA_MAILBOX_SIZE 64
+struct sprach_ga_ref {
+    int         w;          /* unique surface width */
+    uint32_t    addr;       /* mailbox address */
+    uint32_t    magic;      /* mailbox magic */
+};
+static const struct sprach_ga_ref ga_apps[] = {
+    { 260, 0x00630000u, 0x43414C31u },   /* calcg  "CAL1" (calc_gui) */
+    { 268, 0x00640000u, 0x434C4B31u },   /* clock   "CLK1" */
+    { 420, 0x00650000u, 0x4C475631u },   /* logview "LGV1" */
+    { 380, 0x00660000u, 0x494E4631u },   /* info    "INF1" */
+    { 340, 0x00670000u, 0x414D5331u },   /* automission "AMS1" */
+    { 400, 0x00680000u, 0x424B5031u },   /* backup  "BKP1" */
+};
+
+static int sprach_ga_key(struct sprach_ctx *ctx, unsigned char ch)
+{
+    /* top-most non-chrome surface */
+    int top = -1;
+    for (int i = 0; i < COPLAND_MAX_SURFACES; i++)
+        if (ctx->shm->surfaces[i].in_use &&
+            i != ctx->taskbar_slot && i != ctx->menubar_slot)
+            top = i;
+    if (top < 0)
+        return 0;
+    if (top == ctx->term_slot || top == ctx->clock_slot ||
+        top == ctx->menu_slot || top == ctx->lp_slot)
+        return 0;
+    for (int i = 0; i < SPRACH_WINDOW_COUNT; i++)
+        if (ctx->wins[i].slot == top)
+            return 0;
+
+    for (unsigned i = 0;
+         i < sizeof(ga_apps) / sizeof(ga_apps[0]); i++) {
+        if (ctx->shm->surfaces[top].w != ga_apps[i].w)
+            continue;
+        volatile struct {
+            uint32_t magic, write_idx, read_idx;
+            unsigned char buf[GA_MAILBOX_SIZE];
+        } *mb = (volatile void *)ga_apps[i].addr;
+        if (mb->magic != ga_apps[i].magic)
+            return 0;                 /* app not running */
+        uint32_t next = (mb->write_idx + 1) % GA_MAILBOX_SIZE;
+        if (next == mb->read_idx)
+            return 1;                 /* ring full: drop */
+        mb->buf[mb->write_idx] = ch;
+        mb->write_idx = next;
+        return 1;
+    }
+    return 0;
+}
 void sprach_handle_terminal_click(struct sprach_ctx *ctx, int sx, int sy,
                                   int sw, int sh, int lx, int ly)
 {
@@ -3813,6 +3870,12 @@ void _start(void)
              * The FM registers its key mailbox at FM_MAILBOX_BASE on
              * startup; if the magic isn't there it isn't running. */
             if (sprach_fm_key(&ctx, ev.ascii_char)) {
+                continue;
+            }
+
+            /* Other guiapp-based clients (calc/clock/logview/info/
+             * automission/backup): width-dispatched mailboxes. */
+            if (sprach_ga_key(&ctx, ev.ascii_char)) {
                 continue;
             }
 

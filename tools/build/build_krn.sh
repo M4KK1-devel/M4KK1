@@ -264,7 +264,7 @@ M4SH_CFLAGS="$M4SH_CFLAGS -I$PWD/sys/src/include -I$PWD/include -I$PWD/sys/src/a
 # PCC 编译产物需要编译器运行时（__divdi3 等），等价于 gcc 隐式链接的 libgcc
 PCC_RUNTIME="$PWD/usr/src/lib/m4k_libc/libpcc.a"
 OBJS=""
-for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/lib/*' | sort); do
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/lib/*' | sort); do
     o="${f%.c}.o"
     $UCC $M4SH_CFLAGS -c "$f" -o "$o"
     OBJS="$OBJS $o"
@@ -277,7 +277,7 @@ echo "=== Building M4SHG (graphical-terminal shell) ==="
 # and skips the serial login gate.  Linked at 0x1000000 so the exec'd
 # image never overlaps any live process (see m4sh/m4shg.ld).
 OBJS_G=""
-for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/lib/*' | sort); do
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/lib/*' | sort); do
     o="${f%.c}.g.o"
     $UCC $M4SH_CFLAGS -DM4SH_GRAPHICAL -c "$f" -o "$o"
     OBJS_G="$OBJS_G $o"
@@ -292,7 +292,7 @@ echo "=== Building M4SHT (serial test shell, full-test builds) ==="
 # (observed: EIP in set_env mid-instruction -> GPF).  This variant is
 # spawned by MDM under M4K_TEST_AUTOLOGIN for headless shell tests.
 OBJS_T=""
-for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/lib/*' | sort); do
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/lib/*' | sort); do
     o="${f%.c}.t.o"
     $UCC $M4SH_CFLAGS -DM4SH_NO_LOGIN_GATE -c "$f" -o "$o"
     OBJS_T="$OBJS_T $o"
@@ -387,6 +387,21 @@ echo "=== Building CALC GUI (calculator) ELF ==="
 $UCC $M4SH_CFLAGS -c usr/src/cmd/calc_gui.c -o usr/src/cmd/calc_gui.o
 $LD -m elf_i386 -T usr/src/cmd/calc_gui.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/calc_gui.elf usr/src/cmd/calc_gui.o $PCC_RUNTIME
 echo "   CALC GUI ELF: usr/src/cmd/calc_gui.elf ($(stat -c%s usr/src/cmd/calc_gui.elf) bytes)"
+# === GUI apps (guiapp.h clients; unique load addresses) ===
+$UCC $M4SH_CFLAGS -c usr/src/cmd/clock_gui.c -o usr/src/cmd/clock_gui.o
+$LD -m elf_i386 -T usr/src/cmd/clock_gui.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/clock_gui.elf usr/src/cmd/clock_gui.o $PCC_RUNTIME
+echo "   CLOCK ELF: usr/src/cmd/clock_gui.elf ($(stat -c%s usr/src/cmd/clock_gui.elf) bytes)"
+
+$UCC $M4SH_CFLAGS -c usr/src/cmd/logview.c -o usr/src/cmd/logview.o
+$LD -m elf_i386 -T usr/src/cmd/logview.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/logview.elf usr/src/cmd/logview.o $PCC_RUNTIME
+echo "   LOGVIEW ELF: usr/src/cmd/logview.elf ($(stat -c%s usr/src/cmd/logview.elf) bytes)"
+
+$UCC $M4SH_CFLAGS -c usr/src/cmd/info_gui.c -o usr/src/cmd/info_gui.o
+$LD -m elf_i386 -T usr/src/cmd/info_gui.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/info_gui.elf usr/src/cmd/info_gui.o $PCC_RUNTIME
+echo "   INFO ELF: usr/src/cmd/info_gui.elf ($(stat -c%s usr/src/cmd/info_gui.elf) bytes)"
+
+
+
 
 echo "=== Building Sprach (window manager) ELFs ==="
 # Zig hot-path pixel primitives (docs/zig-standard.md): i386
@@ -535,6 +550,23 @@ sed 's/usr_src_cmd_calc_gui_elf/calc_init_elf/g; s/usr_src_cmd_calc_gui_elf_len/
 rm -f init/calc_elf_.c
 echo "   Generated init/calc_elf.c"
 
+xxd -i usr/src/cmd/clock_gui.elf > init/clock_elf_.c
+sed 's/usr_src_cmd_clock_gui_elf/clock_init_elf/g; s/usr_src_cmd_clock_gui_elf_len/clock_init_elf_len/g' init/clock_elf_.c > init/clock_elf.c
+rm -f init/clock_elf_.c
+echo "   Generated init/clock_elf.c"
+
+xxd -i usr/src/cmd/logview.elf > init/logview_elf_.c
+sed 's/usr_src_cmd_logview_elf/logview_init_elf/g; s/usr_src_cmd_logview_elf_len/logview_init_elf_len/g' init/logview_elf_.c > init/logview_elf.c
+rm -f init/logview_elf_.c
+echo "   Generated init/logview_elf.c"
+
+xxd -i usr/src/cmd/info_gui.elf > init/info_elf_.c
+sed 's/usr_src_cmd_info_gui_elf/info_init_elf/g; s/usr_src_cmd_info_gui_elf_len/info_init_elf_len/g' init/info_elf_.c > init/info_elf.c
+rm -f init/info_elf_.c
+echo "   Generated init/info_elf.c"
+
+
+
 for m in stack; do
     xxd -i "usr/src/sprach/sprach_${m}" > "init/sprach_${m}_elf_.c"
     sed "s/usr_src_sprach_sprach_${m}/sprach_${m}_init_elf/g; s/usr_src_sprach_sprach_${m}_len/sprach_${m}_init_elf_len/g" "init/sprach_${m}_elf_.c" > "init/sprach_${m}_elf.c"
@@ -588,6 +620,9 @@ cp -f usr/src/cmd/terminal.elf ./usr/bin/terminal
 cp -f usr/src/cmd/fm.elf ./usr/bin/fm
 cp -f usr/src/cmd/altr.elf ./usr/bin/altr
 cp -f usr/src/cmd/calc_gui.elf ./usr/bin/calcg
+cp -f usr/src/cmd/clock_gui.elf ./usr/bin/clock
+cp -f usr/src/cmd/logview.elf ./usr/bin/logview
+cp -f usr/src/cmd/info_gui.elf ./usr/bin/info
 cp -f usr/src/tools/pcc/pcc.elf ./usr/bin/pcc
 cp -f usr/src/tools/pcc/pcc.elf ./usr/bin/cc
 fi
@@ -632,6 +667,9 @@ $KCC $CFLAGS -c init/cptest_elf.c -o $OBJDIR/cptest_elf.o
 $KCC $CFLAGS -c init/fm_elf.c -o $OBJDIR/fm_elf.o
 $KCC $CFLAGS -c init/altr_elf.c -o $OBJDIR/altr_elf.o
 $KCC $CFLAGS -c init/calc_elf.c -o $OBJDIR/calc_elf.o
+$KCC $CFLAGS -c init/clock_elf.c -o $OBJDIR/clock_elf.o
+$KCC $CFLAGS -c init/logview_elf.c -o $OBJDIR/logview_elf.o
+$KCC $CFLAGS -c init/info_elf.c -o $OBJDIR/info_elf.o
 $KCC $CFLAGS -c init/sprach_stack_elf.c -o $OBJDIR/sprach_stack_elf.o
 $KCC $CFLAGS -c init/pcc_elf.c -o $OBJDIR/pcc_elf.o
 fi
@@ -711,6 +749,9 @@ if [ "$NEED_GRAPHICS" = 1 ]; then
     $OBJDIR/cptest_elf.o \
     $OBJDIR/altr_elf.o \
     $OBJDIR/calc_elf.o \
+    $OBJDIR/clock_elf.o \
+    $OBJDIR/logview_elf.o \
+    $OBJDIR/info_elf.o \
     $OBJDIR/fm_elf.o \
     $OBJDIR/sprach_stack_elf.o \
     $OBJDIR/pcc_elf.o"
