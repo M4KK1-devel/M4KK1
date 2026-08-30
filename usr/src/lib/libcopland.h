@@ -50,6 +50,12 @@ struct term_mailbox {
     uint32_t write_idx;    /* producer: Sprach */
     uint32_t read_idx;     /* consumer: /bin/terminal */
     uint8_t  buf[TERM_MAILBOX_SIZE];
+    /* Geometry announced by the terminal right after its CREATE
+     * succeeds: lets Sprach's poll claim the RIGHT surface instead of
+     * whichever ≥50x50 client surface appeared first (boot demo
+     * windows are 800x528 and used to get adopted as "terminal"). */
+    uint32_t surf_w;       /* TERM_W */
+    uint32_t surf_h;       /* TERM_H */
 };
 
 /* ── Surface flags ── */

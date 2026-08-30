@@ -534,13 +534,15 @@ void _start(void)
         }
         copland_protocol_tick();
 
-        /* Proto-frame telemetry: one line per 30 s wall-clock.  If the
-         * proto frame path stalls (frame callbacks never fire, chrome
-         * never repaints), this pinpoints WHEN it died. */
+        /* Proto-frame telemetry: one line per ~60 s of frames (the
+         * wall-clock gate via uptime misfired — serial shows a line
+         * every ~0.5 s, so throttle on the frame counter instead).
+         * If the proto frame path stalls (frame callbacks never fire,
+         * chrome never repaints), this pinpoints WHEN it died. */
         {
-            static uint32_t last_tel;
-            uint32_t now = musr_sc_uptime();
-            if (now - last_tel >= 30000) {
+            static uint32_t tel_frames;
+            if (++tel_frames >= 1800) {
+                tel_frames = 0;
                 int ncl = 0, nmap = 0;
                 for (int i = 0; i < CP_MAX_CLIENTS; i++)
                     if (cp_comp.clients[i].active)
@@ -548,7 +550,6 @@ void _start(void)
                 for (int i = 0; i < CP_MAX_SURFACES; i++)
                     if (cp_comp.surfaces[i].mapped)
                         nmap++;
-                last_tel = now;
                 ser_puts("[COPLAND] tel serial=");
                 print_u32(cp_comp.serial);
                 ser_puts(" clients=");

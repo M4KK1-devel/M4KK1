@@ -40,7 +40,7 @@ def png_to_svg(src: Path) -> tuple[str, int, int]:
 
 def main() -> int:
     converted = 0
-    for cat in ("apps", "folder", "net"):
+    for cat in ("apps", "folder", "net", "files"):
         srcdir = SRC / cat
         if not srcdir.is_dir():
             print(f"skip: {srcdir} missing")

@@ -388,6 +388,16 @@ if [ -x "$ZIG_BIN" ]; then
             echo "   spr_draw.zig -> spr_draw.o (Zig hot path)"
         fi
     fi
+    # mgl.zig: GL-compat software rasterizer (same freestanding rules).
+    # Symbol check: mgl_* exports must be present and no undefined syms.
+    "$ZIG_BIN" build-obj usr/src/sprach/mgl.zig \
+        -target x86-freestanding -mcpu "baseline-sse-sse2" -O ReleaseFast \
+        -femit-bin=usr/src/sprach/mgl.o \
+        && { nm -u usr/src/sprach/mgl.o | grep -q . \
+            && { echo "   ERROR: mgl.o has undefined symbols"; rm -f usr/src/sprach/mgl.o; } \
+            || SPR_DRAW_OBJS="$SPR_DRAW_OBJS usr/src/sprach/mgl.o"; } \
+        || true
+    [ -f usr/src/sprach/mgl.o ] && echo "   mgl.zig -> mgl.o (GL compat layer)"
 else
     echo "   WARN: zig not found at $ZIG_BIN; using C primitives"
 fi
@@ -406,6 +416,8 @@ for m in stack; do
     echo "   Sprach ${m} ELF: usr/src/sprach/sprach_${m} ($(stat -c%s "usr/src/sprach/sprach_${m}") bytes)"
 done
 cp -f usr/src/sprach/sprach_stack ./usr/bin/sprach
+# (no ./usr/bin/sprach_stack: nothing execs that name; it only
+# duplicated the sprach ELF inside the ISO)
 
 echo "=== Building PCC (self-hosted C compiler) ELF ==="
 $UCC $M4SH_CFLAGS -c usr/src/tools/pcc/pcc.c -o usr/src/tools/pcc/pcc.o
@@ -551,12 +563,10 @@ if [ "$NEED_GRAPHICS" = 1 ]; then
 cp -f usr/src/cmd/mdm.elf ./usr/bin/mdm
 cp -f usr/src/cmd/flip_test.elf ./usr/bin/flip_test
 cp -f usr/src/cmd/copland.elf ./usr/bin/copland
-cp -f usr/src/cmd/copland.elf ./usr/bin/copland_status
 cp -f usr/src/cmd/terminal.elf ./usr/bin/terminal
 cp -f usr/src/cmd/fm.elf ./usr/bin/fm
 cp -f usr/src/cmd/altr.elf ./usr/bin/altr
 cp -f usr/src/cmd/calc_gui.elf ./usr/bin/calcg
-cp -f usr/src/sprach/sprach_stack ./usr/bin/sprach_stack
 cp -f usr/src/tools/pcc/pcc.elf ./usr/bin/pcc
 cp -f usr/src/tools/pcc/pcc.elf ./usr/bin/cc
 fi
@@ -569,6 +579,14 @@ if [ -f usr/src/tools/recovery/reset-passwd.elf ]; then
 fi
 fi
 for f in usr/src/cmd/*.elf; do
+    base=$(basename "$f" .elf)
+    # The whitelist above already copied these under their runtime
+    # names; a second copy under <name>.elf just bloats the ISO with
+    # byte-identical duplicates.
+    case "$base" in
+    fm|copland|terminal|altr|mdm|flip_test|calc_gui|cptest|mdm_mini)
+        continue ;;
+    esac
     [ -f "$f" ] && cp -f "$f" ./usr/bin/ || true
 done
 echo "   Copied $(ls ./usr/bin/ | wc -l) ELF(s) to ./usr/bin/"

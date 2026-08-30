@@ -34,14 +34,22 @@ MAPPING = [
     ("folder/folder-download.png","icon_dir_downloads", "dir_downloads"),
     ("folder/folder-home.png",   "icon_dir_home",       "dir_home"),
     ("folder/folder-music.png",  "icon_dir_music",      "dir_music"),
-    ("net/054.png",              "icon_net_054",        "net_054"),
-    ("net/055.png",              "icon_net_055",        "net_055"),
-    ("net/056.png",              "icon_net_056",        "net_056"),
-    ("net/057.png",              "icon_net_057",        "net_057"),
-    ("net/058.png",              "icon_net_058",        "net_058"),
-    ("net/059.png",              "icon_net_059",        "net_059"),
-    ("net/060.png",              "icon_net_060",        "net_060"),
-    ("net/061.png",              "icon_net_061",        "net_061"),
+    # net/ icons were renamed 054..061.png -> 0..5.png (same artwork,
+    # pixel-verified).  Keep the OLD logical names — sprach.c and fm.c
+    # look them up as net_054..net_059.
+    ("net/0.png",               "icon_net_054",        "net_054"),
+    ("net/1.png",               "icon_net_055",        "net_055"),
+    ("net/2.png",               "icon_net_056",        "net_056"),
+    ("net/3.png",               "icon_net_057",        "net_057"),
+    ("net/4.png",               "icon_net_058",        "net_058"),
+    ("net/5.png",               "icon_net_059",        "net_059"),
+    ("apps/automission.png",    "icon_apps_automission", "automission"),
+    ("apps/mail.png",           "icon_apps_mail",      "mail"),
+    ("apps/user.png",           "icon_apps_user",      "user"),
+    ("apps/users.png",          "icon_apps_users",     "users"),
+    ("files/document.png",      "icon_files_document", "document"),
+    ("files/http.png",          "icon_files_http",     "http"),
+    ("files/location_file.png", "icon_files_loc_file", "loc_file"),
 ]
 
 HEADER = """/*

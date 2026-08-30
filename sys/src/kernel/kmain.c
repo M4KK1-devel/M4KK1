@@ -474,20 +474,6 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
         }
     }
     {
-        int fd = mkrn_vfs_open("/bin/copland_status",
-            M4K_O_CREAT | M4K_O_WRONLY);
-        if (fd >= 0) {
-            int n = mkrn_vfs_write(fd, copland_init_elf,
-                copland_init_elf_len);
-            mkrn_vfs_close(fd);
-            mkrn_console_write("   /bin/copland_status written (");
-            mkrn_console_write_dec(n);
-            mkrn_console_write(" bytes)\n");
-        } else {
-            mkrn_console_write("   WARNING: failed to create /bin/copland_status\n");
-        }
-    }
-    {
         /* Default window manager: Copland spawns /bin/sprach */
         int fd = mkrn_vfs_open("/bin/sprach",
             M4K_O_CREAT | M4K_O_WRONLY);
@@ -573,20 +559,9 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
             mkrn_console_write("   WARNING: failed to create /bin/calcg\n");
         }
     }
-    {
-        int fd = mkrn_vfs_open("/bin/sprach_stack",
-            M4K_O_CREAT | M4K_O_WRONLY);
-        if (fd >= 0) {
-            int n = mkrn_vfs_write(fd, sprach_stack_init_elf,
-                sprach_stack_init_elf_len);
-            mkrn_vfs_close(fd);
-            mkrn_console_write("   /bin/sprach_stack written (");
-            mkrn_console_write_dec(n);
-            mkrn_console_write(" bytes)\n");
-        } else {
-            mkrn_console_write("   WARNING: failed to create /bin/sprach_stack\n");
-        }
-    }
+    /* /bin/sprach_stack removed: nothing execs it (Copland spawns
+     * /bin/sprach) — it was a second in-kernel copy of the 200 KB
+     * sprach ELF, doubled in kernel .data AND YAFS blocks. */
     {
         /* Self-hosted C compiler: installed as /bin/pcc and /bin/cc */
         int fd = mkrn_vfs_open("/bin/pcc",

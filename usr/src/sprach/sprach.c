@@ -171,9 +171,6 @@ static uint32_t taskbar_buf[SCREEN_W * TASKBAR_H]
 static uint32_t menubar_buf[SCREEN_W * MENUBAR_H]
     __attribute__((aligned(16)));
 
-static uint32_t maximize_buf[SCREEN_W * SCREEN_H]
-    __attribute__((aligned(16)));
-
 /* ── 16×16 Arrow cursor bitmap (BGRA) ──
  *
  * Each pixel: 0x00FFFFFF = white arrow, 0x00000000 = background.
@@ -2651,6 +2648,77 @@ void sprach_handle_mouse(struct sprach_ctx *ctx)
     if (cursor_moved)
         m4k_get_mouse_pos(&ctx->mouse_x, &ctx->mouse_y);
 
+    /* Title-bar drag: while the left button is held on a window's
+     * title bar, every cursor move re-positions that window so the
+     * grab offset stays constant.  The surface follows directly
+     * (x/y only — buffer and size don't change) plus a MOVE command
+     * so Copland recomposites. */
+    if (cursor_moved && ctx->drag_win >= 0) {
+        struct sprach_window *dw = &ctx->wins[ctx->drag_win];
+        if (dw->slot >= 0 && !dw->hidden) {
+            int nx = ctx->mouse_x - ctx->drag_dx;
+            int ny = ctx->mouse_y - ctx->drag_dy;
+            /* clamp: keep the title bar reachable inside the work
+             * area — the user must always be able to grab it again */
+            if (nx < -dw->w + 40)
+                nx = -dw->w + 40;
+            if (nx > SCREEN_W - 40)
+                nx = SCREEN_W - 40;
+            if (ny < WORK_AREA_Y)
+                ny = WORK_AREA_Y;
+            if (ny > SCREEN_H - TASKBAR_H - SPRACH_TITLE_H)
+                ny = SCREEN_H - TASKBAR_H - SPRACH_TITLE_H;
+            if (nx != dw->x || ny != dw->y) {
+                dw->x = nx;
+                dw->y = ny;
+                ctx->shm->surfaces[dw->slot].x = nx;
+                ctx->shm->surfaces[dw->slot].y = ny;
+                copland_cmd_push(ctx->shm,
+                                 COPLAND_CMD_MOVE_SURFACE,
+                                 dw->slot, nx, ny, 0, 0, 0);
+                ctx->shm->dirty = 1;
+            }
+        } else {
+            ctx->drag_win = -1;
+        }
+    }
+
+    /* Button release ends the drag (leave the window where it is). */
+    if (!ctx->btn_was_down && ctx->drag_win >= 0)
+        ctx->drag_win = -1;
+    if (!ctx->btn_was_down && ctx->term_drag) {
+        ctx->term_drag = 0;
+        ser_puts("[SPRACH] TERM DRAG END\n");
+    }
+
+    /* Terminal drag: same tracking, but on the Copland surface. */
+    if (cursor_moved && ctx->term_drag && ctx->term_slot >= 0) {
+        struct copland_surface *ts =
+            &ctx->shm->surfaces[ctx->term_slot];
+        if (ts->in_use && !ctx->term_maximized) {
+            int nx = ctx->mouse_x - ctx->term_drag_dx;
+            int ny = ctx->mouse_y - ctx->term_drag_dy;
+            if (nx < -ts->w + 40)
+                nx = -ts->w + 40;
+            if (nx > SCREEN_W - 40)
+                nx = SCREEN_W - 40;
+            if (ny < WORK_AREA_Y)
+                ny = WORK_AREA_Y;
+            if (ny > SCREEN_H - TASKBAR_H - SPRACH_TITLE_H)
+                ny = SCREEN_H - TASKBAR_H - SPRACH_TITLE_H;
+            if (nx != (int)ts->x || ny != (int)ts->y) {
+                ts->x = nx;
+                ts->y = ny;
+                copland_cmd_push(ctx->shm,
+                                 COPLAND_CMD_MOVE_SURFACE,
+                                 ctx->term_slot, nx, ny, 0, 0, 0);
+                ctx->shm->dirty = 1;
+            }
+        } else {
+            ctx->term_drag = 0;
+        }
+    }
+
     if (cursor_moved)
         m4k_update_cursor();
 }
@@ -2721,9 +2789,17 @@ void sprach_poll_terminal(struct sprach_ctx *ctx)
     }
     if (mb->magic != TERM_MAILBOX_MAGIC)
         return;   /* no terminal process yet */
+    if (mb->surf_w == 0 || mb->surf_h == 0)
+        return;   /* terminal alive but its surface is not up yet */
 
     for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
         if (!ctx->shm->surfaces[i].in_use)
+            continue;
+        /* Claim ONLY the surface the terminal announced — boot demo
+         * windows (800x528) used to get adopted here and the real
+         * terminal (680x456) stayed unclaimed. */
+        if (ctx->shm->surfaces[i].w != (int)mb->surf_w ||
+            ctx->shm->surfaces[i].h != (int)mb->surf_h)
             continue;
         if (i == ctx->taskbar_slot || i == ctx->menubar_slot)
             continue;
@@ -2755,6 +2831,14 @@ void sprach_poll_terminal(struct sprach_ctx *ctx)
         ctx->term_normal_h = ctx->shm->surfaces[i].h;
         ser_puts("[SPRACH] terminal window registered (slot=");
         print_u32((uint32_t)i);
+        ser_puts(") @ ");
+        print_u32((uint32_t)ctx->shm->surfaces[i].x);
+        ser_puts(",");
+        print_u32((uint32_t)ctx->shm->surfaces[i].y);
+        ser_puts(" ");
+        print_u32((uint32_t)ctx->shm->surfaces[i].w);
+        ser_puts("x");
+        print_u32((uint32_t)ctx->shm->surfaces[i].h);
         ser_puts(")\n");
         /* Raise it to the top immediately: the terminal is the newest
          * window and must composite above the demo windows (Copland
@@ -2907,10 +2991,18 @@ void sprach_handle_terminal_click(struct sprach_ctx *ctx, int sx, int sy,
         return;
     }
 
-    /* Title bar click → activate + raise */
+    /* Title bar click → activate + raise ... and start a drag (the
+     * terminal is a Copland-surface client, not a ctx->wins window,
+     * so it drags through its own flag). */
     ctx->active = -1;
     sprach_raise_surface(ctx, ctx->term_slot);
     ctx->shm->dirty = 1;
+    if (!ctx->term_maximized) {
+        ctx->term_drag = 1;
+        ctx->term_drag_dx = lx;
+        ctx->term_drag_dy = ly;
+        ser_puts("[SPRACH] TERM DRAG START\n");
+    }
 }
 
 /* ── Click handling ──
@@ -3277,6 +3369,15 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                         /* Title bar click → raise */
                         ctx->active = i;
                         sprach_raise_window(ctx, i);
+                        /* ...and start a title-bar drag (unless
+                         * maximized: dragging a maximized window is
+                         * ambiguous — keep it pinned). */
+                        if (!w->maximized) {
+                            ctx->drag_win = i;
+                            ctx->drag_dx = ctx->mouse_x - w->x;
+                            ctx->drag_dy = ctx->mouse_y - w->y;
+                            ser_puts("[SPRACH] DRAG START\n");
+                        }
                         hit = 1;
                         break;
                     }
@@ -3421,6 +3522,12 @@ void _start(void)
     ctx.rmenu_items = 0;
     ctx.rmenu_sel_icon = -1;
     ctx.btn2_was_down = 0;
+    ctx.drag_win = -1;
+    ctx.drag_dx = 0;
+    ctx.drag_dy = 0;
+    ctx.term_drag = 0;
+    ctx.term_drag_dx = 0;
+    ctx.term_drag_dy = 0;
 
     /* Restore persisted desktop settings (theme/vol/bt) AFTER the
      * defaults above so a saved value wins, but BEFORE the first

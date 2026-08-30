@@ -423,6 +423,13 @@ static void fm_render(void)
         fm_str(fm_buf, FM_W, 26, y + 3, fm_entries[i].name,
                fm_entries[i].is_dir ? 0x002040A0 : FM_COL_TEXT);
     }
+    /* Empty directory: a hint row instead of a blank body — an empty
+     * list otherwise reads as "FM is broken", not "folder is empty"
+     * (root's home /export/root boots empty by design). */
+    if (fm_count == 0)
+        fm_str(fm_buf, FM_W, 8,
+               FM_TITLE_H + FM_TAB_H + FM_ADDR_H + 4,
+               "(empty folder)", 0x00707070);
     }
 
     /* Status bar: "items: N  tab M" — N printed with a generic digit

@@ -212,6 +212,18 @@ struct sprach_ctx {
     int rmenu_sel_icon; /* icon index for mode 2, -1 otherwise */
     /* Right-button edge tracking (btn2_was_down mirrors btn_was_down) */
     int btn2_was_down;
+
+    /* Title-bar drag state: drag_win >= 0 while the left button is
+     * held on that window's title bar; drag_dx/dy is the grab offset
+     * (cursor - window origin) kept constant for the whole drag so
+     * the window tracks the cursor 1:1.  -1 = no drag. */
+    int drag_win;
+    int drag_dx, drag_dy;
+
+    /* Terminal (Copland-surface client) drag: same idea, but the
+     * window is shm->surfaces[term_slot], not a ctx->wins entry. */
+    int term_drag;
+    int term_drag_dx, term_drag_dy;
 };
 
 /* Core services (sprach.c) */

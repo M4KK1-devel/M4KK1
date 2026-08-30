@@ -529,6 +529,11 @@ void _start(void)
     /* Own the buffer: Sprach never repaints this surface */
     shm->surfaces[my_slot].buffer_ptr = (uint32_t)(uintptr_t)term_buf;
 
+    /* Announce our geometry so Sprach's poll adopts THIS surface,
+     * not some boot demo window that happens to be ≥50x50. */
+    mb->surf_w = TERM_W;
+    mb->surf_h = TERM_H;
+
     term_clear_screen();
     term_puts_err("M4KK1 Terminal [m4sh]\n");
 

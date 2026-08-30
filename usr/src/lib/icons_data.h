@@ -31,8 +31,13 @@ extern uint32_t icon_net_056[ICON_DATA_SIZE * ICON_DATA_SIZE];
 extern uint32_t icon_net_057[ICON_DATA_SIZE * ICON_DATA_SIZE];
 extern uint32_t icon_net_058[ICON_DATA_SIZE * ICON_DATA_SIZE];
 extern uint32_t icon_net_059[ICON_DATA_SIZE * ICON_DATA_SIZE];
-extern uint32_t icon_net_060[ICON_DATA_SIZE * ICON_DATA_SIZE];
-extern uint32_t icon_net_061[ICON_DATA_SIZE * ICON_DATA_SIZE];
+extern uint32_t icon_apps_automission[ICON_DATA_SIZE * ICON_DATA_SIZE];
+extern uint32_t icon_apps_mail[ICON_DATA_SIZE * ICON_DATA_SIZE];
+extern uint32_t icon_apps_user[ICON_DATA_SIZE * ICON_DATA_SIZE];
+extern uint32_t icon_apps_users[ICON_DATA_SIZE * ICON_DATA_SIZE];
+extern uint32_t icon_files_document[ICON_DATA_SIZE * ICON_DATA_SIZE];
+extern uint32_t icon_files_http[ICON_DATA_SIZE * ICON_DATA_SIZE];
+extern uint32_t icon_files_loc_file[ICON_DATA_SIZE * ICON_DATA_SIZE];
 
 struct icon_data_entry {
     char *name;
