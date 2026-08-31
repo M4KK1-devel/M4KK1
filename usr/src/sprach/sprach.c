@@ -103,6 +103,11 @@ static void sp_send(uint32_t obj, uint32_t op)
     cp_ring_write(&r, sp_reqbuf, sp_mb.len);
 }
 
+/* Forward decl: defined later in this file (used by the Preferences
+ * panel click handler for the theme-change repaint). */
+static void sprach_desktop_paint(struct sprach_ctx *ctx);
+static int desk_slot;   /* desktop background surface (-1 = none) */
+
 static void sp_req(uint32_t obj, uint32_t op)
 {
     cp_msg_start(&sp_mb, sp_reqbuf, sizeof(sp_reqbuf), obj, op);
@@ -1587,19 +1592,32 @@ void sprach_draw_clock_popup(struct sprach_ctx *ctx)
  * Clicking the bold "M4KK1" brand in the menubar opens a dropdown with
  * four entries.  It is drawn on its own surface below the brand. */
 
-#define APP_MENU_W     150
-#define APP_MENU_H     128          /* 4 items * 28 + padding */
-#define APP_MENU_ITEM_H 28
-#define APP_MENU_ITEMS 4
+#define APP_MENU_W     160
+#define APP_MENU_H     168          /* 6 items * 26 + padding */
+#define APP_MENU_ITEM_H 26
+#define APP_MENU_ITEMS 6
 #define APP_MENU_X     2            /* dropdown x: under the brand text */
 static uint32_t app_menu_buf[APP_MENU_W * APP_MENU_H];
 
-static const char *app_menu_items[4] = {
+static const char *app_menu_items[APP_MENU_ITEMS] = {
     "About This PC",
-    "System Settings",
+    "Preferences",
+    "Force Quit",
     "Lock Screen",
     "Shut Down",
+    "Restart",
 };
+
+/* App-menu popup panel (About / Preferences): app-menu-owned
+ * replacement for the old clock-popup reuse (System Settings used to
+ * fake-activate because the popup surface stayed hidden when opened
+ * via the menu).  Own buffer + own open state; one panel at a time,
+ * APP_PANEL_MODE decides the content. */
+#define APP_PANEL_W  240
+#define APP_PANEL_H  180
+#define APP_PANEL_ABOUT 0
+#define APP_PANEL_PREFS 1
+static uint32_t app_panel_buf[APP_PANEL_W * APP_PANEL_H];
 
 int sprach_create_app_menu(struct sprach_ctx *ctx)
 {
@@ -1622,12 +1640,274 @@ int sprach_create_app_menu(struct sprach_ctx *ctx)
                                  * must never see in_use=1 with
                                  * half-filled geometry */
             ctx->menu_slot = i;
-            return 0;
+            break;
         }
     }
-    return -1;
+    /* About/Preferences panel surface: also menu-owned, hidden. */
+    if (ctx->panel_slot < 0) {
+        for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
+            if (!ctx->shm->surfaces[i].in_use) {
+                struct copland_surface *s =
+                    &ctx->shm->surfaces[i];
+                s->x = (SCREEN_W - APP_PANEL_W) / 2;
+                s->y = 180;
+                s->w = APP_PANEL_W;
+                s->h = APP_PANEL_H;
+                s->color = 0x00E8E8E8;
+                s->flags = 0;
+                s->dmg_w = 0;
+                s->buffer_ptr =
+                    (uint32_t)(uintptr_t)app_panel_buf;
+                s->in_use = 1;
+                ctx->panel_slot = i;
+                break;
+            }
+        }
+    }
+    if (ctx->menu_slot < 0 || ctx->panel_slot < 0)
+        return -1;
+    return 0;
 }
 
+/* Draw the About / Preferences panel (content by ctx->panel_mode). */
+static void sprach_draw_app_panel(struct sprach_ctx *ctx)
+{
+    if (ctx->panel_slot < 0 || !ctx->panel_open)
+        return;
+
+    sp_fill(app_panel_buf, APP_PANEL_W * APP_PANEL_H, 0x00E8E8E8);
+    sp_rect(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 0, 0,
+            APP_PANEL_W, APP_PANEL_H, SPRACH_COL_BORDER);
+
+    if (ctx->panel_mode == APP_PANEL_ABOUT) {
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 10, 8,
+                    "About This PC", SPRACH_COL_MENUBAR_FG);
+        sp_rect(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 8, 24,
+                APP_PANEL_W - 16, 1, SPRACH_COL_BORDER);
+
+        struct utsname uts;
+        int have_uts = (musr_sc_uname(&uts) == 0);
+        char ln[48];
+        int k = 0;
+        const char *p = "OS:      ";
+        while (*p && k < 46) ln[k++] = *p++;
+        if (have_uts) {
+            for (int i = 0; uts.sysname[i] && k < 46; i++)
+                ln[k++] = uts.sysname[i];
+            ln[k++] = ' ';
+            for (int i = 0; uts.release[i] && k < 46; i++)
+                ln[k++] = uts.release[i];
+        } else {
+            const char *fb = "M4KK1 4P1";
+            while (*fb && k < 46) ln[k++] = *fb++;
+        }
+        ln[k] = '\0';
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 10, 34,
+                    ln, SPRACH_COL_MENUBAR_FG);
+
+        k = 0;
+        p = "Kernel:  ";
+        while (*p && k < 46) ln[k++] = *p++;
+        if (have_uts) {
+            for (int i = 0; uts.version[i] && k < 46; i++)
+                ln[k++] = uts.version[i];
+        } else {
+            const char *fb = "M4K i386 monolithic";
+            while (*fb && k < 46) ln[k++] = *fb++;
+        }
+        ln[k] = '\0';
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 10, 48,
+                    ln, SPRACH_COL_MENUBAR_FG);
+
+        /* Memory: total/used KB via sysinfo. */
+        struct sysinfo si;
+        if (musr_sc_sysinfo(&si) == 0) {
+            uint32_t tot_kb = si.total_ram / 1024u;
+            uint32_t used_kb = si.used_ram / 1024u;
+            k = 0;
+            p = "Mem KB:  ";
+            while (*p && k < 46) ln[k++] = *p++;
+            char dg[12];
+            int nd = 0;
+            do { dg[nd++] = (char)('0' + tot_kb % 10); tot_kb /= 10; }
+            while (tot_kb && nd < 11);
+            while (nd && k < 46) ln[k++] = dg[--nd];
+            ln[k++] = '/';
+            nd = 0;
+            do { dg[nd++] = (char)('0' + used_kb % 10); used_kb /= 10; }
+            while (used_kb && nd < 11);
+            while (nd && k < 46) ln[k++] = dg[--nd];
+            ln[k] = '\0';
+            sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 10, 62,
+                        ln, SPRACH_COL_MENUBAR_FG);
+        }
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 10, 92,
+                    "M4KK1 4P1 Desktop", SPRACH_COL_MENUBAR_DIM);
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 10, 104,
+                    "Sprach WM / Copland", SPRACH_COL_MENUBAR_DIM);
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 10, 164,
+                    "click outside to close", SPRACH_COL_MENUBAR_DIM);
+    } else {
+        /* Preferences: real actionable rows.  Row 0 theme picker
+         * (6 swatches), row 1 volume +/-, row 2 bluetooth toggle. */
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 10, 8,
+                    "Preferences", SPRACH_COL_MENUBAR_FG);
+        sp_rect(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 8, 24,
+                APP_PANEL_W - 16, 1, SPRACH_COL_BORDER);
+
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 10, 34,
+                    "Theme:", SPRACH_COL_MENUBAR_FG);
+        static const uint32_t pref_swatches[6] = {
+            0x00306090u, 0x00308040u, 0x00804030u,
+            0x00505070u, 0x00705850u, 0x00405060u,
+        };
+        int cur = gui_wallpaper_get_theme();
+        for (int t = 0; t < 6; t++) {
+            int sx = 70 + t * 26;
+            sp_rect(app_panel_buf, APP_PANEL_W, APP_PANEL_H, sx, 32,
+                    18, 14, pref_swatches[t]);
+            if (t == cur)
+                sp_rect(app_panel_buf, APP_PANEL_W, APP_PANEL_H,
+                        sx - 2, 30, 22, 18, SPRACH_COL_ACCENT);
+        }
+
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 10, 64,
+                    "Volume:", SPRACH_COL_MENUBAR_FG);
+        sp_rect(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 70, 68, 20, 12,
+                SPRACH_COL_BORDER);
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 74, 70, "-",
+                    SPRACH_COL_MENUBAR_FG);
+        sp_rect(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 180, 68, 20, 12,
+                SPRACH_COL_BORDER);
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 184, 70, "+",
+                    SPRACH_COL_MENUBAR_FG);
+        char vb[5];
+        vb[0] = (char)('0' + ctx->vol_level / 100);
+        vb[1] = (char)('0' + (ctx->vol_level / 10) % 10);
+        vb[2] = (char)('0' + ctx->vol_level % 10);
+        vb[3] = '%';
+        vb[4] = '\0';
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 110, 70, vb,
+                    SPRACH_COL_MENUBAR_FG);
+
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 10, 96,
+                    "Bluetooth:", SPRACH_COL_MENUBAR_FG);
+        sp_rect(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 78, 94, 30, 14,
+                ctx->bt_on ? SPRACH_COL_ACCENT : SPRACH_COL_BORDER);
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 84, 98,
+                    ctx->bt_on ? "ON" : "OFF",
+                    ctx->bt_on ? 0x00101010 : SPRACH_COL_MENUBAR_FG);
+
+        sp_draw_str(app_panel_buf, APP_PANEL_W, APP_PANEL_H, 10, 164,
+                    "click outside to close", SPRACH_COL_MENUBAR_DIM);
+    }
+    ctx->shm->dirty = 1;
+}
+
+/* Open/close the About/Preferences panel.  First open lazily creates
+ * the popup surface (after Copland has fully booted); ser banner lines
+ * are emitted for probe verification. */
+static void sprach_app_panel_toggle(struct sprach_ctx *ctx, int open,
+                                    int mode)
+{
+    if (open && ctx->panel_slot < 0) {
+        int before = 0;
+        for (int i = 0; i < COPLAND_MAX_SURFACES; i++)
+            if (ctx->shm->surfaces[i].in_use)
+                before++;
+        if (copland_cmd_push(ctx->shm, COPLAND_CMD_CREATE_SURFACE,
+                             (SCREEN_W - APP_PANEL_W) / 2,
+                             MENUBAR_H + 40, APP_PANEL_W, APP_PANEL_H,
+                             (int32_t)0x00E8E8E8, 0) != 0)
+            return;
+        if (sprach_wait_slot(ctx, before) != 0)
+            return;
+        for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
+            if (ctx->shm->surfaces[i].in_use &&
+                !ctx->shm->surfaces[i].buffer_ptr) {
+                ctx->panel_slot = i;
+                ctx->shm->surfaces[i].buffer_ptr =
+                    (uint32_t)(uintptr_t)app_panel_buf;
+                break;
+            }
+        }
+        if (ctx->panel_slot < 0)
+            return;
+    }
+    if (ctx->panel_slot < 0)
+        return;
+    if (open) {
+        ctx->panel_mode = mode;
+        ctx->panel_open = 1;
+        ctx->shm->surfaces[ctx->panel_slot].flags |=
+            COPLAND_SURF_VISIBLE;
+        sprach_raise_surface(ctx, ctx->panel_slot);
+        sprach_draw_app_panel(ctx);
+        ser_puts(mode == APP_PANEL_PREFS
+                     ? "[SPRACH] preferences panel open\n"
+                     : "[SPRACH] about panel open\n");
+    } else {
+        ctx->panel_open = 0;
+        ctx->shm->surfaces[ctx->panel_slot].flags &=
+            ~COPLAND_SURF_VISIBLE;
+        ser_puts("[SPRACH] app panel closed\n");
+        ctx->shm->dirty = 1;
+    }
+}
+
+/* Handle a click inside the open Preferences panel (panel-local
+ * coordinates).  Returns 1 if the click hit a control. */
+static int sprach_prefs_click(struct sprach_ctx *ctx, int lx, int ly)
+{
+    /* Theme swatches: y 30..48, 6 boxes of 26 px from x 68. */
+    if (ly >= 30 && ly < 48 && lx >= 68 && lx < 68 + 6 * 26) {
+        int t = (lx - 68) / 26;
+        if (t >= 0 && t < 6 && t != gui_wallpaper_get_theme()) {
+            gui_wallpaper_set_theme(t);
+            sprach_cfg_save(ctx);
+            ctx->shm->dirty = 1;
+            sprach_desktop_paint(ctx);
+            sprach_draw_app_panel(ctx);
+            ser_puts("[SPRACH] prefs: wallpaper theme -> ");
+            print_u32((uint32_t)t);
+            ser_puts("\n");
+        }
+        return 1;
+    }
+    /* Volume -/+ buttons: y 66..82. */
+    if (ly >= 66 && ly < 82) {
+        if (lx >= 70 && lx < 90) {
+            ctx->vol_level -= 10;
+            if (ctx->vol_level < 0)
+                ctx->vol_level = 0;
+        } else if (lx >= 180 && lx < 200) {
+            ctx->vol_level += 10;
+            if (ctx->vol_level > 100)
+                ctx->vol_level = 100;
+        } else {
+            return 0;
+        }
+        sprach_cfg_save(ctx);
+        sprach_draw_app_panel(ctx);
+        ser_puts("[SPRACH] prefs: volume -> ");
+        print_u32((uint32_t)ctx->vol_level);
+        ser_puts("\n");
+        return 1;
+    }
+    /* Bluetooth toggle box: y 92..110. */
+    if (ly >= 92 && ly < 110 && lx >= 76 && lx < 110) {
+        ctx->bt_on = !ctx->bt_on;
+        sprach_cfg_save(ctx);
+        sprach_draw_app_panel(ctx);
+        ser_puts(ctx->bt_on
+            ? "[SPRACH] prefs: bluetooth ON\n"
+            : "[SPRACH] prefs: bluetooth OFF\n");
+        return 1;
+    }
+    return 0;
+}
+
+/* Draw the app-menu dropdown. */
 void sprach_draw_app_menu(struct sprach_ctx *ctx)
 {
     if (ctx->menu_slot < 0 || !ctx->menu_open)
@@ -1635,7 +1915,7 @@ void sprach_draw_app_menu(struct sprach_ctx *ctx)
     sp_fill(app_menu_buf, APP_MENU_W * APP_MENU_H, 0x00E8E8E8);
     sp_rect(app_menu_buf, APP_MENU_W, APP_MENU_H, 0, 0, APP_MENU_W, APP_MENU_H,
             SPRACH_COL_BORDER);
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < APP_MENU_ITEMS; i++) {
         int iy = 4 + i * APP_MENU_ITEM_H;
         int sel = (ctx->mouse_x >= 6 && ctx->mouse_x < 6 + APP_MENU_W &&
                    ctx->mouse_y >= MENUBAR_H + iy &&
@@ -1643,60 +1923,118 @@ void sprach_draw_app_menu(struct sprach_ctx *ctx)
         if (sel)
             sp_rect(app_menu_buf, APP_MENU_W, APP_MENU_H, 3, iy - 2, APP_MENU_W - 6,
                     APP_MENU_ITEM_H - 4, 0x003060C0);
-        sp_draw_str(app_menu_buf, APP_MENU_W, APP_MENU_H, 12, iy + 6,
+        sp_draw_str(app_menu_buf, APP_MENU_W, APP_MENU_H, 12, iy + 5,
                     app_menu_items[i],
                     sel ? 0x00FFFFFF : SPRACH_COL_MENUBAR_FG);
+        /* Separator under Force Quit (grouping break, Mac style). */
+        if (i == 2)
+            sp_rect(app_menu_buf, APP_MENU_W, APP_MENU_H, 4,
+                    iy + APP_MENU_ITEM_H - 2, APP_MENU_W - 8, 1,
+                    SPRACH_COL_BORDER);
     }
     ctx->shm->dirty = 1;
 }
 
-/* Execute the clicked app-menu item (mi = 0..3). */
+/* Force Quit: list every open window on the serial log and destroy it
+ * via each surface class's proper teardown path:
+ *   - Sprach demo windows (wins[]): surface down + table entry freed;
+ *   - terminal: surface down + SIGKILL its pid (if known);
+ *   - standalone GUI clients + FM (guiapp.h model): clear VISIBLE so
+ *     the client's own main loop sees the close and exits (the
+ *     surface is then freed by its owner — the protocol has no
+ *     WM-kills-client channel for width-identified clients).
+ * Chrome surfaces (menubar/taskbar/desktop/dock, our popups) are not
+ * windows and are left alone.  The serial log enumerates every window
+ * that was open ("FQ-WIN:" lines) — that is the Force Quit list. */
+static void sprach_app_menu_force_quit(struct sprach_ctx *ctx)
+{
+    int n = 0;
+
+    /* Sprach-owned demo windows. */
+    for (int i = 0; i < SPRACH_WINDOW_COUNT; i++) {
+        if (ctx->wins[i].slot < 0)
+            continue;
+        ser_puts("[SPRACH] FQ-WIN: ");
+        ser_puts(ctx->wins[i].title_str);
+        ser_puts(" (demo window)\n");
+        ctx->shm->surfaces[ctx->wins[i].slot].in_use = 0;
+        if (ctx->shm->surface_count > 0)
+            ctx->shm->surface_count--;
+        ctx->wins[i].slot = -1;
+        n++;
+    }
+
+    /* Terminal window + its process. */
+    if (ctx->term_slot >= 0) {
+        ser_puts("[SPRACH] FQ-WIN: terminal\n");
+        ctx->shm->surfaces[ctx->term_slot].in_use = 0;
+        if (ctx->shm->surface_count > 0)
+            ctx->shm->surface_count--;
+        if (ctx->term_pid > 0)
+            m4k_kill(ctx->term_pid, 2 /* SIGKILL */);
+        ctx->term_slot = -1;
+        ctx->term_pid = -1;
+        n++;
+    }
+
+    /* Standalone GUI clients (guiapp.h) and the file manager:
+     * hide their surface; the client exits on its own. */
+    for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
+        if (!ctx->shm->surfaces[i].in_use)
+            continue;
+        if (i == ctx->taskbar_slot || i == ctx->menubar_slot ||
+            i == desk_slot || i == ctx->clock_slot ||
+            i == ctx->menu_slot || i == ctx->lp_slot ||
+            i == ctx->panel_slot)
+            continue;
+        if (ctx->term_slot == i)
+            continue;
+        int ours = 0;
+        for (int j = 0; j < SPRACH_WINDOW_COUNT; j++)
+            if (ctx->wins[j].slot == i)
+                ours = 1;
+        if (ours)
+            continue;
+        if (ctx->shm->surfaces[i].w < 50 || ctx->shm->surfaces[i].h < 50)
+            continue;   /* transient half-created surface */
+        ser_puts("[SPRACH] FQ-WIN: app window ");
+        print_u32((uint32_t)ctx->shm->surfaces[i].w);
+        ser_puts("x");
+        print_u32((uint32_t)ctx->shm->surfaces[i].h);
+        ser_puts("\n");
+        ctx->shm->surfaces[i].flags &= ~COPLAND_SURF_VISIBLE;
+        n++;
+    }
+
+    ser_puts("[SPRACH] force quit: closed ");
+    print_u32((uint32_t)n);
+    ser_puts(" window(s)\n");
+    ctx->active = -1;
+    ctx->last_tbar_active = -999;
+    ctx->shm->dirty = 1;
+}
+
+/* Execute the clicked app-menu item (mi = 0..APP_MENU_ITEMS-1). */
 static void sprach_app_menu_activate(struct sprach_ctx *ctx, int mi)
 {
     ser_puts("[SPRACH] app menu: ");
     ser_puts(app_menu_items[mi]);
     ser_puts("\n");
     switch (mi) {
-    case 0:   /* About This PC → info popup in the clock popup style */
-        ctx->clock_open = 1;
-        ctx->clock_about = 1;
-        ctx->clock_settings = 0;
-        ctx->tray_mode = 0;
-        ctx->clock_x = (SCREEN_W - CLOCK_POP_W) / 2;
-        ctx->clock_y = 200;
-        ctx->clock_last_sec = -1;
-        if (ctx->clock_slot >= 0) {
-            ctx->shm->surfaces[ctx->clock_slot].x = ctx->clock_x;
-            ctx->shm->surfaces[ctx->clock_slot].y = ctx->clock_y;
-            ctx->shm->surfaces[ctx->clock_slot].h = ABOUT_POP_H;
-            ctx->shm->surfaces[ctx->clock_slot].flags |=
-                COPLAND_SURF_VISIBLE;
-            sprach_draw_clock_popup(ctx);
-        }
+    case 0:   /* About This PC → app-menu-owned info panel */
+        sprach_app_panel_toggle(ctx, 1, APP_PANEL_ABOUT);
         break;
-    case 1:   /* System Settings → wallpaper picker panel */
-        ser_puts("[SPRACH] system settings\n");
-        if (ctx->clock_slot >= 0) {
-            ctx->clock_open = 1;
-            ctx->clock_about = 1;
-            ctx->clock_settings = 1;
-            ctx->tray_mode = 0;
-            ctx->clock_x = (SCREEN_W - CLOCK_POP_W) / 2;
-            ctx->clock_y = 200;
-            ctx->clock_last_sec = -1;
-            ctx->shm->surfaces[ctx->clock_slot].x = ctx->clock_x;
-            ctx->shm->surfaces[ctx->clock_slot].y = ctx->clock_y;
-            ctx->shm->surfaces[ctx->clock_slot].h = ABOUT_POP_H;
-            ctx->shm->surfaces[ctx->clock_slot].flags |=
-                COPLAND_SURF_VISIBLE;
-            sprach_draw_clock_popup(ctx);
-        }
+    case 1:   /* Preferences → actionable settings panel */
+        sprach_app_panel_toggle(ctx, 1, APP_PANEL_PREFS);
         break;
-    case 2:   /* Lock Screen → end the session, MDM regains the screen */
+    case 2:   /* Force Quit → close every open window */
+        sprach_app_menu_force_quit(ctx);
+        break;
+    case 3:   /* Lock Screen → end the session, MDM regains the screen */
         ser_puts("[SPRACH] locking screen...\n");
         ctx->shm->shutdown = 1;
         break;
-    case 3:   /* Shut Down → reboot syscall (magic-gated 0x6D).
+    case 4:   /* Shut Down → reboot syscall (magic-gated 0x6D).
          * QEMU std i386 has no ACPI poweroff; the triple-fault warm
          * reset in the kernel's reboot handler is the only machine
          * restart this hardware offers. */
@@ -1704,7 +2042,16 @@ static void sprach_app_menu_activate(struct sprach_ctx *ctx, int mi)
         ctx->shm->shutdown = 1;
         ctx->shm->reboot = 1;
         break;
+    case 5:   /* Restart → same reboot path, distinct log line */
+        ser_puts("[SPRACH] restarting (reboot syscall)...\n");
+        ctx->shm->shutdown = 1;
+        ctx->shm->reboot = 1;
+        break;
     }
+    /* Dropdown discipline: activating any item closes the menu (a
+     * click meant for the popup panel / desktop must never fall
+     * through onto a still-open menu item). */
+    sprach_app_menu_toggle(ctx, 0);
     ctx->shm->dirty = 1;
 }
 
@@ -2723,6 +3070,10 @@ void sprach_raise_surface(struct sprach_ctx *ctx, int slot)
         ctx->lp_slot = top;
     else if (ctx->lp_slot == top)
         ctx->lp_slot = old_slot;
+    if (ctx->panel_slot == slot)
+        ctx->panel_slot = top;
+    else if (ctx->panel_slot == top)
+        ctx->panel_slot = old_slot;
 }
 
 void sprach_raise_window(struct sprach_ctx *ctx, int idx)
@@ -3397,6 +3748,26 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                 hit = 1;
             }
 
+            /* About/Preferences panel: clicks inside either hit a
+             * control (Preferences rows) or are swallowed; clicks
+             * anywhere else close it (click-outside-to-dismiss). */
+            if (!hit && ctx->panel_open && ctx->panel_slot >= 0) {
+                int px = ctx->shm->surfaces[ctx->panel_slot].x;
+                int py = ctx->shm->surfaces[ctx->panel_slot].y;
+                if (ctx->mouse_x >= px &&
+                    ctx->mouse_x < px + APP_PANEL_W &&
+                    ctx->mouse_y >= py &&
+                    ctx->mouse_y < py + APP_PANEL_H) {
+                    if (ctx->panel_mode == APP_PANEL_PREFS)
+                        sprach_prefs_click(ctx, ctx->mouse_x - px,
+                                           ctx->mouse_y - py);
+                    hit = 1;
+                } else {
+                    sprach_app_panel_toggle(ctx, 0, 0);
+                    hit = 1;
+                }
+            }
+
             /* Launchpad overlay hit-test (covers the work area) */
             if (!hit && ctx->lp_open && ctx->lp_slot >= 0 &&
                 ctx->mouse_x >= 0 && ctx->mouse_x < SCREEN_W &&
@@ -3745,6 +4116,9 @@ void _start(void)
     ctx.vol_level = 70;
     ctx.menu_open = 0;
     ctx.menu_slot = -1;
+    ctx.panel_open = 0;
+    ctx.panel_slot = -1;
+    ctx.panel_mode = 0;
     ctx.lp_open = 0;
     ctx.lp_slot = -1;
     ctx.lp_count = 0;
@@ -4013,12 +4387,14 @@ void _start(void)
             if (ctx.lp_open && sprach_launchpad_key(&ctx, ev.ascii_char))
                 continue;
 
-            /* Esc → close launchpad / app menu */
+            /* Esc → close launchpad / app menu / app panel */
             if (ev.ascii_char == 0x1B) {
                 if (ctx.lp_open)
                     sprach_launchpad_toggle(&ctx, 0);
                 else if (ctx.menu_open)
                     sprach_app_menu_toggle(&ctx, 0);
+                else if (ctx.panel_open)
+                    sprach_app_panel_toggle(&ctx, 0, 0);
                 continue;
             }
 

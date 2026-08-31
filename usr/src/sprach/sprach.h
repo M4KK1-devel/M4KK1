@@ -189,6 +189,12 @@ struct sprach_ctx {
     int menu_open;
     int menu_slot;       /* Copland surface slot (-1 = uninit) */
 
+    /* App-menu popup panel (About / Preferences): 1 = open.
+     * Own surface (panel_slot) centered in the work area. */
+    int panel_open;
+    int panel_slot;      /* Copland surface slot (-1 = uninit) */
+    int panel_mode;      /* APP_PANEL_ABOUT / APP_PANEL_PREFS */
+
     /* Launchpad overlay (Dock grid icon click): 1 = open.  Drawn on
      * its own surface (lp_slot) covering the work area. */
     int lp_open;
