@@ -1729,6 +1729,23 @@ struct lp_app {
 static struct lp_app lp_apps[LP_MAX_APPS];
 static int lp_app_count = 0;
 
+/* Search filter state: lp_query is the typed substring filter,
+ * lp_visible[] maps on-screen cell i -> lp_apps index (rebuilt by
+ * lp_rebuild_visible on every query edit).  lp_sel is the keyboard
+ * selection index into the VISIBLE list (-1 = none). */
+#define LP_QUERY_MAX 15
+static char lp_query[LP_QUERY_MAX + 1];
+static int lp_query_len = 0;
+static int lp_visible[LP_MAX_APPS];
+static int lp_vis_count = 0;
+static int lp_sel = -1;
+
+/* Search box geometry (launchpad-local coords, below the title). */
+#define LP_SRCH_W  220
+#define LP_SRCH_H  22
+#define LP_SRCH_X  ((LP_W - LP_SRCH_W) / 2)
+#define LP_SRCH_Y  36
+
 /* WM/server-internal ELFs that must never be launched from Launchpad:
  * they already own the compositor/WM/session. */
 static const char *lp_hidden_apps[] = {
@@ -1883,6 +1900,34 @@ static int lp_app_prio(const struct lp_app *a)
     return 2;
 }
 
+/* Substring match: does app name contain lp_query? */
+static int lp_matches(const struct lp_app *a)
+{
+    if (lp_query_len == 0)
+        return 1;
+    for (int i = 0; a->name[i]; i++) {
+        int j = 0;
+        while (j < lp_query_len && a->name[i + j] &&
+               a->name[i + j] == lp_query[j])
+            j++;
+        if (j == lp_query_len)
+            return 1;
+    }
+    return 0;
+}
+
+/* Rebuild lp_visible[] from lp_apps through lp_query.  Called after
+ * lp_scan() and after every query edit. */
+static void lp_rebuild_visible(void)
+{
+    lp_vis_count = 0;
+    for (int i = 0; i < lp_app_count && lp_vis_count < LP_MAX_APPS; i++)
+        if (lp_matches(&lp_apps[i]))
+            lp_visible[lp_vis_count++] = i;
+    if (lp_sel >= lp_vis_count)
+        lp_sel = lp_vis_count - 1;
+}
+
 #define LP_COLS     4
 #define LP_CELL_W   160
 #define LP_CELL_H   110
@@ -1921,12 +1966,36 @@ void sprach_draw_launchpad(struct sprach_ctx *ctx)
     /* translucent-ish dark backdrop */
     for (int i = 0; i < LP_W * LP_H; i++)
         lp_buf[i] = 0x00C8203048;
-    sp_draw_str(lp_buf, LP_W, LP_H, (LP_W - 7 * 9) / 2, 20, "Launchpad",
+    sp_draw_str(lp_buf, LP_W, LP_H, (LP_W - 7 * 9) / 2, 12, "Launchpad",
                 0x00FFFFFF);
-    for (int a = 0; a < lp_app_count; a++) {
-        int cx = LP_GRID_X + (a % LP_COLS) * LP_CELL_W;
-        int cy = LP_GRID_Y + (a / LP_COLS) * LP_CELL_H;
-        int sel = (ctx->mouse_x >= cx && ctx->mouse_x < cx + LP_CELL_W &&
+    /* Search box: rounded-ish frame + query text + blinking-style
+     * caret.  Shows the live substring filter. */
+    sp_rect(lp_buf, LP_W, LP_H, LP_SRCH_X - 1, LP_SRCH_Y - 1,
+            LP_SRCH_W + 2, LP_SRCH_H + 2, 0x008090B0);
+    sp_rect(lp_buf, LP_W, LP_H, LP_SRCH_X, LP_SRCH_Y,
+            LP_SRCH_W, LP_SRCH_H, 0x00182030);
+    sp_draw_str(lp_buf, LP_W, LP_H, LP_SRCH_X + 6, LP_SRCH_Y + 7,
+                "Search:", 0x0090A0C0);
+    sp_draw_str(lp_buf, LP_W, LP_H, LP_SRCH_X + 68, LP_SRCH_Y + 7,
+                lp_query_len ? lp_query : "_", 0x00FFFFFF);
+    /* Filter result count (serial-verifiable live filter state). */
+    ser_puts("[SPRACH] launchpad: filter '");
+    ser_puts(lp_query_len ? lp_query : "");
+    ser_puts("' matches ");
+    {
+        char d[4];
+        int p = 0, v = lp_vis_count;
+        do { d[p++] = '0' + (char)(v % 10); v /= 10; } while (v > 0);
+        while (p > 0)
+            ser_putc(d[--p]);
+    }
+    ser_puts("\n");
+    for (int c = 0; c < lp_vis_count; c++) {
+        int a = lp_visible[c];
+        int cx = LP_GRID_X + (c % LP_COLS) * LP_CELL_W;
+        int cy = LP_GRID_Y + (c / LP_COLS) * LP_CELL_H;
+        int sel = (c == lp_sel) ||
+                  (ctx->mouse_x >= cx && ctx->mouse_x < cx + LP_CELL_W &&
                    ctx->mouse_y - MENUBAR_H >= cy &&
                    ctx->mouse_y - MENUBAR_H < cy + LP_CELL_H);
         if (sel)
@@ -1957,46 +2026,56 @@ void sprach_draw_launchpad(struct sprach_ctx *ctx)
     ctx->shm->dirty = 1;
 }
 
+/* Launch the app at visible-cell index vc (keyboard path shares
+ * this with the mouse path). */
+static void lp_activate_index(struct sprach_ctx *ctx, int vc)
+{
+    if (vc < 0 || vc >= lp_vis_count)
+        return;
+    int a = lp_visible[vc];
+    ser_puts("[SPRACH] launchpad: launching ");
+    ser_puts(lp_apps[a].path);
+    ser_puts("\n");
+    if (lp_apps[a].path[5] == 't' && lp_apps[a].path[6] == 'e' &&
+        lp_apps[a].path[7] == 'r' && lp_apps[a].path[8] == 'm' &&
+        lp_apps[a].path[9] == '\0') {
+        /* /bin/terminal: the WM-owned emulator */
+        sprach_spawn_terminal(ctx);
+    } else if (lp_apps[a].path[5] == 'm' && lp_apps[a].path[6] == '4' &&
+               lp_apps[a].path[7] == 's' && lp_apps[a].path[8] == 'h' &&
+               lp_apps[a].path[9] == '\0') {
+        /* /bin/m4sh: the console shell would hog the raw
+         * console — launch the graphical shell instead */
+        int pid = musr_sc_fork();
+        if (pid == 0) {
+            m4k_spawn("/bin/m4shg", 0);
+            m4k_exit(1);
+        }
+    } else {
+        int pid = musr_sc_fork();
+        if (pid == 0) {
+            m4k_spawn(lp_apps[a].path, 0);
+            m4k_exit(1);
+        }
+    }
+    ctx->lp_open = 0;
+    if (ctx->lp_slot >= 0)
+        ctx->shm->surfaces[ctx->lp_slot].flags &=
+            ~COPLAND_SURF_VISIBLE;
+    ctx->shm->dirty = 1;
+}
+
 /* Launch the app under the launchpad click point. */
 static void sprach_launchpad_activate(struct sprach_ctx *ctx)
 {
     int lx = ctx->mouse_x;
     int ly = ctx->mouse_y - MENUBAR_H;
-    for (int a = 0; a < lp_app_count; a++) {
-        int cx = LP_GRID_X + (a % LP_COLS) * LP_CELL_W;
-        int cy = LP_GRID_Y + (a / LP_COLS) * LP_CELL_H;
+    for (int c = 0; c < lp_vis_count; c++) {
+        int cx = LP_GRID_X + (c % LP_COLS) * LP_CELL_W;
+        int cy = LP_GRID_Y + (c / LP_COLS) * LP_CELL_H;
         if (lx >= cx && lx < cx + LP_CELL_W &&
             ly >= cy && ly < cy + LP_CELL_H) {
-            ser_puts("[SPRACH] launchpad: launching ");
-            ser_puts(lp_apps[a].path);
-            ser_puts("\n");
-            if (lp_apps[a].path[5] == 't' && lp_apps[a].path[6] == 'e' &&
-                lp_apps[a].path[7] == 'r' && lp_apps[a].path[8] == 'm' &&
-                lp_apps[a].path[9] == '\0') {
-                /* /bin/terminal: the WM-owned emulator */
-                sprach_spawn_terminal(ctx);
-            } else if (lp_apps[a].path[5] == 'm' && lp_apps[a].path[6] == '4' &&
-                       lp_apps[a].path[7] == 's' && lp_apps[a].path[8] == 'h' &&
-                       lp_apps[a].path[9] == '\0') {
-                /* /bin/m4sh: the console shell would hog the raw
-                 * console — launch the graphical shell instead */
-                int pid = musr_sc_fork();
-                if (pid == 0) {
-                    m4k_spawn("/bin/m4shg", 0);
-                    m4k_exit(1);
-                }
-            } else {
-                int pid = musr_sc_fork();
-                if (pid == 0) {
-                    m4k_spawn(lp_apps[a].path, 0);
-                    m4k_exit(1);
-                }
-            }
-            ctx->lp_open = 0;
-            if (ctx->lp_slot >= 0)
-                ctx->shm->surfaces[ctx->lp_slot].flags &=
-                    ~COPLAND_SURF_VISIBLE;
-            ctx->shm->dirty = 1;
+            lp_activate_index(ctx, c);
             return;
         }
     }
@@ -2365,6 +2444,10 @@ void sprach_launchpad_toggle(struct sprach_ctx *ctx, int open)
     ctx->lp_open = open;
     if (open) {
         lp_scan();
+        lp_query[0] = '\0';
+        lp_query_len = 0;
+        lp_sel = -1;
+        lp_rebuild_visible();
         ctx->lp_count = lp_app_count;
         ctx->shm->surfaces[ctx->lp_slot].flags |=
             COPLAND_SURF_VISIBLE;
@@ -2380,6 +2463,90 @@ void sprach_launchpad_toggle(struct sprach_ctx *ctx, int open)
         ser_puts("[SPRACH] launchpad closed\n");
     }
     ctx->shm->dirty = 1;
+}
+
+/* Keyboard handler while the launchpad overlay is open.  Consumes:
+ *   - printable chars -> append to the substring filter query
+ *   - Backspace       -> delete the last query char
+ *   - Tab             -> move the keyboard selection to the next
+ *     match (wrap-around; arrows never arrive: scancodes without
+ *     ASCII are dropped by the keymap, and vi-style letter keys
+ *     would collide with filter typing)
+ *   - Enter           -> launch the selected (or first) match
+ *   - Esc             -> clear the query first, close on second Esc
+ * Returns 1 if the key was consumed. */
+static int sprach_launchpad_key(struct sprach_ctx *ctx, char ch)
+{
+    if (!ctx->lp_open)
+        return 0;
+    if (ch == '\n') {
+        int vc = lp_sel >= 0 ? lp_sel : (lp_vis_count > 0 ? 0 : -1);
+        if (vc < 0)
+            return 1;
+        ser_puts("[SPRACH] launchpad: enter at cell ");
+        {
+            char d[4];
+            int p = 0, v = vc;
+            do { d[p++] = '0' + (char)(v % 10); v /= 10; } while (v > 0);
+            while (p > 0)
+                ser_putc(d[--p]);
+        }
+        ser_puts("\n");
+        lp_activate_index(ctx, vc);
+        return 1;
+    }
+    if (ch == 0x1B) {   /* Esc: clear query, else close */
+        if (lp_query_len > 0) {
+            lp_query[0] = '\0';
+            lp_query_len = 0;
+            lp_sel = -1;
+            lp_rebuild_visible();
+            sprach_draw_launchpad(ctx);
+            ser_puts("[SPRACH] launchpad: filter cleared\n");
+        } else {
+            sprach_launchpad_toggle(ctx, 0);
+        }
+        return 1;
+    }
+    if (ch == '\b') {
+        if (lp_query_len > 0) {
+            lp_query_len--;
+            lp_query[lp_query_len] = '\0';
+            lp_sel = -1;
+            lp_rebuild_visible();
+            sprach_draw_launchpad(ctx);
+        }
+        return 1;
+    }
+    if (ch == '\t') {   /* Tab: next match, wrap around */
+        if (lp_vis_count == 0)
+            return 1;
+        lp_sel = (lp_sel + 1) % lp_vis_count;
+        ser_puts("[SPRACH] launchpad: select ");
+        {
+            char d2[4];
+            int p = 0, v = lp_sel;
+            do { d2[p++] = '0' + (char)(v % 10); v /= 10; } while (v > 0);
+            while (p > 0)
+                ser_putc(d2[--p]);
+        }
+        ser_puts("\n");
+        sprach_draw_launchpad(ctx);
+        return 1;
+    }
+    /* printable ASCII (no modifiers beyond shift, which the keymap
+     * already baked into the char) -> filter query */
+    if (ch >= 0x20 && ch < 0x7F) {
+        if (lp_query_len < LP_QUERY_MAX) {
+            lp_query[lp_query_len++] = ch;
+            lp_query[lp_query_len] = '\0';
+            lp_sel = -1;
+            lp_rebuild_visible();
+            sprach_draw_launchpad(ctx);
+        }
+        return 1;
+    }
+    return 1;   /* overlay open: swallow everything else */
 }
 
 /* Rule+N: activate the Nth Dock entry (0-based idx).  Dock layout is
@@ -3838,6 +4005,13 @@ void _start(void)
                 sprach_dock_activate(&ctx, ev.ascii_char - '1');
                 continue;
             }
+
+            /* Launchpad overlay open → it owns the keyboard: filter
+             * typing, vi/Tab navigation, Enter launch, Esc clear/
+             * close.  Must run BEFORE the bare-Esc handler below
+             * and before any terminal/FM forwarding. */
+            if (ctx.lp_open && sprach_launchpad_key(&ctx, ev.ascii_char))
+                continue;
 
             /* Esc → close launchpad / app menu */
             if (ev.ascii_char == 0x1B) {
