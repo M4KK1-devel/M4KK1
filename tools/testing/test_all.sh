@@ -101,7 +101,10 @@ fi
 # 测试4: 编译验证
 echo ""
 echo "=== 测试4: 编译验证 ==="
-if ./tools/build/build_krn.sh > /tmp/build.log 2>&1; then
+# Build FULL explicitly: the QEMU boot assertions in test 5 expect
+# MDM (graphical login), and a default build reading build.config
+# may produce a cmd-only ISO that has no MDM at all.
+if ./tools/build/build_krn.sh --full > /tmp/build.log 2>&1; then
     check_pass "编译成功"
 else
     check_fail "编译失败"
@@ -111,7 +114,12 @@ fi
 # 测试5: QEMU启动测试（串口模式）
 echo ""
 echo "=== 测试5: QEMU启动测试 ==="
-timeout 20 qemu-system-i386 -cdrom $(ls output/m4kk1_*.iso | head -1) \
+# Pick the NEWEST ISO (ls -t): a bare `ls | head -1` picks the
+# lexicographically first name, which is cmd-only when that mode
+# was ever built — it has no MDM and fails the login assertions
+# below regardless of the code under test.
+TEST_ISO=$(ls -t output/m4kk1_*.iso | head -1)
+timeout 20 qemu-system-i386 -cdrom "$TEST_ISO" \
     -nographic -serial mon:stdio -no-reboot -display none 2>&1 | \
     tee /tmp/qemu_test.log &
 QEMU_PID=$!
