@@ -3483,10 +3483,24 @@ static const struct sprach_ga_ref ga_apps[] = {
     { 360, 0x006B0000u, 0x434C3200u },   /* cal     "CL2\0" */
     { 424, 0x006C0000u, 0x44534B31u },   /* disk    "DSK1" */
     { 384, 0x006D0000u, 0x50524631u },   /* pref    "PRF1" */
+    { 640, 0x00620000u, 0x414C5431u },   /* altr2   "ALT1" (VSCode editor;
+                                           * kept out of ctx->wins[] so the
+                                           * generic width dispatch above
+                                           * reaches this entry) */
 };
 
-static int sprach_ga_key(struct sprach_ctx *ctx, unsigned char ch)
+static int sprach_ga_key(struct sprach_ctx *ctx, unsigned char ch,
+                        uint32_t mods)
 {
+    /* Ctrl chord → control code: the kernel keymap delivers raw
+     * ASCII (Ctrl+S arrives as 's'), but guiapp clients expect the
+     * classic control codes (0x13 = Ctrl+S).  Translate here, at
+     * the single dispatch point, so every ga app gets them. */
+    if ((mods & 0x02u) && ch >= 'a' && ch <= 'z')
+        ch = (unsigned char)(ch - 'a' + 1);
+    if ((mods & 0x02u) && ch == ' ')
+        ch = 0x00;
+
     /* top-most non-chrome surface */
     int top = -1;
     for (int i = 0; i < COPLAND_MAX_SURFACES; i++)
@@ -4416,7 +4430,10 @@ void _start(void)
                     sprach_app_menu_toggle(&ctx, 0);
                 else if (ctx.panel_open)
                     sprach_app_panel_toggle(&ctx, 0, 0);
-                continue;
+                else if (sprach_ga_key(&ctx, 0x1B,
+                                       ev.modifiers))
+                    ;   /* no chrome open: hand the Esc to the
+                          * focused GUI app (altr INSERT→NORMAL) */
             }
 
             /* Ctrl+Alt+Q → quit the WM (bare 'q' used to kill the
@@ -4430,6 +4447,18 @@ void _start(void)
                 m4k_exit(0);
             }
 
+            /* GUI-app clients (calc/clock/logview/.../altr2):
+             * width-dispatched mailboxes.  This must run BEFORE the
+             * terminal forward below — the serial-autologin terminal
+             * is always present and !hidden on the full-test ISO, so
+             * it used to swallow every keystroke and the newly
+             * spawned top-most GUI app never saw its keys.  ga_key
+             * only consumes a key when the TOP-MOST surface matches a
+             * registered app width AND its mailbox magic is live. */
+            if (sprach_ga_key(&ctx, ev.ascii_char, ev.modifiers)) {
+                continue;
+            }
+
             /* Terminal window active → forward the keystroke */
             if (ctx.active < 0 && ctx.term_slot >= 0 &&
                 !ctx.term_hidden) {
@@ -4441,12 +4470,6 @@ void _start(void)
              * The FM registers its key mailbox at FM_MAILBOX_BASE on
              * startup; if the magic isn't there it isn't running. */
             if (sprach_fm_key(&ctx, ev.ascii_char)) {
-                continue;
-            }
-
-            /* Other guiapp-based clients (calc/clock/logview/info/
-             * automission/backup): width-dispatched mailboxes. */
-            if (sprach_ga_key(&ctx, ev.ascii_char)) {
                 continue;
             }
 

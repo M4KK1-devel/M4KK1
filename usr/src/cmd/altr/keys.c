@@ -205,6 +205,15 @@ static void key_editor(unsigned char ch)
 
     /* NORMAL mode */
     switch (ch) {
+    case ':':                        /* command palette (vim-style
+                                      * alias for Ctrl+P — HMP/probe
+                                      * keyboards cannot reliably
+                                      * deliver Ctrl chords) */
+        S.palette_on = 1;
+        S.palette_len = 0;
+        S.palette_buf[0] = 0;
+        S.focus = FOC_PALETTE;
+        return;
     case 'h':
         d->cur_col = d->cur_col > 0 ? d->cur_col - 1 : 0;
         break;

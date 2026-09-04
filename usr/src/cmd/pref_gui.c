@@ -422,12 +422,18 @@ void _start(void)
                 }
                 continue;
             }
-            if (ch >= '1' && ch <= '4') {
-                tab = ch - '1';
-                dirty = 1;
-            } else if (tab == 0 && ch >= '0' && ch <= '5') {
+            /* Wallpaper tab owns the digit row: 0-5 pick a theme
+             * (tab switching via digits would shadow them — '1' and
+             * '3' both matched the tab range first and the theme
+             * pick never fired).  Tab switch keys on every tab:
+             * Left/Right angle keys (',' / '.') cycle tabs. */
+            if (tab == 0 && ch >= '0' && ch <= '5') {
                 wp_theme = ch - '0';
                 apply_wallpaper();
+                dirty = 1;
+            } else if (ch == ',' || ch == '.') {
+                tab = ch == ',' ? (tab + PF_TABS - 1) % PF_TABS
+                                : (tab + 1) % PF_TABS;
                 dirty = 1;
             } else if (tab == 1 && (ch == '-' || ch == '+')) {
                 if (ch == '-' && mouse_speed > 1) mouse_speed--;

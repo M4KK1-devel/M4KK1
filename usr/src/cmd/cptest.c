@@ -236,13 +236,15 @@ void _start(void)
     if (fb_pixels)
         fb_pixels[(BEACON_Y0 + 8) * fb.width + BEACON_X] = 0xFFFFFFFFu;
 
-    /* Park: keep the surface alive so the smoke screenshot shows it.
- * Re-paint the beacon + re-commit damage every few yields so the
- * legacy compositor's periodic full-screen redraw (menubar clock)
- * cannot erase the evidence. */
+    /* Park: bounded beacon, then exit.  The old infinite park kept
+     * this 128x128 surface as the highest-id (top-most) surface
+     * forever, which stole the ga_apps width-dispatch focus from
+     * every real app spawned later (deep probes never received
+     * keys).  40s of beacon is plenty for smoke screenshots. */
 {
     int guard = 0;
-    for (;;) {
+    int rounds = 0;
+    for (; rounds < 40 * 20; rounds++) {
         if (fb_pixels) {
             fb_pixels[(BEACON_Y0 + 0) * fb.width + BEACON_X] =
                 0xFF00FF00u;
@@ -271,5 +273,10 @@ void _start(void)
         }
         m4k_yield();
     }
+    /* tear down: destroy the surface so later apps own the top */
+    req_begin(id_surf, CP_SURFACE_DESTROY);
+    send_req(id_surf, CP_SURFACE_DESTROY);
+    m4k_yield();
+    m4k_exit(0);
 }
 }
