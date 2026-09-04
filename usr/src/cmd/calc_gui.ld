@@ -1,15 +1,13 @@
 /* M4KK1 4P1 - calc_gui.ld
- * Calculator loads at 0xE80000, clear of:
- *   0xD00000  file manager
- *   0xE00000  cptest
- *   0xF00000  altr (text editor)
- *   0x1100000 m4shg (graphical shell) */
+ * Calculator moved to the new GUI-app window at 0x3700000
+ * (0x3000000..0x4000000, buddy zone starts above) — its old
+ * 0xE80000 slot overlapped the pcc mutex zone. */
 
 ENTRY(_start)
 
 SECTIONS
 {
-    . = 0xE80000;
+    . = 0x3700000;
 
     .text : {
         *(.text*)

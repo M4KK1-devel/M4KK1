@@ -299,10 +299,7 @@ static int64_t expr_parse_add(struct sead_expr_ctx *ec)
         int op = ec->tok;
         expr_next(ec);
         int64_t r = expr_parse_mul(ec);
-        if (op == T_PLUS)
-            v = v + r;
-        else
-            v = v - r;
+        v = (op == T_PLUS) ? v + r : v - r;
     }
     return v;
 }
@@ -323,10 +320,8 @@ static int64_t expr_parse_cmp(struct sead_expr_ctx *ec)
             v = (v <= r);
         else if (op == T_GE)
             v = (v >= r);
-        else if (op == T_EQ)
-            v = (v == r);
         else
-            v = (v != r);
+            v = (op == T_EQ) ? (v == r) : (v != r);
     }
     return v;
 }
@@ -833,10 +828,7 @@ static void sead_subst(char *line, int maxlen, const struct sead_op *op)
             result[rp] = '\0';
             musr_strncpy(line, result, maxlen-1);
             llen = musr_strlen(line);
-            if (rplen > 0)
-                start = start + rplen;
-            else
-                start = start + 1;
+            start = (rplen > 0) ? start + rplen : start + 1;
             if (!op->global)
                 return;
         } else {

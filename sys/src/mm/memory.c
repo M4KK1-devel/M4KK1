@@ -250,6 +250,12 @@ mkrn_memory_init(multiboot_info_t *pMbInfo)
 
     memory_add_region(M4K_KERNEL_BASE, 0x400000,
                       M4K_MEM_TYPE_RESERVED);
+    /* Fixed-address GUI-app window 0x3000000..0x4000000 (sysmon,
+     * mpl4yer, cal, disk, pref + calc slot).  Removing it from the
+     * buddy's free seeding is what actually protects it—zone start
+     * alone would still hand these pages out. */
+    memory_add_region(0x3000000u, 0x1000000u,
+                      M4K_MEM_TYPE_RESERVED);
     mkrn_console_write("[BUDDY] regions added\n");
 
     u32KernelHeapStart = (uint32_t)&__heap_start;
@@ -257,16 +263,18 @@ mkrn_memory_init(multiboot_info_t *pMbInfo)
 
     /* Buddy zone: manage physical RAM from ABOVE the kernel image +
      * linker heap + fixed-address ramdisk (0x2000000..0x3000000,
-     * reserved for the YAFS root device) up to min(total, 512MB).
-     * Free-list nodes are stored in the freed pages themselves, so
-     * nothing below the highest permanent allocation may ever enter
-     * the buddy.  The user ELF window (0x600000..0x127BE40) sits
-     * below this zone start and never overlaps buddy pages either. */
+     * reserved for the YAFS root device) and the GUI-app window
+     * (0x3000000..0x4000000, see the RESERVED region above) up to
+     * min(total, 512MB).  Free-list nodes are stored in the freed
+     * pages themselves, so nothing below the highest permanent
+     * allocation may ever enter the buddy.  The user ELF window
+     * (0x600000..0x127BE40) sits below this zone start and never
+     * overlaps buddy pages either. */
     uint32_t zone_start =
-        (u32KernelHeapEnd > 0x3000000u)
+        (u32KernelHeapEnd > 0x4000000u)
             ? ((u32KernelHeapEnd + M4K_PAGE_SIZE - 1)
                & ~(uint32_t)(M4K_PAGE_SIZE - 1))
-            : 0x3000000u;
+            : 0x4000000u;
     uint32_t zone_end = u32TotalMemory;
     if (zone_end > 512u * 1024u * 1024u)
         zone_end = 512u * 1024u * 1024u;

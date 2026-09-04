@@ -1295,11 +1295,11 @@ static void sprach_cfg_load(struct sprach_ctx *ctx)
     char b[64];
     int fd = musr_sc_open(SPRACH_CFG_PATH, O_RDONLY);
     if (fd < 0)
-        return;                     /* first boot: keep defaults */
+        goto pref;
     int n = musr_sc_read(fd, b, sizeof(b) - 1);
     musr_sc_close(fd);
     if (n <= 0)
-        return;
+        goto pref;
     b[n] = '\0';
 
     /* Minimal key=value scan (no sscanf in this environment). */
@@ -1320,6 +1320,27 @@ static void sprach_cfg_load(struct sprach_ctx *ctx)
         } else if (b[i] == 'b' && b[i+1] == 't' && b[i+2] == '=') {
             ctx->bt_on = (b[i+3] == '1');
         }
+    }
+
+pref:
+    /* pref app persistence: a single-digit theme in
+     * /export/cfg/pref/wallpaper.conf overrides the legacy
+     * desktop.cfg theme (written by the Preferences Wallpaper
+     * tab; applies live via shm, survives reboot via this read).
+     */
+    {
+        char v[8];
+        int fd2 = musr_sc_open(
+            "/export/cfg/pref/wallpaper.conf", O_RDONLY);
+        if (fd2 < 0)
+            return;
+        int m = musr_sc_read(fd2, v, sizeof(v) - 1);
+        musr_sc_close(fd2);
+        if (m <= 0)
+            return;
+        int t = v[0] - '0';
+        if (t >= 0 && t < 6)
+            gui_wallpaper_set_theme(t);
     }
 }
 
@@ -3052,28 +3073,23 @@ void sprach_raise_surface(struct sprach_ctx *ctx, int slot)
     int old_slot = slot;
     if (other)
         other->slot = old_slot;
-    if (ctx->term_slot == slot)
-        ctx->term_slot = top;          /* the terminal itself was raised */
-    else if (ctx->term_slot == top)
-        ctx->term_slot = old_slot;     /* a window displaced the terminal */
+    ctx->term_slot = (ctx->term_slot == slot) ? top
+                    : (ctx->term_slot == top) ? old_slot
+                    : ctx->term_slot;
     /* Chrome popup surfaces swap too — keep their slots in sync or
      * later VISIBLE/draw calls hit the displaced surface. */
-    if (ctx->clock_slot == slot)
-        ctx->clock_slot = top;
-    else if (ctx->clock_slot == top)
-        ctx->clock_slot = old_slot;
-    if (ctx->menu_slot == slot)
-        ctx->menu_slot = top;
-    else if (ctx->menu_slot == top)
-        ctx->menu_slot = old_slot;
-    if (ctx->lp_slot == slot)
-        ctx->lp_slot = top;
-    else if (ctx->lp_slot == top)
-        ctx->lp_slot = old_slot;
-    if (ctx->panel_slot == slot)
-        ctx->panel_slot = top;
-    else if (ctx->panel_slot == top)
-        ctx->panel_slot = old_slot;
+    ctx->clock_slot = (ctx->clock_slot == slot) ? top
+                     : (ctx->clock_slot == top) ? old_slot
+                     : ctx->clock_slot;
+    ctx->menu_slot = (ctx->menu_slot == slot) ? top
+                    : (ctx->menu_slot == top) ? old_slot
+                    : ctx->menu_slot;
+    ctx->lp_slot = (ctx->lp_slot == slot) ? top
+                  : (ctx->lp_slot == top) ? old_slot
+                  : ctx->lp_slot;
+    ctx->panel_slot = (ctx->panel_slot == slot) ? top
+                     : (ctx->panel_slot == top) ? old_slot
+                     : ctx->panel_slot;
 }
 
 void sprach_raise_window(struct sprach_ctx *ctx, int idx)
@@ -3462,6 +3478,11 @@ static const struct sprach_ga_ref ga_apps[] = {
     { 380, 0x00660000u, 0x494E4631u },   /* info    "INF1" */
     { 340, 0x00670000u, 0x414D5331u },   /* automission "AMS1" */
     { 400, 0x00680000u, 0x424B5031u },   /* backup  "BKP1" */
+    { 460, 0x00690000u, 0x53594D31u },   /* sysmon  "SYM1" */
+    { 382, 0x006A0000u, 0x4D503100u },   /* mpl4yer "MP1 " */
+    { 360, 0x006B0000u, 0x434C3200u },   /* cal     "CL2\0" */
+    { 424, 0x006C0000u, 0x44534B31u },   /* disk    "DSK1" */
+    { 384, 0x006D0000u, 0x50524631u },   /* pref    "PRF1" */
 };
 
 static int sprach_ga_key(struct sprach_ctx *ctx, unsigned char ch)

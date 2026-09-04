@@ -196,6 +196,7 @@ const char *m4k_syscall_get_name(uint32_t num)
         case M4K_SYS_GFX_BLIT: return "m4k_gfx_blit";
         case M4K_SYS_FILL_GRADIENT: return "m4k_fill_gradient";
         case M4K_SYS_BEEP: return "m4k_beep";
+        case M4K_SYS_PLAY_PCM: return "m4k_play_pcm";
         case M4K_SYS_SLEEP: return "m4k_sleep";
         default: return "unknown";
     }
@@ -274,6 +275,28 @@ static uint32_t m4k_syscall_beep_impl(
     if (!mkrn_sb16_available())
         return 1;
     if (mkrn_sb16_beep(u32Hz, u32Ms) != 0)
+        return 1;
+    return 0;
+}
+
+/* -- Syscall: play raw PCM (SB16 8-bit unsigned mono 22050Hz) --
+ * Plays up to len bytes from buf in one single-cycle DMA shot
+ * (caller chunks to <=32KB, see mkrn_sb16_play_8bit limits).
+ * Called from the int 0x4D gate: IF=0 makes the completion IRQ
+ * unable to fire, so the driver returns fire-and-forget (audio
+ * still plays to completion via DMA). */
+static uint32_t m4k_syscall_play_pcm_impl(
+    uint32_t u32Buf, uint32_t u32Len, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5)
+{
+    (void)arg3; (void)arg4; (void)arg5;
+
+    if (!mkrn_sb16_available())
+        return 1;
+    if (u32Buf == 0 || u32Len == 0)
+        return 1;
+    if (mkrn_sb16_play_8bit((const uint8_t *)(uintptr_t)u32Buf,
+                            u32Len) != 0)
         return 1;
     return 0;
 }
@@ -691,6 +714,7 @@ void m4k_syscall_init_handlers(void)
     m4k_syscall_register(M4K_SYS_GET_MOUSE_POS, m4k_syscall_mouse_pos_impl);
     m4k_syscall_register(M4K_SYS_GET_KEYBOARD_EVENT, m4k_syscall_keyboard_event_impl);
     m4k_syscall_register(M4K_SYS_BEEP, m4k_syscall_beep_impl);
+    m4k_syscall_register(M4K_SYS_PLAY_PCM, m4k_syscall_play_pcm_impl);
     m4k_syscall_register(M4K_SYS_SLEEP, m4k_syscall_sleep_impl);
 
     M4K_LOG_INFO("M4KK1 system call handlers registered");

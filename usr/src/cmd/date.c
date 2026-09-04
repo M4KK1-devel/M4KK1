@@ -548,10 +548,7 @@ static void print_default(int y, int m, int d,
 static void print_diff(uint32_t t1, uint32_t t2)
 {
     uint32_t diff;
-    if (t1 > t2)
-        diff = t1 - t2;
-    else
-        diff = t2 - t1;
+    diff = (t1 > t2) ? t1 - t2 : t2 - t1;
 
     if (diff < 60) {
         print_u32(diff);

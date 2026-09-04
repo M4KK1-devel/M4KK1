@@ -122,8 +122,12 @@ int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
             uint32_t user_win_hi = 0x2000000u;
             if (phdr->p_memsz == 0
                 || seg_lo < user_win_lo
-                || seg_lo >= user_win_hi
-                || seg_hi > 0x3000000u) {
+                || (seg_lo >= user_win_hi && seg_lo < 0x3000000u)
+                /* ramdisk 0x2000000..0x3000000 (YAFS root backing
+                 * store) stays forbidden; the fixed-address GUI-app
+                 * window 0x3000000..0x4000000 (sysmon/mpl4yer/cal/
+                 * disk/pref, one 2MB slot each) is now allowed. */
+                || seg_hi > 0x4000000u) {
                 M4K_LOG_ERROR(
                     "execve: LOAD segment 0x");
                 mkrn_console_write_hex(seg_lo);

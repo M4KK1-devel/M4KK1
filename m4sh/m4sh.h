@@ -516,6 +516,7 @@ static inline int m4k_getrlimit(int r, struct m4k_rlimit *l) { return (int)m4k_s
 #define M4K_SYS_FLIP_RECT            0x4D000058
 #define M4K_SYS_UPDATE_CURSOR        0x4D000059
 #define M4K_SYS_BEEP                  0x4D00005A
+#define M4K_SYS_PLAY_PCM              0x4D00005E
 #define M4K_SYS_SLEEP                 0x4D00005B
 #define M4K_SYS_GET_MOUSE_POS         0x4D00005C
 #define M4K_SYS_FILL_GRADIENT         0x4D00005D
@@ -567,6 +568,11 @@ static inline int m4k_update_cursor(void) {
 }
 static inline int m4k_beep(uint32_t hz, uint32_t ms) {
     return (int)m4k_sc2(M4K_SYS_BEEP, hz, ms);
+}
+/* Play raw 8-bit unsigned mono PCM at 22050 Hz (SB16 single-cycle
+ * DMA).  len must be <= 0x8000; the caller chunks longer files. */
+static inline int m4k_play_pcm(const void *buf, uint32_t len) {
+    return (int)m4k_sc2(M4K_SYS_PLAY_PCM, (uint32_t)buf, len);
 }
 static inline int m4k_sleep(uint32_t ms) {
     return (int)m4k_sc1(M4K_SYS_SLEEP, ms);

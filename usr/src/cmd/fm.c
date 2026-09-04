@@ -63,6 +63,10 @@ static struct fm_entry fm_entries[48];
 static int fm_count = 0;
 static int fm_truncated = 0;  /* dir had ≥48 entries — list clipped */
 
+/* Rename / new-folder input state: 0 = none, 1 = rename, 2 = mkdir */
+static int fm_op_mode;
+static char fm_op_buf[64];
+
 /* Text preview mode (Enter on a .txt/.c/.h file): renders the first
  * PREVIEW_LINES lines read-only.  Esc/Enter returns to the listing. */
 static int fm_preview = 0;
@@ -458,6 +462,17 @@ static void fm_render(void)
     st[k++] = '0' + (char)(fm_cur_tab + 1);
     st[k] = '\0';
     fm_str(fm_buf, FM_W, 6, sy + 4, st, 0x00404040);
+
+    /* Operation input line (rename / new folder): replaces the
+     * status text with a labelled prompt + live buffer. */
+    if (fm_op_mode) {
+        fm_rect(fm_buf, FM_W, 0, sy, FM_W, 14, 0x00F0F0C0);
+        fm_str(fm_buf, FM_W, 6, sy + 4,
+               fm_op_mode == 1 ? "rename: " : "new folder: ",
+               0x00804010);
+        fm_str(fm_buf, FM_W, 6 + 7 * 6, sy + 4, fm_op_buf,
+               0x00202020);
+    }
 }
 
 /* ── Input handling ── */
@@ -575,10 +590,13 @@ static void fm_open_selected(void)
         fm_preview = 0;
         return;
     }
-    /* Regular file: .c/.h/.txt → spawn the altr editor, .sh → the
-     * shell; anything else falls back to the built-in preview.
-     * (m4k_spawn has no argv, so the app starts at its default
-     * location — altr opens /export/home/$USER from its own tree.) */
+    /* Regular file: extension → associated app.
+     * .c/.h/.txt/.sh → altr / m4shg (as before)
+     * .wav           → mpl4yer (path handoff via
+     *                 /export/cfg/mpl4yer/now.txt, consumed on
+     *                 player start — m4k_spawn has no argv)
+     * .elf           → execute directly
+     * anything else  → built-in preview + "no association" note */
     {
         const char *nm = fm_entries[t->sel].name;
         int len = fm_strlen(nm);
@@ -588,6 +606,10 @@ static void fm_open_selected(void)
                     && nm[len-2] == 'x' && nm[len-1] == 't';
         int is_sh = len >= 3 && nm[len-3] == '.' && nm[len-2] == 's'
                     && nm[len-1] == 'h';
+        int is_wav= len >= 4 && nm[len-4] == '.' && nm[len-3] == 'w'
+                    && nm[len-2] == 'a' && nm[len-1] == 'v';
+        int is_elf= len >= 4 && nm[len-4] == '.' && nm[len-3] == 'e'
+                    && nm[len-2] == 'l' && nm[len-1] == 'f';
         if (is_c || is_h || is_tx || is_sh) {
             const char *app = is_sh ? "/bin/m4shg" : "/bin/altr";
             int pid = musr_sc_fork();
@@ -597,8 +619,123 @@ static void fm_open_selected(void)
             }
             return;
         }
+        if (is_wav) {
+            /* hand the full path to the player via the cfg file */
+            char path[232];
+            fm_full_path(t, nm, path, sizeof(path));
+            musr_sc_mkdir("/export/cfg");
+            musr_sc_mkdir("/export/cfg/mpl4yer");
+            int fd = musr_sc_open(
+                "/export/cfg/mpl4yer/now.txt",
+                O_CREAT | O_WRONLY | O_TRUNC);
+            if (fd >= 0) {
+                musr_sc_write(fd, path, fm_strlen(path));
+                musr_sc_write(fd, "\n", 1);
+                musr_sc_close(fd);
+                ser_puts("[FM] handoff wav -> mpl4yer: ");
+                ser_puts(path);
+                ser_puts("\n");
+            }
+            int pid = musr_sc_fork();
+            if (pid == 0) {
+                m4k_spawn("/bin/mpl4yer", 0);
+                m4k_exit(1);
+            }
+            return;
+        }
+        if (is_elf) {
+            char path[232];
+            fm_full_path(t, nm, path, sizeof(path));
+            ser_puts("[FM] exec elf: ");
+            ser_puts(path);
+            ser_puts("\n");
+            int pid = musr_sc_fork();
+            if (pid == 0) {
+                m4k_spawn(path, 0);
+                m4k_exit(1);
+            }
+            return;
+        }
     }
     fm_preview_load(t, fm_entries[t->sel].name);
+    /* no association: preview title carries the hint */
+    {
+        const char *hint = " [no assoc]";
+        int k = fm_strlen(fm_preview_title);
+        for (const char *p = hint; *p && k < 74; p++)
+            fm_preview_title[k++] = *p;
+        fm_preview_title[k] = '\0';
+    }
+}
+
+/* ── file operations (2026-09 suite round) ── */
+
+/* Delete the selected entry (directories: rmdir only — refuses
+ * non-empty dirs, matching musr_sc_rmdir semantics). */
+static void fm_delete_selected(void)
+{
+    struct fm_tab *t = &fm_tabs[fm_cur_tab];
+    if (t->sel < 0 || t->sel >= fm_count)
+        return;
+    char path[232];
+    fm_full_path(t, fm_entries[t->sel].name, path, sizeof(path));
+    ser_puts("[FM] delete ");
+    ser_puts(path);
+    ser_puts("\n");
+    int r = fm_entries[t->sel].is_dir
+        ? musr_sc_rmdir(path) : musr_sc_unlink(path);
+    if (r != 0)
+        ser_puts("[FM] delete failed\n");
+    t->sel = -1;
+    fm_load_dir(t);
+}
+
+/* Rename / new-folder helpers (state lives at the top of the file). */
+
+static void fm_rename_selected(void)
+{
+    struct fm_tab *t = &fm_tabs[fm_cur_tab];
+    if (t->sel < 0 || t->sel >= fm_count)
+        return;
+    fm_op_mode = 1;
+    musr_strncpy(fm_op_buf, fm_entries[t->sel].name,
+                 sizeof(fm_op_buf) - 1);
+}
+
+static void fm_new_folder(void)
+{
+    fm_op_mode = 2;
+    fm_op_buf[0] = '\0';
+}
+
+/* commit rename / new-folder once Enter is pressed */
+static void fm_op_commit(struct fm_tab *t)
+{
+    if (fm_op_buf[0] == '\0') {
+        fm_op_mode = 0;
+        return;
+    }
+    if (fm_op_mode == 1 && t->sel >= 0 && t->sel < fm_count) {
+        char oldp[232], newp[232];
+        fm_full_path(t, fm_entries[t->sel].name, oldp,
+                     sizeof(oldp));
+        fm_full_path(t, fm_op_buf, newp, sizeof(newp));
+        ser_puts("[FM] rename -> ");
+        ser_puts(fm_op_buf);
+        ser_puts("\n");
+        if (musr_sc_rename(oldp, newp) != 0)
+            ser_puts("[FM] rename failed\n");
+    } else if (fm_op_mode == 2) {
+        char newp[232];
+        fm_full_path(t, fm_op_buf, newp, sizeof(newp));
+        ser_puts("[FM] mkdir ");
+        ser_puts(newp);
+        ser_puts("\n");
+        if (musr_sc_mkdir(newp) != 0)
+            ser_puts("[FM] mkdir failed\n");
+    }
+    fm_op_mode = 0;
+    fm_load_dir(t);
 }
 
 /* Mouse click at window-local (lx, ly).  Single click selects the row
@@ -674,6 +811,29 @@ static void fm_key(unsigned char ch)
     }
     if (ch == 0x08) { t->hidden_files = !t->hidden_files; fm_load_dir(t); return; }
     if (ch == 0x09) { fm_next_tab(); return; }
+
+    /* rename / new-folder input mode */
+    if (fm_op_mode) {
+        if (ch == '\r' || ch == '\n') {
+            fm_op_commit(t);
+        } else if (ch == 0x1B) {
+            fm_op_mode = 0;
+        } else if ((ch == '\b' || ch == 0x7F)
+                   && fm_strlen(fm_op_buf) > 0) {
+            fm_op_buf[fm_strlen(fm_op_buf) - 1] = '\0';
+        } else if (ch >= 0x20 && ch < 0x7F
+                   && fm_strlen(fm_op_buf) < 63) {
+            fm_op_buf[fm_strlen(fm_op_buf)] = ch;
+        }
+        return;
+    }
+
+    if (ch == 0x7A || ch == 0x6A) {   /* F2 raw 0x7A; 'j' kept down */
+        if (ch == 0x7A) { fm_rename_selected(); return; }
+    }
+    if (ch == 0x7F) { fm_delete_selected(); return; }  /* Del */
+    if (ch == 'n' || ch == 'N') { fm_new_folder(); return; }
+    if (ch == 'x' || ch == 'X') { fm_delete_selected(); return; }
 
     if (ch == '\r' || ch == '\n') { fm_open_selected(); return; }
     if (ch == 0x02 || ch == 'k') {   /* up */

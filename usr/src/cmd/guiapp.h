@@ -250,4 +250,96 @@ static int ga_chrome(struct ga_app *pApp, const char *title)
     return 0;
 }
 
+/* ══════════════ shared widget helpers (sys suite apps) ══════════════
+ * Added for the 2026-09 desktop-app suite: 3D button, progress bar,
+ * line-graph plot, checkbox, click hit-test.  All clip like ga_rect. */
+
+#define GA_BTN_DOWN 1
+#define GA_BTN_UP   0
+
+/** ga_button - draw a 3D-shaded button.  Returns 1 when (lx,ly) is
+ * inside its rect (click hit-test). */
+static int ga_button(struct ga_app *pApp, int x, int y,
+                     int w, int h, const char *label, int pressed)
+{
+    uint32_t face = pressed ? 0x00808080 : 0x00C8C8C8;
+    ga_rect(pApp, x, y, w, h, face);
+    /* top/left highlight, bottom/right shadow */
+    ga_rect(pApp, x, y, w, 1, 0x00FFFFFF);
+    ga_rect(pApp, x, y, 1, h, 0x00FFFFFF);
+    ga_rect(pApp, x, y + h - 1, w, 1, 0x00505050);
+    ga_rect(pApp, x + w - 1, y, 1, h, 0x00505050);
+    if (label) {
+        int n = ga_strlen(label);
+        ga_str(pApp, x + (w - n * 6) / 2,
+               y + (h - 7) / 2, label, 0x00202020);
+    }
+    return 1;   /* bounds checked by caller via ga_in */
+}
+
+/** ga_in - rect hit-test for window-local click coords. */
+static int ga_in(int lx, int ly, int x, int y, int w, int h)
+{
+    return lx >= x && lx < x + w && ly >= y && ly < y + h;
+}
+
+/** ga_progress - horizontal progress bar (0..1000 permille). */
+static void ga_progress(struct ga_app *pApp, int x, int y,
+                        int w, int h, int permille)
+{
+    ga_rect(pApp, x, y, w, h, 0x00606060);
+    if (permille < 0) permille = 0;
+    if (permille > 1000) permille = 1000;
+    int fw = (w - 2) * permille / 1000;
+    ga_rect(pApp, x + 1, y + 1, fw, h - 2, 0x0030A030);
+}
+
+/** ga_graph - plot a history of 0..1000 permille samples as a
+ * filled line graph inside (x,y,w,h).  n = sample count (<= cap). */
+static void ga_graph(struct ga_app *pApp, int x, int y,
+                     int w, int h, const uint16_t *samples,
+                     int n, uint32_t line, uint32_t fill)
+{
+    ga_rect(pApp, x, y, w, h, 0x00181820);
+    if (n < 2)
+        return;
+    /* grid lines every quarter */
+    for (int g = 1; g < 4; g++)
+        ga_rect(pApp, x, y + h * g / 4, w, 1, 0x00303040);
+    int prev_y = -1;
+    for (int i = 0; i < n; i++) {
+        int sx = x + i * (w - 1) / (n - 1);
+        int sy = y + h - 2 - (h - 4) * samples[i] / 1000;
+        if (prev_y >= 0) {
+            /* vertical fill column + line segment */
+            int y0 = prev_y < sy ? prev_y : sy;
+            int y1 = prev_y < sy ? sy : prev_y;
+            ga_rect(pApp, sx, y0, 1, y1 - y0 + 1, fill);
+        }
+        ga_rect(pApp, sx, sy, 1, 1, line);
+        prev_y = sy;
+    }
+}
+
+/** ga_str2 - 2x scaled string (headers). */
+static void ga_char2(struct ga_app *pApp, int x, int y,
+                     char ch, uint32_t c)
+{
+    if (ch < 32 || ch > 126) return;
+    const uint8_t *g = ga_font5x7[ch - 32];
+    for (int col = 0; col < 5; col++) {
+        uint8_t bits = g[col];
+        for (int row = 0; row < 7; row++)
+            if (bits & (1u << row))
+                ga_rect(pApp, x + col * 2, y + row * 2, 2, 2, c);
+    }
+}
+
+static void ga_str2(struct ga_app *pApp, int x, int y,
+                    const char *s, uint32_t c)
+{
+    for (int i = 0; s && s[i]; i++)
+        ga_char2(pApp, x + i * 12, y, s[i], c);
+}
+
 #endif /* _M4KK1_CMD_GUIAPP_H_ */

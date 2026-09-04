@@ -136,11 +136,14 @@ check_prereqs
 
 # Read version from VERSION file
 if [ -f VERSION ]; then
-    MAJOR=$(grep ^MAJOR= VERSION | cut -d= -f2)
-    MINOR=$(grep ^MINOR= VERSION | cut -d= -f2)
-    PATCH=$(grep ^PATCH= VERSION | cut -d= -f2)
-    BUILD=$(grep ^BUILD= VERSION | cut -d= -f2)
-    CLASSIFIER=$(grep ^CLASSIFIER= VERSION | cut -d= -f2)
+    # tr -d '\r': the working-tree copy may be CRLF (core.autocrlf
+    # checkout); a \r inside $( ) silently corrupts the ISO name
+    # (m4kk1_0\r.0\r.1...iso — qemu can't open it, probes "fail").
+    MAJOR=$(grep ^MAJOR= VERSION | cut -d= -f2 | tr -d '\r')
+    MINOR=$(grep ^MINOR= VERSION | cut -d= -f2 | tr -d '\r')
+    PATCH=$(grep ^PATCH= VERSION | cut -d= -f2 | tr -d '\r')
+    BUILD=$(grep ^BUILD= VERSION | cut -d= -f2 | tr -d '\r')
+    CLASSIFIER=$(grep ^CLASSIFIER= VERSION | cut -d= -f2 | tr -d '\r')
 else
     MAJOR=0; MINOR=0; PATCH=0; BUILD=0; CLASSIFIER=dev
 fi
@@ -264,7 +267,7 @@ M4SH_CFLAGS="$M4SH_CFLAGS -I$PWD/sys/src/include -I$PWD/include -I$PWD/sys/src/a
 # PCC 编译产物需要编译器运行时（__divdi3 等），等价于 gcc 隐式链接的 libgcc
 PCC_RUNTIME="$PWD/usr/src/lib/m4k_libc/libpcc.a"
 OBJS=""
-for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/lib/*' | sort); do
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/altr/*' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/cmd/sysmon.c' ! -path 'usr/src/cmd/mpl4yer.c' ! -path 'usr/src/cmd/cal_gui.c' ! -path 'usr/src/cmd/disk_gui.c' ! -path 'usr/src/cmd/pref_gui.c' ! -path 'usr/src/lib/*' | sort); do
     o="${f%.c}.o"
     $UCC $M4SH_CFLAGS -c "$f" -o "$o"
     OBJS="$OBJS $o"
@@ -277,7 +280,7 @@ echo "=== Building M4SHG (graphical-terminal shell) ==="
 # and skips the serial login gate.  Linked at 0x1000000 so the exec'd
 # image never overlaps any live process (see m4sh/m4shg.ld).
 OBJS_G=""
-for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/lib/*' | sort); do
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/altr/*' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/cmd/sysmon.c' ! -path 'usr/src/cmd/mpl4yer.c' ! -path 'usr/src/cmd/cal_gui.c' ! -path 'usr/src/cmd/disk_gui.c' ! -path 'usr/src/cmd/pref_gui.c' ! -path 'usr/src/lib/*' | sort); do
     o="${f%.c}.g.o"
     $UCC $M4SH_CFLAGS -DM4SH_GRAPHICAL -c "$f" -o "$o"
     OBJS_G="$OBJS_G $o"
@@ -292,7 +295,7 @@ echo "=== Building M4SHT (serial test shell, full-test builds) ==="
 # (observed: EIP in set_env mid-instruction -> GPF).  This variant is
 # spawned by MDM under M4K_TEST_AUTOLOGIN for headless shell tests.
 OBJS_T=""
-for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/lib/*' | sort); do
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/altr/*' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/cmd/sysmon.c' ! -path 'usr/src/cmd/mpl4yer.c' ! -path 'usr/src/cmd/cal_gui.c' ! -path 'usr/src/cmd/disk_gui.c' ! -path 'usr/src/cmd/pref_gui.c' ! -path 'usr/src/lib/*' | sort); do
     o="${f%.c}.t.o"
     $UCC $M4SH_CFLAGS -DM4SH_NO_LOGIN_GATE -c "$f" -o "$o"
     OBJS_T="$OBJS_T $o"
@@ -379,8 +382,14 @@ $LD -m elf_i386 -T usr/src/cmd/fm.ld -nostdlib -z max-page-size=0x1000 -o usr/sr
 echo "   File Manager ELF: usr/src/cmd/fm.elf ($(stat -c%s usr/src/cmd/fm.elf) bytes)"
 
 echo "=== Building ALTR (text editor) ELF ==="
-$UCC $M4SH_CFLAGS -c usr/src/cmd/altr.c -o usr/src/cmd/altr.o
-$LD -m elf_i386 -T usr/src/cmd/altr.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/altr.elf usr/src/cmd/altr.o $PCC_RUNTIME
+# ALTR2 (VSCode-style rewrite): modular build under usr/src/cmd/altr/
+ALTR_SRC=usr/src/cmd/altr
+ALTR_OBJS=""
+for m in main draw buf files syntax keys; do
+    $UCC $M4SH_CFLAGS -I$ALTR_SRC/.. -c $ALTR_SRC/$m.c -o $ALTR_SRC/$m.o
+    ALTR_OBJS="$ALTR_OBJS $ALTR_SRC/$m.o"
+done
+$LD -m elf_i386 -T $ALTR_SRC/altr.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/altr.elf $ALTR_OBJS $PCC_RUNTIME
 echo "   ALTR ELF: usr/src/cmd/altr.elf ($(stat -c%s usr/src/cmd/altr.elf) bytes)"
 
 echo "=== Building CALC GUI (calculator) ELF ==="
@@ -399,6 +408,27 @@ echo "   LOGVIEW ELF: usr/src/cmd/logview.elf ($(stat -c%s usr/src/cmd/logview.e
 $UCC $M4SH_CFLAGS -c usr/src/cmd/info_gui.c -o usr/src/cmd/info_gui.o
 $LD -m elf_i386 -T usr/src/cmd/info_gui.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/info_gui.elf usr/src/cmd/info_gui.o $PCC_RUNTIME
 echo "   INFO ELF: usr/src/cmd/info_gui.elf ($(stat -c%s usr/src/cmd/info_gui.elf) bytes)"
+
+# === Desktop suite apps (2026-09): sysmon/mpl4yer/cal/disk/pref ===
+$UCC $M4SH_CFLAGS -c usr/src/cmd/sysmon.c -o usr/src/cmd/sysmon.o
+$LD -m elf_i386 -T usr/src/cmd/sysmon.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/sysmon.elf usr/src/cmd/sysmon.o $PCC_RUNTIME
+echo "   SYSMON ELF: usr/src/cmd/sysmon.elf ($(stat -c%s usr/src/cmd/sysmon.elf) bytes)"
+
+$UCC $M4SH_CFLAGS -c usr/src/cmd/mpl4yer.c -o usr/src/cmd/mpl4yer.o
+$LD -m elf_i386 -T usr/src/cmd/mpl4yer.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/mpl4yer.elf usr/src/cmd/mpl4yer.o $PCC_RUNTIME
+echo "   MPL4YER ELF: usr/src/cmd/mpl4yer.elf ($(stat -c%s usr/src/cmd/mpl4yer.elf) bytes)"
+
+$UCC $M4SH_CFLAGS -c usr/src/cmd/cal_gui.c -o usr/src/cmd/cal_gui.o
+$LD -m elf_i386 -T usr/src/cmd/cal_gui.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/cal_gui.elf usr/src/cmd/cal_gui.o $PCC_RUNTIME
+echo "   CAL ELF: usr/src/cmd/cal_gui.elf ($(stat -c%s usr/src/cmd/cal_gui.elf) bytes)"
+
+$UCC $M4SH_CFLAGS -c usr/src/cmd/disk_gui.c -o usr/src/cmd/disk_gui.o
+$LD -m elf_i386 -T usr/src/cmd/disk_gui.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/disk_gui.elf usr/src/cmd/disk_gui.o $PCC_RUNTIME
+echo "   DISK ELF: usr/src/cmd/disk_gui.elf ($(stat -c%s usr/src/cmd/disk_gui.elf) bytes)"
+
+$UCC $M4SH_CFLAGS -c usr/src/cmd/pref_gui.c -o usr/src/cmd/pref_gui.o
+$LD -m elf_i386 -T usr/src/cmd/pref_gui.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/pref_gui.elf usr/src/cmd/pref_gui.o $PCC_RUNTIME
+echo "   PREF ELF: usr/src/cmd/pref_gui.elf ($(stat -c%s usr/src/cmd/pref_gui.elf) bytes)"
 
 
 
@@ -565,6 +595,31 @@ sed 's/usr_src_cmd_info_gui_elf/info_init_elf/g; s/usr_src_cmd_info_gui_elf_len/
 rm -f init/info_elf_.c
 echo "   Generated init/info_elf.c"
 
+xxd -i usr/src/cmd/sysmon.elf > init/sysmon_elf_.c
+sed 's/usr_src_cmd_sysmon_elf/sysmon_init_elf/g; s/usr_src_cmd_sysmon_elf_len/sysmon_init_elf_len/g' init/sysmon_elf_.c > init/sysmon_elf.c
+rm -f init/sysmon_elf_.c
+echo "   Generated init/sysmon_elf.c"
+
+xxd -i usr/src/cmd/mpl4yer.elf > init/mpl4yer_elf_.c
+sed 's/usr_src_cmd_mpl4yer_elf/mpl4yer_init_elf/g; s/usr_src_cmd_mpl4yer_elf_len/mpl4yer_init_elf_len/g' init/mpl4yer_elf_.c > init/mpl4yer_elf.c
+rm -f init/mpl4yer_elf_.c
+echo "   Generated init/mpl4yer_elf.c"
+
+xxd -i usr/src/cmd/cal_gui.elf > init/cal_elf_.c
+sed 's/usr_src_cmd_cal_gui_elf/cal_init_elf/g; s/usr_src_cmd_cal_gui_elf_len/cal_init_elf_len/g' init/cal_elf_.c > init/cal_elf.c
+rm -f init/cal_elf_.c
+echo "   Generated init/cal_elf.c"
+
+xxd -i usr/src/cmd/disk_gui.elf > init/disk_elf_.c
+sed 's/usr_src_cmd_disk_gui_elf/disk_init_elf/g; s/usr_src_cmd_disk_gui_elf_len/disk_init_elf_len/g' init/disk_elf_.c > init/disk_elf.c
+rm -f init/disk_elf_.c
+echo "   Generated init/disk_elf.c"
+
+xxd -i usr/src/cmd/pref_gui.elf > init/pref_elf_.c
+sed 's/usr_src_cmd_pref_gui_elf/pref_init_elf/g; s/usr_src_cmd_pref_gui_elf_len/pref_init_elf_len/g' init/pref_elf_.c > init/pref_elf.c
+rm -f init/pref_elf_.c
+echo "   Generated init/pref_elf.c"
+
 
 
 for m in stack; do
@@ -623,6 +678,11 @@ cp -f usr/src/cmd/calc_gui.elf ./usr/bin/calcg
 cp -f usr/src/cmd/clock_gui.elf ./usr/bin/clock
 cp -f usr/src/cmd/logview.elf ./usr/bin/logview
 cp -f usr/src/cmd/info_gui.elf ./usr/bin/info
+cp -f usr/src/cmd/sysmon.elf ./usr/bin/sysmon
+cp -f usr/src/cmd/mpl4yer.elf ./usr/bin/mpl4yer
+cp -f usr/src/cmd/cal_gui.elf ./usr/bin/cal
+cp -f usr/src/cmd/disk_gui.elf ./usr/bin/disk
+cp -f usr/src/cmd/pref_gui.elf ./usr/bin/pref
 cp -f usr/src/tools/pcc/pcc.elf ./usr/bin/pcc
 cp -f usr/src/tools/pcc/pcc.elf ./usr/bin/cc
 fi
@@ -670,6 +730,11 @@ $KCC $CFLAGS -c init/calc_elf.c -o $OBJDIR/calc_elf.o
 $KCC $CFLAGS -c init/clock_elf.c -o $OBJDIR/clock_elf.o
 $KCC $CFLAGS -c init/logview_elf.c -o $OBJDIR/logview_elf.o
 $KCC $CFLAGS -c init/info_elf.c -o $OBJDIR/info_elf.o
+$KCC $CFLAGS -c init/sysmon_elf.c -o $OBJDIR/sysmon_elf.o
+$KCC $CFLAGS -c init/mpl4yer_elf.c -o $OBJDIR/mpl4yer_elf.o
+$KCC $CFLAGS -c init/cal_elf.c -o $OBJDIR/cal_elf.o
+$KCC $CFLAGS -c init/disk_elf.c -o $OBJDIR/disk_elf.o
+$KCC $CFLAGS -c init/pref_elf.c -o $OBJDIR/pref_elf.o
 $KCC $CFLAGS -c init/sprach_stack_elf.c -o $OBJDIR/sprach_stack_elf.o
 $KCC $CFLAGS -c init/pcc_elf.c -o $OBJDIR/pcc_elf.o
 fi
@@ -752,6 +817,11 @@ if [ "$NEED_GRAPHICS" = 1 ]; then
     $OBJDIR/clock_elf.o \
     $OBJDIR/logview_elf.o \
     $OBJDIR/info_elf.o \
+    $OBJDIR/sysmon_elf.o \
+    $OBJDIR/mpl4yer_elf.o \
+    $OBJDIR/cal_elf.o \
+    $OBJDIR/disk_elf.o \
+    $OBJDIR/pref_elf.o \
     $OBJDIR/fm_elf.o \
     $OBJDIR/sprach_stack_elf.o \
     $OBJDIR/pcc_elf.o"

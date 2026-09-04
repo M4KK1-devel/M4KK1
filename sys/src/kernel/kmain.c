@@ -76,6 +76,16 @@ extern unsigned char logview_init_elf[];
 extern unsigned int logview_init_elf_len;
 extern unsigned char info_init_elf[];
 extern unsigned int info_init_elf_len;
+extern unsigned char sysmon_init_elf[];
+extern unsigned int sysmon_init_elf_len;
+extern unsigned char mpl4yer_init_elf[];
+extern unsigned int mpl4yer_init_elf_len;
+extern unsigned char cal_init_elf[];
+extern unsigned int cal_init_elf_len;
+extern unsigned char disk_init_elf[];
+extern unsigned int disk_init_elf_len;
+extern unsigned char pref_init_elf[];
+extern unsigned int pref_init_elf_len;
 extern unsigned int calc_init_elf_len;
 extern unsigned char sprach_stack_init_elf[];
 extern unsigned int sprach_stack_init_elf_len;
@@ -605,6 +615,40 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
             mkrn_console_write(" bytes)\n");
         } else {
             mkrn_console_write("   WARNING: failed to create /bin/info\n");
+        }
+    }
+    /* Desktop suite apps (2026-09): sysmon, mpl4yer, cal, disk, pref */
+    {
+        static const struct bin_app {
+            const char *path;
+            unsigned char *elf;
+            unsigned int *len;
+        } suite[] = {
+            { "/bin/sysmon",  sysmon_init_elf,  &sysmon_init_elf_len  },
+            { "/bin/mpl4yer", mpl4yer_init_elf, &mpl4yer_init_elf_len },
+            { "/bin/cal",     cal_init_elf,     &cal_init_elf_len     },
+            { "/bin/disk",    disk_init_elf,    &disk_init_elf_len    },
+            { "/bin/pref",    pref_init_elf,    &pref_init_elf_len    },
+        };
+        for (unsigned i = 0;
+             i < sizeof(suite) / sizeof(suite[0]); i++) {
+            int fd = mkrn_vfs_open(suite[i].path,
+                M4K_O_CREAT | M4K_O_WRONLY);
+            if (fd >= 0) {
+                int n = mkrn_vfs_write(fd, suite[i].elf,
+                    *suite[i].len);
+                mkrn_vfs_close(fd);
+                mkrn_console_write("   ");
+                mkrn_console_write(suite[i].path);
+                mkrn_console_write(" written (");
+                mkrn_console_write_dec(n);
+                mkrn_console_write(" bytes)\n");
+            } else {
+                mkrn_console_write(
+                    "   WARNING: failed to create ");
+                mkrn_console_write(suite[i].path);
+                mkrn_console_write("\n");
+            }
         }
     }
     /* /bin/sprach_stack removed: nothing execs it (Copland spawns

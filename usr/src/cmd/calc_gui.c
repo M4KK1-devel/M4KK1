@@ -195,6 +195,36 @@ static void ca_str2(int x, int y, const char *s, uint32_t c)
 static const char *p_src;
 static int p_err;
 
+/* ── integer helpers for the extended operator set ── */
+
+static int ca_isqrt(int v)
+{
+    /* integer sqrt, v >= 0 else error */
+    if (v < 0) { p_err = 1; return 0; }
+    int r = 0, odd = 1;
+    while (v >= odd) {
+        v -= odd;
+        odd += 2;
+        r++;
+    }
+    return r;
+}
+
+static int ca_ipow(int b, int e)
+{
+    if (e < 0) { p_err = 1; return 0; }
+    int r = 1;
+    while (e-- > 0) {
+        /* overflow guard: |r*b| must stay under 2^30 */
+        if (b != 0 && (r > (1 << 30) / (b < 0 ? -b : b))) {
+            p_err = 1;
+            return 0;
+        }
+        r *= b;
+    }
+    return r;
+}
+
 static int p_expr(void);
 
 static void p_skip(void)
@@ -224,6 +254,11 @@ static int p_factor(void)
         p_src++;
         return -p_factor();
     }
+    if (*p_src == 'r') {            /* r<expr> = sqrt(expr) */
+        p_src++;
+        int v = ca_isqrt(p_factor());
+        return v;
+    }
     if (*p_src == '(') {
         p_src++;
         int v = p_expr();
@@ -238,19 +273,35 @@ static int p_factor(void)
     return p_number();
 }
 
-static int p_term(void)
+static int p_power(void)
 {
     int v = p_factor();
+    p_skip();
+    if (*p_src == '^') {
+        p_src++;
+        return ca_ipow(v, p_power());   /* right-assoc */
+    }
+    return v;
+}
+
+static int p_term(void)
+{
+    int v = p_power();
     for (;;) {
         p_skip();
         if (*p_src == '*') {
             p_src++;
-            v = v * p_factor();
+            v = v * p_power();
         } else if (*p_src == '/') {
             p_src++;
-            int d = p_factor();
+            int d = p_power();
             if (d == 0) { p_err = 1; return 0; }
             v = v / d;
+        } else if (*p_src == '%') {
+            p_src++;
+            int d = p_power();
+            if (d == 0) { p_err = 1; return 0; }
+            v = v % d;
         } else break;
     }
     return v;
@@ -376,7 +427,8 @@ static void ca_key(unsigned char ch)
         return;
     }
     if ((ch >= '0' && ch <= '9') || ch == '+' || ch == '-' ||
-        ch == '*' || ch == '/' || ch == '(' || ch == ')' || ch == '.') {
+        ch == '*' || ch == '/' || ch == '(' || ch == ')' ||
+        ch == '.' || ch == '%' || ch == '^' || ch == 'r') {
         if (expr_len < CA_EXPR_MAX - 1) {
             expr[expr_len++] = ch;
             expr[expr_len] = 0;
@@ -385,17 +437,18 @@ static void ca_key(unsigned char ch)
 }
 
 /* ══════════════ rendering ══════════════ */
-static const char *const ca_grid[5][4] = {
+static const char *const ca_grid[6][4] = {
     { "C",  "CE", "(",  ")" },
     { "7",  "8",  "9",  "/" },
     { "4",  "5",  "6",  "*" },
     { "1",  "2",  "3",  "-" },
     { "0",  ".",  "=",  "+" },
+    { "%",  "r",  "^",  "BK" },
 };
 #define CA_GRID_X 8
 #define CA_GRID_Y (CA_TITLE_H + CA_DISP_H + 6)
 #define CA_BTN_W  ((CA_W - 8 * 2 - 3 * 6) / 4)
-#define CA_BTN_H  44
+#define CA_BTN_H  36
 
 static void ca_render(struct copland_shm *shm, int slot)
 {
@@ -430,7 +483,7 @@ static void ca_render(struct copland_shm *shm, int slot)
     }
 
     /* button grid */
-    for (int r = 0; r < 5; r++) {
+    for (int r = 0; r < 6; r++) {
         for (int c = 0; c < 4; c++) {
             int x = CA_GRID_X + c * (CA_BTN_W + 6);
             int y = CA_GRID_Y + r * (CA_BTN_H + 6);

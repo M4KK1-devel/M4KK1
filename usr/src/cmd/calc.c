@@ -539,10 +539,7 @@ static int64_t parse_expr(void)
         int op = cur.type;
         advance();
         int64_t r = parse_term();
-        if (op == T_PLUS)
-            v = v + r;
-        else
-            v = v - r;
+        v = (op == T_PLUS) ? v + r : v - r;
     }
     return v;
 }
