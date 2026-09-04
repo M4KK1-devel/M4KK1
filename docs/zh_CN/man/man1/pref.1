@@ -1,0 +1,26 @@
+.\" M4KK1 4P1 - pref.1
+.TH PREF 1 "2026-09-05" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+pref \- 系统偏好设置
+.SH 概要
+.B spawn /bin/pref
+.SH 描述
+Copland 客户端，四个选项卡（左侧栏点击或数字键 1-4）：
+.TP
+.B 壁纸 Wallpaper
+六主题色板（实时生效 + 持久化，见
+.IR /export/cfg/pref/wallpaper.conf \）
+.TP
+.B 鼠标 Mouse
+指针速度 1-8 档
+.TP
+.B 时间 Time
+RTC 读取显示；root 可 ±1 分钟校准（rtcwrite）
+.TP
+.B 账户 Account
+uid 与账户名显示；n 重命名（写
+.I /export/cfg/pref/account.conf \）
+.PP
+重启后 sprach 启动时读取 wallpaper.conf 恢复主题。
+.SH 参见
+.BR altr (1)

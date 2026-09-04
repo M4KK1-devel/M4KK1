@@ -1,0 +1,12 @@
+.\" M4KK1 4P1 - disk.1
+.TH DISK 1 "2026-09-05" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+disk \- 图形磁盘管理器
+.SH 概要
+.B spawn /bin/disk
+.SH 描述
+Copland 客户端，列出已挂载文件系统（mountinfo + statfs 系统调用）：
+源、目标、类型（YAFS/ramfs）、容量条与块统计。选中条目可
+挂载/卸载（仅 root，uid 检查在内核侧）。
+.SH 参见
+.BR sysmon (1)

@@ -1,0 +1,20 @@
+.\" M4KK1 4P1 - mpl4yer.1
+.TH MPL4YER 1 "2026-09-05" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+mpl4yer \- 图形媒体播放器
+.SH 概要
+.B spawn /bin/mpl4yer
+.SH 描述
+Copland 客户端，经
+.B m4k_play_pcm
+系统调用（SB16, 8-bit 无符号单声道 22050Hz，单次 DMA ≤32KB
+分段）播放 PCM 音频。
+.PP
+无参数启动时自动演奏内置演示旋律。空格 播放/停止，←/→ 5 秒
+跳转，↑/↓ 音量。播放中显示 16 段频谱可视化（时域幅度分桶）。
+.PP
+fm 中打开 .wav 文件会经
+.I /export/cfg/mpl4yer/now.txt
+路径移交并自动 spawn 本程序（fm 的文件关联）。
+.SH 参见
+.BR fm (1)

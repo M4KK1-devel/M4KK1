@@ -1,0 +1,28 @@
+.\" M4KK1 4P1 - m4k_play_pcm.2
+.TH M4K_PLAY_PCM 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_play_pcm \- 播放原始 PCM 音频（SB16）
+.SH 概要
+.B #include "m4sh.h"
+.PP
+.B int m4k_play_pcm(const void *buf, uint32_t len);
+.SH 描述
+经 SB16 DSP（8-bit 无符号、单声道、22050Hz）以单周期 DMA 播放
+.I buf
+处的
+.I len
+字节音频。
+.I len
+不得超过 0x8000（32KB）；更长音频由调用者分段提交。
+.PP
+物理地址限制：ISA DMA 通道 1 要求 24 位地址（<16MB）且不跨
+64KB 边界；越界缓冲由内核经低位静态缓冲弹回（可能截尾）。
+.PP
+从 int 0x4D 中断门调用时 IF=0，完成 IRQ 无法触发，驱动以
+fire-and-forget 方式返回（DMA 仍会播完）。
+.SH 返回值
+成功返回 0；SB16 不存在、参数非法或播放失败返回非 0。
+.SH 编号
+0x4D00005E
+.SH 参见
+.BR m4k_beep (2)

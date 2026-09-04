@@ -1,0 +1,48 @@
+.\" M4KK1 4P1 - altr.1
+.TH ALTR 1 "2026-09-05" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+altr \- VSCode 风格图形代码编辑器 (ALTR2)
+.SH 概要
+.B spawn /bin/altr
+.SH 描述
+.B ALTR2
+是 M4KK1 桌面（Sprach/Copland）的模块化代码编辑器，参考 VSCode
+Dark+ 主题设计，源码位于
+.IR usr/src/cmd/altr/ \（六模块：main/draw/buf/files/syntax/keys）。
+.PP
+布局（自左向右）：活动栏（Ctrl+Q 切换面板）、资源管理器侧栏
+（j/k 选择、Enter 打开/展开）、编辑器选项卡条（多文档，Ctrl+Tab
+循环、Ctrl+W 关闭）、行号槽 + 语法高亮代码区、右侧小地图。
+底部状态栏显示模式、光标行列、文件名与脏标记。
+.SS 编辑模式
+.TP
+.B INSERT (i 进入, Esc 退出)
+字符插入、退格、回车换行、Tab（4 空格）
+.TP
+.B NORMAL
+h/j/k/l 移动、x 删字符、dd 删行、0/$ 行首尾、gg/G 文档首尾
+.SS 快捷键（VSCode 风格）
+.TP
+.B Ctrl+S
+保存（无名文件进入保存路径输入）
+.TP
+.B Ctrl+F
+查找小部件（Enter 下一个 / Shift+Enter 上一个 / Esc 关闭）
+.TP
+.B Ctrl+P
+命令面板（:w 保存 / :q 退出 / :e 路径 打开 / /模式 搜索）
+.TP
+.B Ctrl+O
+打开文件（路径输入 + Tab 补全）
+.TP
+.B Ctrl+Q, Ctrl+Tab, Ctrl+W
+面板切换 / 选项卡循环 / 关闭选项卡
+.SS 语法高亮
+C/C++（.c/.h）、汇编（.asm/.S/.s）、Shell（.sh）、Makefile、
+其他纯文本。Dark+ 配色：关键字粉、类型青、字符串橙、注释绿。
+.SH 文件
+文档行缓冲共享 1.44MB arena（最多 6 文档 × 1200 行）。
+.SH 参见
+.BR fm (1),
+.BR calcg (1),
+.BR sysmon (1)

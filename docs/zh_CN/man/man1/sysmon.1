@@ -1,0 +1,17 @@
+.\" M4KK1 4P1 - sysmon.1
+.TH SYSMON 1 "2026-09-05" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+sysmon \- 图形系统监视器
+.SH 概要
+.B spawn /bin/sysmon
+.SH 描述
+Copland 客户端，实时显示：
+.PP
+左侧进程列表（PID/名称/状态，点击选中，f 过滤，k 杀进程，
+r 刷新），右侧 CPU 负载与内存占用历史曲线（60 点，1 秒采样），
+底部汇总（内存/运行时间/进程数）。
+.PP
+数据源：getprocs/sysinfo/uptime 系统调用。CPU 值为运行态进程
+占比的代理指标（协作调度器无真实 per-CPU 统计）。
+.SH 参见
+.BR ps (1)

@@ -1,0 +1,14 @@
+.\" M4KK1 4P1 - cal.1
+.TH CAL 1 "2026-09-05" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+cal \- 图形日历（带日程）
+.SH 概要
+.B spawn /bin/cal
+.SH 描述
+Copland 客户端，7×6 月视图网格。< / > 月份导航（←/→ 同效），
+今日高亮。选中日期可在右侧备注区书写日程，存入
+.IR /export/home/$USER/.calendar/YYYY\-MM\-DD.txt \（持久化）。
+.PP
+RTC 数据源：rtcread 系统调用。
+.SH 参见
+.BR date (1)
