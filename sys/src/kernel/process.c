@@ -737,6 +737,7 @@ int mkrn_process_fill_info(struct mkrn_procinfo *buf, uint32_t max)
         buf[written].pid = current->pid;
         buf[written].ppid = current->ppid;
         buf[written].state = TAG_TO_STATE(current->state_tags);
+        buf[written].mem_kb = current->mem_kb;
         mkrn_strncpy(buf[written].name, current->name, 31);
         buf[written].name[31] = '\0';
         written++;
@@ -749,6 +750,7 @@ int mkrn_process_fill_info(struct mkrn_procinfo *buf, uint32_t max)
             buf[written].pid = p->pid;
             buf[written].ppid = p->ppid;
             buf[written].state = TAG_TO_STATE(p->state_tags);
+            buf[written].mem_kb = p->mem_kb;
             mkrn_strncpy(buf[written].name, p->name, 31);
             buf[written].name[31] = '\0';
             written++;
@@ -836,8 +838,10 @@ pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
         child->rlimits[ri].rlim_cur = parent->rlimits[ri].rlim_cur;
         child->rlimits[ri].rlim_max = parent->rlimits[ri].rlim_max;
     }
-       mkrn_strncpy(child->name, parent->name, sizeof(child->name) - 1);
+    mkrn_strncpy(child->name, parent->name, sizeof(child->name) - 1);
     child->name[sizeof(child->name) - 1] = '\0';
+    /* Inherited image; the child's own stack copy is added below. */
+    child->mem_kb = parent->mem_kb;
     mkrn_strncpy(child->cwd, parent->cwd, sizeof(child->cwd) - 1);
     child->cwd[sizeof(child->cwd) - 1] = '\0';
 
@@ -940,6 +944,7 @@ pid_t mkrn_fork_status(uint64_t inherit_mask, uint32_t flags)
             uint32_t orig_base = parent->user_stack_base;
             uint32_t new_base = (uint32_t)ustack;
             child->user_stack_base = new_base;
+            child->mem_kb += M4K_STACK_SIZE >> 10;
             uesp = new_base + (uesp - orig_base);
             uebp = new_base + (uebp - orig_base);
             /* The byte copy still contains the parent's absolute frame

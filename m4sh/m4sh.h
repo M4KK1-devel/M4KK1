@@ -164,7 +164,7 @@ struct sysinfo {
 };
 #define PROCBUF_MAX 64
 struct procinfo {
-    uint32_t pid, ppid, state;
+    uint32_t pid, ppid, state, mem_kb;
     char name[32];
 };
 struct statfs {

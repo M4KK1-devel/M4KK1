@@ -126,6 +126,11 @@ typedef struct mkrn_process {
 
     uint64_t state_tags;
 
+    /* Estimated user memory footprint in KB (ELF LOAD memsz + user
+     * stack; fork children add their copied stack).  Reported through
+     * getprocs for ps/info.  An estimate, not an accounting ledger. */
+    uint32_t mem_kb;
+
     char name[32];
     char cwd[256];
     char **argv;
@@ -151,6 +156,7 @@ struct mkrn_procinfo {
     uint32_t pid;
     uint32_t ppid;
     uint32_t state;
+    uint32_t mem_kb;    /* estimated user memory (ELF memsz + stacks) */
     char name[32];
 };
 

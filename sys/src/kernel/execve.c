@@ -89,6 +89,8 @@ int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
 
     M4K_LOG_INFO("execve: loading ELF");
 
+    u32 mem_total = 0;
+
     for (i = 0; i < ehdr->e_phnum; i++) {
         phdr = (mkrn_elf32_phdr_t *)(
             elf_data
@@ -161,6 +163,8 @@ int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
                 0,
                 phdr->p_memsz - phdr->p_filesz);
         }
+
+        mem_total += phdr->p_memsz;
     }
 
     mkrn_console_write("[INFO] execve: ELF loaded, entry=0x");
@@ -239,6 +243,9 @@ int mkrn_execve(u8 *elf_data, u32 size, const char *proc_name)
     }
     init->user_stack_base = 0;
     init->user_stack_base = (u32)stack;
+
+    /* Estimated footprint: LOAD segments + this user stack. */
+    init->mem_kb = (mem_total + M4K_STACK_SIZE) >> 10;
 
     mkrn_console_write("[INFO] execve: init process ready, stack at 0x");
     mkrn_console_write_hex((u32)stack);

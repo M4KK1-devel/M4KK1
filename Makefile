@@ -75,11 +75,21 @@ test:
 menuconfig:
 	@bash ./menuconfig
 
-# ncurses build dashboard: runs build_krn.sh with a live log pane,
-# stage progress bar and hotkeys (f follow, s save log, PgUp/PgDn).
-.PHONY: tui-build
+# ncurses build dashboard (C): runs build_krn.sh with a live log
+# pane, stage progress bar and hotkeys.  Build the host tool first
+# (gcc -lncurses), falls back to the python port when missing.
+.PHONY: tui-build tui-buildc
 tui-build:
-	@python3 tools/build/tui_build.py $(MODE_ARG)
+	@if [ -x tools/build/tui_buildc ]; then \
+		tools/build/tui_buildc $(MODE_ARG); \
+	else \
+		python3 tools/build/tui_build.py $(MODE_ARG); \
+	fi
+
+tui-buildc: tools/build/tui_buildc
+
+tools/build/tui_buildc: tools/build/tui_build.c
+	gcc -Wall -Wextra -O2 $< -o $@ -lncurses
 
 # ncurses test dashboard: runs tools/testing/test_all.sh with live
 # PASS/FAIL tally, section tracking and s-save report.
