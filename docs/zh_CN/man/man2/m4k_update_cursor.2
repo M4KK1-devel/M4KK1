@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_update_cursor.2
+.TH M4K_UPDATE_CURSOR 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_update_cursor \- 重绘硬件光标
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_update_cursor(void);
+.fi
+.SH 描述
+请求内核重绘鼠标光标图层（移动或改形后调用）。
+.SH 返回值
+成功返回 0。
+.SH 参见
+.BR m4k_get_mouse_pos (2)

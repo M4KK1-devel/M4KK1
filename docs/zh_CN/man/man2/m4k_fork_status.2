@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_fork_status.2
+.TH M4K_FORK_STATUS 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_fork_status \- 查询 fork 状态
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_fork_status(void);
+.fi
+.SH 描述
+配合经典 fork 路径使用：子进程中返回标记，用于区分 fork 前后的执行流。
+.SH 返回值
+状态标记值。
+.SH 参见
+

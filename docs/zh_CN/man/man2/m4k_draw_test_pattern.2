@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_draw_test_pattern.2
+.TH M4K_DRAW_TEST_PATTERN 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_draw_test_pattern \- 绘制测试图案
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_draw_test_pattern(void);
+.fi
+.SH 描述
+在帧缓冲上绘制内核测试图案（色条），用于显示通路自检。
+.SH 返回值
+成功返回 0。
+.SH 参见
+.BR m4k_flip (2)

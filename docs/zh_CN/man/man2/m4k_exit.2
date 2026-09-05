@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_exit.2
+.TH M4K_EXIT 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_exit \- 终止当前进程
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_exit(int status);
+.fi
+.SH 描述
+终止当前进程，status 作为退出码传递给父进程（waitpid 可读取）。
+.SH 返回值
+不返回。
+.SH 参见
+.BR m4k_spawn (2), .BR m4k_waitpid (2)

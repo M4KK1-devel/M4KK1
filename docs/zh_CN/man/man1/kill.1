@@ -1,0 +1,14 @@
+.\" M4KK1 4P1 - kill.1
+.TH KILL 1 "2026-09-05" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+kill \- 向进程发送信号
+.SH 概要
+.B kill
+[\fI参数\fR]
+.SH 描述
+.B kill [\-signal] \fIpid\fR
+.TP
+向指定 PID 发送信号（默认 SIGKILL 对应数值）。信号可为负数形式 \-N 指定。
+.SH 参见
+.BR m4sh (1),
+.BR man (1)

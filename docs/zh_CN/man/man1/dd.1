@@ -1,0 +1,14 @@
+.\" M4KK1 4P1 - dd.1
+.TH DD 1 "2026-09-05" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+dd \- 复制块设备/文件数据
+.SH 概要
+.B dd
+[\fI参数\fR]
+.SH 描述
+.B dd if=\fI输入\fR of=\fI输出\fR [bs=\fIN\fR] [count=\fIN\fR]
+.TP
+按块复制数据。默认 bs=512。count 省略时复制到输入末尾。
+.SH 参见
+.BR m4sh (1),
+.BR man (1)

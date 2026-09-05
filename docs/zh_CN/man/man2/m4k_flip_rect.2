@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_flip_rect.2
+.TH M4K_FLIP_RECT 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_flip_rect \- 局部翻页
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_flip_rect(int x, int y, int w, int h);
+.fi
+.SH 描述
+只提交屏幕上的脏矩形区域，减少全屏 flip 的带宽开销。
+.SH 返回值
+成功返回 0。
+.SH 参见
+.BR m4k_flip (2)

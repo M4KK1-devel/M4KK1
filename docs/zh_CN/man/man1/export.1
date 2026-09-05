@@ -1,0 +1,14 @@
+.\" M4KK1 4P1 - export.1
+.TH EXPORT 1 "2026-09-05" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+export \- 设置环境变量
+.SH 概要
+.B export
+[\fI参数\fR]
+.SH 描述
+.B export \fIVAR\fR=\fIvalue\fR
+.TP
+设置环境变量。最多 16 个变量，每个最大 128 字节。展开语法：\fB$VAR\fR 与 \fB${\fIVAR\fB}\fR。
+.SH 参见
+.BR m4sh (1),
+.BR man (1)

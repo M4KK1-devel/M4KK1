@@ -1,0 +1,19 @@
+.\" M4KK1 4P1 - m4k_chmod.2
+.TH M4K_CHMOD 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_chmod \- 修改文件权限位
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_chmod(const char *path, int mode);
+.fi
+.SH 描述
+修改 path 的权限位。需要文件属主或 root。
+.SH 返回值
+成功返回 0，失败返回负错误码。
+.SH 错误
+.TP
+.B M4K_EPERM
+非属主且非 root
+.SH 参见
+

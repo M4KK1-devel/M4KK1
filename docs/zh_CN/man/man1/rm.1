@@ -1,0 +1,17 @@
+.\" M4KK1 4P1 - rm.1
+.TH RM 1 "2026-09-05" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+rm \- 删除文件
+.SH 概要
+.B rm
+[\fI参数\fR]
+.SH 描述
+.B rm \fI文件\fR
+.TP
+删除指定文件（经
+.I SYS_UNLINK
+实现）。不能删除目录（见
+.BR rmdir (1)）。
+.SH 参见
+.BR m4sh (1),
+.BR man (1)

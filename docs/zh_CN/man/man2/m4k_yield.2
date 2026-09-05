@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_yield.2
+.TH M4K_YIELD 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_yield \- 主动让出 CPU
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_yield(void);
+.fi
+.SH 描述
+协作式调度下主动让出 CPU 给同优先级就绪进程。图形主循环与轮询循环中用于避免饿死其他任务。
+.SH 返回值
+成功返回 0。
+.SH 参见
+

@@ -8,8 +8,8 @@
 
 #include "m4sh.h"
 
-/* Section search order: commands first, then overview pages. */
-static const int man_sections[] = {1, 7, 8, 4, 5};
+/* Section search order: commands first, then libs, then overview pages. */
+static const int man_sections[] = {1, 2, 3, 4, 5, 7, 8};
 
 /* Appends a char to an out-line buffer; flushes with newline. */
 static void man_emit(const char *s)
@@ -56,14 +56,25 @@ static void man_print(int fd)
 
         /* request lines */
         if (j < le && buf[j] == '.') {
+            /* comment lines (.\") are silently dropped */
+            if (le - ls >= 2 && buf[j+1] == '\\')
+                continue;
             if (le - ls >= 3 && buf[j+1] == 'D' && buf[j+2] == 'D')
                 continue;                       /* .DD */
+            /* no-op layout requests */
+            if (le - ls >= 2 && buf[j+1] == 'n' && buf[j+2] == 'f')
+                continue;                       /* .nf */
+            if (le - ls >= 2 && buf[j+1] == 'f' && buf[j+2] == 'i')
+                continue;                       /* .fi */
+            if (le - ls >= 3 && buf[j+1] == 'P' && buf[j+2] == 'P')
+                continue;                       /* .PP */
             if (le - ls >= 3 && buf[j+1] == 'T' && buf[j+2] == 'H') {
                 /* .TH NAME sec "title" → header */
                 out_puts("\n=== ");
-                int k = j, words = 0;
+                int k = j + 3, words = 0;
                 while (k < le) {
-                    while (k < le && buf[k] == ' ')
+                    while (k < le
+                           && (buf[k] == ' ' || buf[k] == '"'))
                         k++;
                     int ws = k;
                     while (k < le && buf[k] != ' ' && buf[k] != '"')
@@ -178,7 +189,12 @@ void musr_cmd_man(int ac, char **av)
     if (musr_strcmp(av[1], "-l") == 0) {
         for (int s = 0; s < (int)(sizeof(man_sections) /
                                   sizeof(man_sections[0])); s++) {
-            static struct dirent de[8];
+            /* YAFS readdir is stateless (every call walks from the
+             * directory head — there is no cursor), so a getdents
+             * loop would repeat the first entries forever.  One call
+             * with a large buffer is the correct shape here; man1 is
+             * the biggest section (~70 pages). */
+            static struct dirent de[80];
             /* open the section dir itself */
             static char dpath[64];
             const char *pre = "/export/share/man/man";
@@ -190,17 +206,16 @@ void musr_cmd_man(int ac, char **av)
             int dfd = musr_sc_open(dpath, O_RDONLY);
             if (dfd < 0)
                 continue;
-            int cnt = musr_sc_getdents(dfd, de, sizeof(de));
+            /* getdents' count arg and return value are entry counts
+             * (see ls.c), not byte counts. */
+            int cnt = musr_sc_getdents(dfd, de, 80);
             musr_sc_close(dfd);
             if (cnt <= 0)
                 continue;
             out_puts("section ");
             out_putc('0' + (char)man_sections[s]);
             out_puts(":\n");
-            int ents = cnt / (int)sizeof(struct dirent);
-            if (ents > 8)
-                ents = 8;
-            for (int d = 0; d < ents; d++) {
+            for (int d = 0; d < cnt && d < 80; d++) {
                 out_puts("  ");
                 out_puts(de[d].name);
                 out_puts("\n");

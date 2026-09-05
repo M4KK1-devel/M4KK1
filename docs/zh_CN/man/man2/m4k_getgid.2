@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_getgid.2
+.TH M4K_GETGID 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_getgid \- 获取实际组 ID
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_getgid(void);
+.fi
+.SH 描述
+返回调用者的实际 GID。
+.SH 返回值
+GID（恒成功）。
+.SH 参见
+.BR m4k_getegid (2), .BR m4k_setgid (2)

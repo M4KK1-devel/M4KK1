@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_getprocs.2
+.TH M4K_GETPROCS 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_getprocs \- 获取进程表快照
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_getprocs(struct m4k_procinfo *buf, int max);
+.fi
+.SH 描述
+将进程表快照写入 buf（最多 max 条）。ps 等工具的数据来源。
+.SH 返回值
+成功返回写入的进程条数，失败返回负错误码。
+.SH 参见
+.BR ps (1)

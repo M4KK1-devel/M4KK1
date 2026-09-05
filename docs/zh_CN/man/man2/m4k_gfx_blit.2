@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_gfx_blit.2
+.TH M4K_GFX_BLIT 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_gfx_blit \- 位块传送上屏
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_gfx_blit(int x, int y, int w, int h, const void *src);
+.fi
+.SH 描述
+将用户态像素缓冲 src（RGBA32）直接 blit 到屏幕区域 (x,y,w,h)，绕过后备缓冲整页合成。MDM 全屏图标等使用。
+.SH 返回值
+成功返回 0。
+.SH 参见
+.BR m4k_flip (2)

@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_get_mouse_event.2
+.TH M4K_GET_MOUSE_EVENT 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_get_mouse_event \- 读取鼠标事件
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_get_mouse_event(struct m4k_mouse_event *ev);
+.fi
+.SH 描述
+非阻塞读取一个鼠标增量事件（dx/dy/buttons/dz 滚轮）。无事件时返回负值。
+.SH 返回值
+有事件返回 0 并填充 ev，无事件返回负值。
+.SH 参见
+.BR m4k_get_mouse_pos (2)

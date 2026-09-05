@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_waitpid.2
+.TH M4K_WAITPID 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_waitpid \- 等待子进程结束
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_waitpid(int pid, int *status, int options);
+.fi
+.SH 描述
+阻塞等待指定子进程（pid=-1 表示任意子进程）退出，退出码写入 status。
+.SH 返回值
+成功返回被回收子进程的 PID；无子进程返回负的 M4K_ECHILD。
+.SH 参见
+.BR m4k_spawn (2), .BR m4k_exit (2)

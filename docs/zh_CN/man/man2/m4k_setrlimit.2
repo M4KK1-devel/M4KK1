@@ -1,0 +1,19 @@
+.\" M4KK1 4P1 - m4k_setrlimit.2
+.TH M4K_SETRLIMIT 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_setrlimit \- 设置资源限制
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_setrlimit(int resource, const struct m4k_rlimit *lim);
+.fi
+.SH 描述
+设置资源上限。resource 取 M4K_RLIMIT_CPU/DATA/STACK/NPROC/NOFILE/MEMLOCK。需特权（上限不可超软限制的提升规则）。
+.SH 返回值
+成功返回 0，失败返回负错误码。
+.SH 错误
+.TP
+.B M4K_EPERM
+无特权提升硬限制
+.SH 参见
+.BR m4k_getrlimit (2)

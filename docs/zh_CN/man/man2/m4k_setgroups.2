@@ -1,0 +1,19 @@
+.\" M4KK1 4P1 - m4k_setgroups.2
+.TH M4K_SETGROUPS 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_setgroups \- 设置补充组列表
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_setgroups(int size, const uint32_t *list);
+.fi
+.SH 描述
+设置调用者的补充组列表。需要 root 特权。
+.SH 返回值
+成功返回 0，失败返回负的 M4K_EPERM。
+.SH 错误
+.TP
+.B M4K_EPERM
+非 root 调用
+.SH 参见
+.BR m4k_getgroups (2)

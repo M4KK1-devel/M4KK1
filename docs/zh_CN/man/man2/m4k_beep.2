@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_beep.2
+.TH M4K_BEEP 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_beep \- 播放方波提示音
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_beep(uint32_t hz, uint32_t ms);
+.fi
+.SH 描述
+经 SB16 驱动播放 hz 频率、ms 时长的方波音。
+.SH 返回值
+成功返回 0。
+.SH 参见
+.BR m4k_play_pcm (2), .BR beep (1)

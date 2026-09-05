@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_getrlimit.2
+.TH M4K_GETRLIMIT 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_getrlimit \- 查询资源限制
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_getrlimit(int resource, struct m4k_rlimit *lim);
+.fi
+.SH 描述
+查询 resource 的软/硬限制，写入 lim（rlim_cur/rlim_max）。
+.SH 返回值
+成功返回 0，失败返回负的 M4K_EINVAL。
+.SH 参见
+.BR m4k_setrlimit (2)

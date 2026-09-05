@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_getpid.2
+.TH M4K_GETPID 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_getpid \- 获取进程 ID
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_getpid(void);
+.fi
+.SH 描述
+返回调用者进程的 PID。
+.SH 返回值
+PID（恒成功）。
+.SH 参见
+

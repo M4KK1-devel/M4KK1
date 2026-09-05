@@ -1,0 +1,26 @@
+.\" M4KK1 4P1 - sead.1
+.TH SEAD 1 "2026-09-05" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+sead \- 流编辑器（sed/awk 替代）
+.SH 概要
+.B sead
+[\fI参数\fR]
+.SH 描述
+.B sead [\fI选项\fR] '\fI脚本\fR' [\fI文件...\fR]
+.TP
+按脚本逐行处理输入。选项：
+.B \-e 'script'
+执行脚本、
+.B \-f file
+从文件读脚本、
+.B \-n
+抑制自动打印、
+.B \-i[SUFFIX]
+就地编辑（可选备份）、
+.B \-\-csv
+CSV 模式、
+.B \-\-debug
+调试输出。
+.SH 参见
+.BR m4sh (1),
+.BR man (1)

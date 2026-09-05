@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_brk.2
+.TH M4K_BRK 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_brk \- 扩展数据段
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+long m4k_brk(unsigned long addr);
+.fi
+.SH 描述
+移动进程 program break。addr=0 时返回当前 break，用于探测。
+.SH 返回值
+成功返回新 break 地址，失败返回负错误码。
+.SH 参见
+.BR m4k_mmap (2)

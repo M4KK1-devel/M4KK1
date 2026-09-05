@@ -1,0 +1,22 @@
+.\" M4KK1 4P1 - m4k_kill.2
+.TH M4K_KILL 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_kill \- 向进程发送信号
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_kill(int pid, int sig);
+.fi
+.SH 描述
+向进程 pid 发送信号 sig。sig=0 时只做权限检查不发送。
+.SH 返回值
+成功返回 0，失败返回负的 M4K_E* 错误码。
+.SH 错误
+.TP
+.B M4K_ESRCH
+进程不存在
+.TP
+.B M4K_EPERM
+无权限向目标进程发送信号
+.SH 参见
+.BR m4k_getpid (2)

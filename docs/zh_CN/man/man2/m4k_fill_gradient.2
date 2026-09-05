@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_fill_gradient.2
+.TH M4K_FILL_GRADIENT 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_fill_gradient \- 垂直渐变填充
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_fill_gradient(int x, int y, int w, int h, uint32_t top, uint32_t bottom);
+.fi
+.SH 描述
+在裁剪矩形内填充 top→bottom 垂直渐变（颜色按全屏高度插值）。一次系统调用替代逐扫描线 draw_rect 循环。
+.SH 返回值
+成功返回 0。
+.SH 参见
+.BR m4k_draw_test_pattern (2)

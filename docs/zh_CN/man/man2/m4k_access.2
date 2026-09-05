@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_access.2
+.TH M4K_ACCESS 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_access \- 检查文件访问权限
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_access(const char *path, int mode);
+.fi
+.SH 描述
+以实际 UID/GID 检查对 path 的 mode 权限（R_OK/W_OK/X_OK 组合）。
+.SH 返回值
+允许返回 0，不允许返回负错误码。
+.SH 参见
+

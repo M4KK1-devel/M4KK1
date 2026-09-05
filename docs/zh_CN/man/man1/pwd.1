@@ -1,0 +1,14 @@
+.\" M4KK1 4P1 - pwd.1
+.TH PWD 1 "2026-09-05" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+pwd \- 打印当前工作目录
+.SH 概要
+.B pwd
+[\fI参数\fR]
+.SH 描述
+打印当前工作目录的绝对路径。等价于 readlink(\"/proc/self/cwd\") 语义，经
+.I SYS_GETCWD
+实现。
+.SH 参见
+.BR m4sh (1),
+.BR man (1)

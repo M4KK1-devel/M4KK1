@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_get_framebuffer_info.2
+.TH M4K_GET_FRAMEBUFFER_INFO 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_get_framebuffer_info \- 获取帧缓冲信息
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_get_framebuffer_info(struct m4k_framebuffer_info *fb);
+.fi
+.SH 描述
+查询 VESA 帧缓冲的物理地址、宽、高、bpp 与 pitch，写入 fb。
+.SH 返回值
+成功返回 0，失败返回负错误码。
+.SH 参见
+.BR m4k_flip (2), .BR desktop (7)

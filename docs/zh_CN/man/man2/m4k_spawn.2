@@ -1,0 +1,19 @@
+.\" M4KK1 4P1 - m4k_spawn.2
+.TH M4K_SPAWN 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_spawn \- 派生新进程
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_spawn(const char *path, uint32_t flags);
+.fi
+.SH 描述
+从 path 加载 ELF 并派生为新进程。与 fork 不同，spawn 直接以新程序映像启动。
+.SH 返回值
+成功返回子进程 PID，失败返回负的 M4K_E* 错误码。
+.SH 错误
+.TP
+.B M4K_ENOENT
+路径不存在或非 ELF
+.SH 参见
+.BR m4k_exit (2), .BR m4k_waitpid (2)

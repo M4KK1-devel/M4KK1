@@ -1,0 +1,15 @@
+.\" M4KK1 4P1 - m4k_geteuid.2
+.TH M4K_GETEUID 2 "2026-09-05" "M4KK1 1.0" "M4KK1 系统调用"
+.SH 名称
+m4k_geteuid \- 获取有效用户 ID
+.SH 概要
+.nf
+#include <m4k/syscall.h>
+int m4k_geteuid(void);
+.fi
+.SH 描述
+返回调用者的有效 UID。
+.SH 返回值
+EUID（恒成功）。
+.SH 参见
+.BR m4k_getuid (2)

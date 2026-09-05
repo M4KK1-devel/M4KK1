@@ -1,0 +1,16 @@
+.\" M4KK1 4P1 - beep.1
+.TH BEEP 1 "2026-09-05" "M4KK1 1.0" "M4KK1 用户命令"
+.SH 名称
+beep \- 播放提示音
+.SH 概要
+.B beep
+[\fI参数\fR]
+.SH 描述
+.B beep [\fI频率\fR \fI时长\fR]
+.TP
+通过 SB16 驱动播放方波提示音（经
+.I M4K_SYS_BEEP
+系统调用）。无参数时播放默认音。
+.SH 参见
+.BR m4sh (1),
+.BR man (1)
