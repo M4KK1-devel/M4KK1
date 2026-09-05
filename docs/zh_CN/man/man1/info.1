@@ -5,7 +5,15 @@ info \- 系统信息面板
 .SH 概要
 .B spawn /bin/info
 .SH 描述
-Copland 客户端，显示内存（sysinfo）、运行时长等系统信息。
+Copland 客户端，双页显示：
+.TP
+系统页（默认）
+内存（sysinfo）、运行时长、进程数、内核版本。
+.TP
+进程页（Tab 切换）
+完整进程表（PID/名称/状态/内存），每页 8 行，N 下一页、P 上一页。
+.PP
+q 或 ESC 关闭。
 .SH 参见
 .BR sysmon (1),
 .BR desktop (7)
