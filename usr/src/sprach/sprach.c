@@ -3460,6 +3460,185 @@ static int sprach_fm_key(struct sprach_ctx *ctx, unsigned char ch)
     return 1;
 }
 
+/* ── Global shortcuts (kernel chord codes) ──
+ * The keyboard driver maps Alt+Tab / Super+D / Super+E to the private
+ * codes 0x03/0x04/0x05 (same namespace as PageUp=0x01/PageDown=0x02)
+ * because HMP/probe injection cannot latch a modifier onto a second
+ * key — the kernel sees the bare key.  Handlers here run FIRST in the
+ * key loop, before any overlay/terminal/FM/ga forwarding. */
+
+/* Alt+Tab: cycle focus through Sprach windows + the terminal, then
+ * wrap.  Raises hidden windows (minimized ones come back). */
+static void sprach_cycle_windows(struct sprach_ctx *ctx)
+{
+    /* entries: -1 = terminal, 0..2 = Sprach windows (slot in use) */
+    int order[SPRACH_WINDOW_COUNT + 1];
+    int n = 0;
+    for (int i = 0; i < SPRACH_WINDOW_COUNT; i++)
+        if (ctx->wins[i].slot >= 0)
+            order[n++] = i;
+    if (ctx->term_slot >= 0)
+        order[n++] = -1;
+    if (n == 0) {
+        ser_puts("[SPRACH] Alt+Tab: no windows\n");
+        return;
+    }
+    /* current position: match active window, or terminal when
+     * active < 0 and the terminal is visible */
+    int cur = 0;
+    for (int i = 0; i < n; i++) {
+        if (order[i] == ctx->active)
+            cur = i;
+        else if (order[i] == -1 && ctx->active < 0)
+            cur = i;
+    }
+    int next = (cur + 1) % n;
+    if (order[next] == -1) {
+        if (ctx->term_hidden) {
+            ctx->term_hidden = 0;
+            ctx->shm->surfaces[ctx->term_slot].flags |=
+                COPLAND_SURF_VISIBLE;
+        }
+        ctx->active = -1;
+        sprach_raise_surface(ctx, ctx->term_slot);
+        ctx->last_tbar_active = -999;
+        ctx->shm->dirty = 1;
+        ser_puts("[SPRACH] Alt+Tab: terminal\n");
+    } else {
+        int i = order[next];
+        if (ctx->wins[i].desktop != ctx->desktop_idx)
+            sprach_switch_desktop(ctx, ctx->wins[i].desktop);
+        if (ctx->wins[i].hidden) {
+            ctx->wins[i].hidden = 0;
+            ctx->shm->surfaces[ctx->wins[i].slot].flags |=
+                COPLAND_SURF_VISIBLE;
+        }
+        ctx->active = i;
+        sprach_raise_window(ctx, i);
+        ctx->last_tbar_active = -999;
+        ctx->shm->dirty = 1;
+        ser_puts("[SPRACH] Alt+Tab: window ");
+        print_u32((uint32_t)i);
+        ser_puts("\n");
+    }
+}
+
+/* Super+D: toggle show-desktop — minimize every window (incl. ga
+ * apps' foreign surfaces), or restore the ones this toggle hid. */
+static void sprach_show_desktop(struct sprach_ctx *ctx)
+{
+    if (!ctx->show_desktop_mode) {
+        /* Hide everything on the current desktop except chrome */
+        for (int i = 0; i < SPRACH_WINDOW_COUNT; i++) {
+            if (ctx->wins[i].slot < 0 || ctx->wins[i].hidden)
+                continue;
+            if (ctx->wins[i].desktop == ctx->desktop_idx) {
+                ctx->wins[i].hidden = 1;
+                ctx->shm->surfaces[ctx->wins[i].slot].flags &=
+                    ~COPLAND_SURF_VISIBLE;
+            }
+        }
+        if (ctx->term_slot >= 0 && !ctx->term_hidden &&
+            ctx->term_desktop == ctx->desktop_idx) {
+            ctx->term_hidden = 1;
+            ctx->shm->surfaces[ctx->term_slot].flags &=
+                ~COPLAND_SURF_VISIBLE;
+        }
+        /* Foreign surfaces (ga apps, FM): hide all visible ones */
+        for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
+            if (!ctx->shm->surfaces[i].in_use ||
+                i == ctx->taskbar_slot || i == ctx->menubar_slot ||
+                i == desk_slot)
+                continue;
+            int known = (i == ctx->term_slot);
+            for (int j = 0; j < SPRACH_WINDOW_COUNT; j++)
+                if (ctx->wins[j].slot == i)
+                    known = 1;
+            if (!known)
+                ctx->shm->surfaces[i].flags &=
+                    ~COPLAND_SURF_VISIBLE;
+        }
+        ctx->show_desktop_mode = 1;
+        ctx->shm->dirty = 1;
+        ser_puts("[SPRACH] Super+D: show desktop (all hidden)\n");
+    } else {
+        /* Restore: windows and terminal first (they track hidden
+         * state), then every foreign surface we hid — reapply the
+         * desktop visibility rule so windows on other desktops stay
+         * hidden. */
+        for (int i = 0; i < SPRACH_WINDOW_COUNT; i++) {
+            if (ctx->wins[i].slot < 0)
+                continue;
+            if (ctx->wins[i].desktop == ctx->desktop_idx) {
+                ctx->wins[i].hidden = 0;
+                ctx->shm->surfaces[ctx->wins[i].slot].flags |=
+                    COPLAND_SURF_VISIBLE;
+            }
+        }
+        if (ctx->term_slot >= 0 && ctx->term_desktop ==
+            ctx->desktop_idx) {
+            ctx->term_hidden = 0;
+            ctx->shm->surfaces[ctx->term_slot].flags |=
+                COPLAND_SURF_VISIBLE;
+        }
+        for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
+            if (!ctx->shm->surfaces[i].in_use ||
+                i == ctx->taskbar_slot || i == ctx->menubar_slot ||
+                i == desk_slot)
+                continue;
+            int known = (i == ctx->term_slot);
+            for (int j = 0; j < SPRACH_WINDOW_COUNT; j++)
+                if (ctx->wins[j].slot == i)
+                    known = 1;
+            if (!known)
+                ctx->shm->surfaces[i].flags |=
+                    COPLAND_SURF_VISIBLE;
+        }
+        ctx->show_desktop_mode = 0;
+        ctx->shm->dirty = 1;
+        ser_puts("[SPRACH] Super+D: restore (windows shown)\n");
+    }
+}
+
+/* Super+E: launch /bin/fm (or focus it via Alt+Tab-style raise if
+ * its mailbox is already registered). */
+static void sprach_launch_fm(struct sprach_ctx *ctx)
+{
+    volatile struct sprach_fm_mailbox *mb =
+        (volatile struct sprach_fm_mailbox *)FM_MAILBOX_BASE;
+    if (mb->magic == FM_MAILBOX_MAGIC) {
+        /* Already running: raise its surface if we can find it */
+        for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
+            if (ctx->shm->surfaces[i].in_use &&
+                ctx->shm->surfaces[i].w == FM_SURF_W &&
+                i != ctx->taskbar_slot && i != ctx->menubar_slot) {
+                if (ctx->show_desktop_mode)
+                    sprach_show_desktop(ctx);  /* un-hide first */
+                ctx->shm->surfaces[i].flags |=
+                    COPLAND_SURF_VISIBLE;
+                sprach_raise_surface(ctx, i);
+                ctx->shm->dirty = 1;
+                ser_puts("[SPRACH] Super+E: fm already running, raised\n");
+                return;
+            }
+        }
+    }
+    ser_puts("[SPRACH] Super+E: launching /bin/fm...\n");
+    int pid = musr_sc_fork();
+    if (pid == 0) {
+        int r = m4k_spawn("/bin/fm", 0);
+        ser_puts("[SPRACH] fm spawn failed (ret=");
+        print_u32((uint32_t)r);
+        ser_puts(")\n");
+        m4k_exit(1);
+    }
+    if (pid < 0) {
+        ser_puts("[SPRACH] fm fork failed\n");
+        return;
+    }
+    ctx->fm_pid = pid;
+}
+
 /* ── Generic GUI-app keyboard dispatch ──
  * Standalone Copland clients (clock/logview/info/automission/backup,
  * built on guiapp.h) each register a key mailbox with their own magic
@@ -4158,6 +4337,8 @@ void _start(void)
     ctx.lp_slot = -1;
     ctx.lp_count = 0;
     ctx.term_desktop = 0;
+    ctx.show_desktop_mode = 0;
+    ctx.fm_pid = -1;
     ctx.rmenu_mode = 0;
     ctx.rmenu_x = 0;
     ctx.rmenu_y = 0;
@@ -4380,6 +4561,21 @@ void _start(void)
         while (m4k_get_keyboard_event(&ev)) {
             if (!ev.ascii_char)
                 continue;
+
+            /* Global chord shortcuts (kernel pre-mapped 0x03..0x05).
+             * Run FIRST — before overlays and every forward path. */
+            if (ev.ascii_char == 0x03) {
+                sprach_cycle_windows(&ctx);
+                continue;
+            }
+            if (ev.ascii_char == 0x04) {
+                sprach_show_desktop(&ctx);
+                continue;
+            }
+            if (ev.ascii_char == 0x05) {
+                sprach_launch_fm(&ctx);
+                continue;
+            }
 
             /* Ctrl+Alt+T → launch the terminal emulator */
             if ((ev.modifiers & (M4K_MOD_CTRL | M4K_MOD_ALT)) ==

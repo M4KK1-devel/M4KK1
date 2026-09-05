@@ -69,6 +69,7 @@ typedef struct {
     bool     shift_pressed;
     bool     ctrl_pressed;
     bool     alt_pressed;
+    bool     super_pressed;
     bool     caps_lock;
     bool     num_lock;
     bool     scroll_lock;
@@ -221,6 +222,10 @@ mkrn_keyboard_handler(void)
     case 0x64:   /* set-2 right Alt (extended) */
         keyboard_state.alt_pressed = bPressed;
         break;
+    case 0xDB:   /* E0 5B: left Super (Windows) key (0x5B + 128) */
+    case 0xDC:   /* E0 5C: right Super (Windows) key (0x5C + 128) */
+        keyboard_state.super_pressed = bPressed;
+        break;
     case 0x3A:
         if (!bPressed) {
             keyboard_state.caps_lock =
@@ -309,6 +314,25 @@ mkrn_keyboard_handler(void)
      * char again, doubling every keystroke ("root" became "rrooott")
      * and toggling two-state handlers (Tab switched fields twice and
      * landed back where it started). */
+    if (ch != 0 && bPressed) {
+        /* WM chord shortcuts: HMP sendkey cannot latch Alt/Ctrl onto
+         * a second key (guest sees the bare key), so the kernel maps
+         * the whole chord to one private code at the source.  Same
+         * pattern as PageUp/PageDown = 0x01/0x02 above; 0x03..0x05
+         * never collide with printable ASCII or Ctrl+C. */
+        if (keyboard_state.alt_pressed) {
+            if (ch == '\t')
+                ch = 0x03;   /* Alt+Tab  → window cycle  */
+        } else if (keyboard_state.super_pressed &&
+                   !keyboard_state.ctrl_pressed) {
+            if (ch == 'd')
+                ch = 0x04;   /* Super+D  → show desktop  */
+            else if (ch == 'e')
+                ch = 0x05;   /* Super+E  → file manager  */
+            else
+                ch = 0;      /* no Super+<x> typing leaks */
+        }
+    }
     if (ch != 0 && bPressed) {
         uint32_t u32NextTail =
             (keyboard_state.buffer_tail + 1)

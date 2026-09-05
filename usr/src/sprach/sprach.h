@@ -151,6 +151,10 @@ struct sprach_ctx {
     uint32_t term_spawn_tick;  /* tick of the last fork; stale-pid timeout */
     int term_desktop;    /* virtual desktop the terminal lives on */
 
+    /* Global shortcuts (kernel chord codes 0x03..0x05) */
+    int show_desktop_mode; /* 1 = all windows minimized (Super+D toggle) */
+    int fm_pid;            /* pid of the Super+E-spawned /bin/fm (-1=none) */
+
     /* Taskbar redraw caching: only repaint when state actually changes */
     int last_tbar_active;    /* active window index (-1 = terminal focus) */
     uint32_t last_tbar_win;  /* per-window slot/hidden bitmask */
