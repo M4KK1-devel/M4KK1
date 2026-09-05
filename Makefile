@@ -81,6 +81,12 @@ menuconfig:
 tui-build:
 	@python3 tools/build/tui_build.py $(MODE_ARG)
 
+# ncurses test dashboard: runs tools/testing/test_all.sh with live
+# PASS/FAIL tally, section tracking and s-save report.
+.PHONY: tui-test
+tui-test:
+	@python3 tools/testing/tui_test.py
+
 # Compiler targets
 .PHONY: compilers
 compilers:
