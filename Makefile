@@ -91,11 +91,27 @@ tui-buildc: tools/build/tui_buildc
 tools/build/tui_buildc: tools/build/tui_build.c
 	gcc -Wall -Wextra -O2 $< -o $@ -lncurses
 
-# ncurses test dashboard: runs tools/testing/test_all.sh with live
-# PASS/FAIL tally, section tracking and s-save report.
-.PHONY: tui-test
+# C ncurses menuconfig (preferred frontend of ./menuconfig)
+.PHONY: menuconfigc
+menuconfigc: tools/build/tui_menuconfigc
+
+tools/build/tui_menuconfigc: tools/build/tui_menuconfig.c
+	gcc -Wall -Wextra -O2 $< -o $@ -lncurses
+
+# ncurses test dashboard (C preferred, python fallback): runs
+# tools/testing/test_all.sh with live PASS/FAIL tally + s-save report.
+.PHONY: tui-test tui-testc
 tui-test:
-	@python3 tools/testing/tui_test.py
+	@if [ -x tools/testing/tui_testc ]; then \
+		tools/testing/tui_testc; \
+	else \
+		python3 tools/testing/tui_test.py; \
+	fi
+
+tui-testc: tools/testing/tui_testc
+
+tools/testing/tui_testc: tools/testing/tui_test.c
+	gcc -Wall -Wextra -O2 $< -o $@ -lncurses
 
 # Compiler targets
 .PHONY: compilers

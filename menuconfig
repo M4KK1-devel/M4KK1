@@ -31,13 +31,14 @@ MAKE_JOBS="$(nproc 2>/dev/null || echo 4)"
 
 [ -f "$CONFIG" ] && . "$CONFIG"
 
-# ── Detect TUI backend ──
-if command -v python3 >/dev/null 2>&1 \
-   && python3 -c "import curses" >/dev/null 2>&1; then
-    UI="curses"
-else
-    UI="bashmenu"
+# ── Frontend: C ncurses binary (preferred), python curses, bash ──
+if [ -x tools/build/tui_menuconfigc ]; then
+    exec tools/build/tui_menuconfigc
+elif python3 -c "import curses" >/dev/null 2>&1; then
+    exec python3 tools/build/tui_menuconfig.py
 fi
+# else: fall through to the plain bash menu below (works over
+# serial/pipe where curses is not available)
 
 save_config() {
     cat > "$CONFIG" <<EOF

@@ -119,10 +119,20 @@ echo "=== 测试5: QEMU启动测试 ==="
 # was ever built — it has no MDM and fails the login assertions
 # below regardless of the code under test.
 TEST_ISO=$(ls -t output/m4kk1_*.iso | head -1)
+# Serial → FILE, not stdio: the stdio/mon:stdio backends need stdin
+# to be a real tty — under a pipe or /dev/null QEMU either stalls or
+# muxes the monitor in, and the boot greps FAIL.  A log file works
+# identically in cron, pipe, and interactive-TUI environments.
+rm -f /tmp/qemu_test.log
 timeout 20 qemu-system-i386 -cdrom "$TEST_ISO" \
-    -nographic -serial mon:stdio -no-reboot -display none 2>&1 | \
-    tee /tmp/qemu_test.log &
+    -display none -serial file:/tmp/qemu_test.log -no-reboot &
 QEMU_PID=$!
+# stream what lands in the log so the console still shows progress
+( for i in $(seq 1 40); do
+    [ -f /tmp/qemu_test.log ] && cat /tmp/qemu_test.log 2>/dev/null
+    sleep 0.5
+  done ) &
+TAIL_PID=$!
 
 # 等待系统启动
 sleep 15
@@ -150,7 +160,9 @@ fi
 
 # 清理QEMU进程
 kill $QEMU_PID 2>/dev/null || true
+kill $TAIL_PID 2>/dev/null || true
 wait $QEMU_PID 2>/dev/null || true
+wait $TAIL_PID 2>/dev/null || true
 
 # 测试6: 检查关键文件
 echo ""
