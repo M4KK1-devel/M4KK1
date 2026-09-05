@@ -69,11 +69,17 @@ iso:
 test:
 	@bash tools/testing/test_all.sh
 
-# TUI build configuration menu (whiptail/dialog, bash fallback).
-# Writes build.config, sourced by tools/build/build_krn.sh.
+# TUI build configuration menu (ncurses via python curses, bash
+# fallback).  Writes build.config, sourced by tools/build/build_krn.sh.
 .PHONY: menuconfig
 menuconfig:
 	@bash ./menuconfig
+
+# ncurses build dashboard: runs build_krn.sh with a live log pane,
+# stage progress bar and hotkeys (f follow, s save log, PgUp/PgDn).
+.PHONY: tui-build
+tui-build:
+	@python3 tools/build/tui_build.py $(MODE_ARG)
 
 # Compiler targets
 .PHONY: compilers

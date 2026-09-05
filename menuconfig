@@ -1,18 +1,18 @@
 #!/bin/bash
-# M4KK1 4P1 - menuconfig.sh
+# M4KK1 4P1 - menuconfig
 # Description: TUI configuration menu for the M4KK1 build system.
 #              Writes build.config (sourced by build_krn.sh).
 #
 # Frontends, in order of preference:
-#   1. whiptail   (newt TUI, default on most distros)
-#   2. dialog     (classic TUI fallback)
-#   3. bashmenu   (plain numbered-list menu; works over serial/pipe)
+#   1. python3 curses  (ncurses TUI — no extra packages needed)
+#   2. bashmenu        (plain numbered-list menu; serial/pipe safe)
+#
+# (whiptail/dialog support was dropped: the WSL build host ships
+#  neither, so the old script always fell through to bashmenu.)
 #
 # Copyright (c) 2026 Yaku Makki
 # SPDX-License-Identifier: 4P1-Custom
 
-# The menu lives in the repo root next to the Makefile, so "cd to the
-# script's directory" (not ".." — that wrote build.config to F:\).
 cd "$(dirname "$0")"
 
 CONFIG="build.config"
@@ -32,24 +32,12 @@ MAKE_JOBS="$(nproc 2>/dev/null || echo 4)"
 [ -f "$CONFIG" ] && . "$CONFIG"
 
 # ── Detect TUI backend ──
-if command -v whiptail >/dev/null 2>&1; then
-    UI="whiptail"
-elif command -v dialog >/dev/null 2>&1; then
-    UI="dialog"
+if command -v python3 >/dev/null 2>&1 \
+   && python3 -c "import curses" >/dev/null 2>&1; then
+    UI="curses"
 else
     UI="bashmenu"
 fi
-
-# whiptail draws on stderr; dialog on stdout. Normalize via fd swap.
-ui() {
-    # $1 = tag, $2 = description
-    local tag="$1"; shift
-    local desc="$1"; shift
-    case "$UI" in
-    whiptail) whiptail "$@" "$tag" "$desc" 3>&1 1>&2 2>&3 ;;
-    dialog)   dialog   "$@" "$tag" "$desc" ;;
-    esac
-}
 
 save_config() {
     cat > "$CONFIG" <<EOF
@@ -78,6 +66,8 @@ mode_desc() {
     recovery)  echo "cmd-only + fsck / reset-passwd tools" ;;
     esac
 }
+
+# ══════════════ bash fallback menu (unchanged behaviour) ══════════════
 
 bash_main_menu() {
     while true; do
@@ -142,69 +132,9 @@ bash_choose_tests() {
     done
 }
 
-tui_main_menu() {
-    while true; do
-        choice=$(ui "M4KK1 Build Configuration" \
-            --menu "Mode: $BUILD_MODE ($(mode_desc "$BUILD_MODE"))\nOutput: $OUTPUT_DIR   QEMU: ${QEMU_MEMORY}MB / $QEMU_VGA\nTests: smoke=$TEST_SMOKE gfx=$TEST_GRAPHICS drag=$TEST_DRAG rmenu=$TEST_RMENU pcc=$TEST_PCC" \
-            20 76 6 \
-            "1" "Build mode" \
-            "2" "Output directory" \
-            "3" "QEMU options" \
-            "4" "Test selection" \
-            "5" "Save & exit" \
-            "6" "Discard & exit") || { echo "Cancelled."; return 0; }
-        case "$choice" in
-        1) tui_choose_mode ;;
-        2) d=$(ui "Output directory" --inputbox "Directory for ISO artifacts" 8 60 "$OUTPUT_DIR" 2>/dev/null) && OUTPUT_DIR="${d:-output}" ;;
-        3) tui_qemu_opts ;;
-        4) tui_choose_tests ;;
-        5) save_config; return 0 ;;
-        6) return 0 ;;
-        esac
-    done
-}
-
-tui_choose_mode() {
-    choice=$(ui "Build mode" --menu "Select the build profile" 18 70 5 \
-        "full"      "$(mode_desc full)" \
-        "full-test" "$(mode_desc full-test)" \
-        "cmd-only"  "$(mode_desc cmd-only)" \
-        "minimal"   "$(mode_desc minimal)" \
-        "recovery"  "$(mode_desc recovery)") || return 0
-    BUILD_MODE="$choice"
-}
-
-tui_qemu_opts() {
-    d=$(ui "QEMU memory" --inputbox "Guest RAM in MB" 8 50 "$QEMU_MEMORY" 2>/dev/null) && QEMU_MEMORY="${d:-512}"
-    d=$(ui "QEMU VGA" --menu "Emulated video card" 14 60 3 \
-        "std"    "Standard VGA (default, VESA)" \
-        "cirrus" "Cirrus Logic GD5446" \
-        "virtio" "virtio-gpu") && QEMU_VGA="${d:-std}"
-}
-
-tui_choose_tests() {
-    # checklist: pre-select entries whose variable is "yes"
-    local args=()
-    [ "$TEST_SMOKE"   = yes ] && args+=("smoke"   "Boot smoke test (serial, no panic)" "on")  || args+=("smoke"   "Boot smoke test (serial, no panic)" "off")
-    [ "$TEST_GRAPHICS" = yes ] && args+=("gfx"     "Graphics bring-up (desktop visible)" "on") || args+=("gfx"     "Graphics bring-up (desktop visible)" "off")
-    [ "$TEST_DRAG"    = yes ] && args+=("drag"    "Window drag repro (QEMU HMP)" "on")   || args+=("drag"    "Window drag repro (QEMU HMP)" "off")
-    [ "$TEST_RMENU"   = yes ] && args+=("rmenu"   "Right-click context menu repro" "on") || args+=("rmenu"   "Right-click context menu repro" "off")
-    [ "$TEST_PCC"     = yes ] && args+=("pcc"     "PCC self-host compile check" "on")    || args+=("pcc"     "PCC self-host compile check" "off")
-    sel=$(ui "Test selection" --checklist "Toggle post-build regression tests (space)" \
-        18 70 5 "${args[@]}") || return 0
-    TEST_SMOKE=no; TEST_GRAPHICS=no; TEST_DRAG=no; TEST_RMENU=no; TEST_PCC=no
-    for s in $sel; do
-        case "$s" in
-        smoke) TEST_SMOKE=yes ;;
-        gfx)   TEST_GRAPHICS=yes ;;
-        drag)  TEST_DRAG=yes ;;
-        rmenu) TEST_RMENU=yes ;;
-        pcc)   TEST_PCC=yes ;;
-        esac
-    done
-}
+# ══════════════ dispatch ══════════════
 
 case "$UI" in
-whiptail|dialog) tui_main_menu ;;
-*) bash_main_menu ;;
+curses) exec python3 tools/build/tui_menuconfig.py "$@" ;;
+*)       bash_main_menu ;;
 esac
