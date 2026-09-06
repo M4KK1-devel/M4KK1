@@ -1290,6 +1290,45 @@ static void sprach_cfg_save(struct sprach_ctx *ctx)
     musr_sc_close(fd);
 }
 
+/* ── Wallpaper theme persistence (/etc/wallpaper) ──
+ *
+ * Single-digit theme id (0..5), one line.  Written on every theme
+ * change (rmenu submenu, settings swatches); read at boot AFTER the
+ * legacy desktop.cfg / pref wallpaper.conf so it wins. */
+#define SPRACH_WP_PATH "/etc/wallpaper"
+
+static void sprach_wallpaper_save(void)
+{
+    char b[2];
+    b[0] = (char)('0' + gui_wallpaper_get_theme());
+    b[1] = '\n';
+    int fd = musr_sc_open(SPRACH_WP_PATH, O_CREAT | O_WRONLY | O_TRUNC);
+    if (fd < 0) {
+        ser_puts("[SPRACH] wallpaper save: open failed\n");
+        return;
+    }
+    musr_sc_write(fd, b, 2);
+    musr_sc_close(fd);
+    ser_puts("[SPRACH] wallpaper saved: theme ");
+    print_u32((uint32_t)(b[0] - '0'));
+    ser_puts("\n");
+}
+
+static void sprach_wallpaper_load(void)
+{
+    char b[4];
+    int fd = musr_sc_open(SPRACH_WP_PATH, O_RDONLY);
+    if (fd < 0)
+        return;
+    int n = musr_sc_read(fd, b, sizeof(b));
+    musr_sc_close(fd);
+    if (n <= 0)
+        return;
+    int t = b[0] - '0';
+    if (t >= 0 && t < 6)
+        gui_wallpaper_set_theme(t);
+}
+
 static void sprach_cfg_load(struct sprach_ctx *ctx)
 {
     char b[64];
@@ -1342,6 +1381,10 @@ pref:
         if (t >= 0 && t < 6)
             gui_wallpaper_set_theme(t);
     }
+
+    /* /etc/wallpaper (rmenu theme submenu) overrides everything:
+     * it is the most recent explicit user choice. */
+    sprach_wallpaper_load();
 }
 
 void sprach_draw_clock_popup(struct sprach_ctx *ctx)
@@ -2602,6 +2645,12 @@ static const char *const rmenu_desktop_labels[3] = {
 static const char *const rmenu_icon_labels[2] = {
     "Open", "Properties",
 };
+/* mode 3 = wallpaper theme submenu: one item per gui_wallpapers[]
+ * entry (indices must stay in sync with libgui.c). */
+static const char *const rmenu_theme_labels[6] = {
+    "Classic Blue", "Ocean", "Twilight",
+    "Graphite", "Desert", "Forest",
+};
 
 /* Paint the open context menu into the desktop overlay buffer. */
 static void sprach_draw_rmenu(struct sprach_ctx *ctx)
@@ -2609,7 +2658,10 @@ static void sprach_draw_rmenu(struct sprach_ctx *ctx)
     if (!ctx->rmenu_mode || desk_slot < 0)
         return;
     const char *const *labels = ctx->rmenu_mode == 2
-        ? rmenu_icon_labels : rmenu_desktop_labels;
+        ? rmenu_icon_labels
+        : (ctx->rmenu_mode == 3 ? rmenu_theme_labels
+                                : rmenu_desktop_labels);
+    int cur = (ctx->rmenu_mode == 3) ? gui_wallpaper_get_theme() : -1;
     int n = ctx->rmenu_items;
     int h = n * RMENU_ITEM_H + RMENU_PAD * 2;
     int w = RMENU_ITEM_W;
@@ -2640,6 +2692,12 @@ static void sprach_draw_rmenu(struct sprach_ctx *ctx)
             ctx->mouse_x >= x && ctx->mouse_x < x + w)
             sp_rect(desk_buf, SCREEN_W, WORK_AREA_H, x + 1, iy,
                     w - 2, RMENU_ITEM_H, 0x00347BC2);
+        /* theme submenu: prefix the active theme with a marker so
+         * the current selection is visible at a glance */
+        if (i == cur)
+            sp_draw_str(desk_buf, SCREEN_W, WORK_AREA_H,
+                        x + 3, iy + (RMENU_ITEM_H - 8) / 2,
+                        "*", 0x00347BC2);
         sp_draw_str(desk_buf, SCREEN_W, WORK_AREA_H,
                     x + 10, iy + (RMENU_ITEM_H - 8) / 2,
                     labels[i], 0x001A1A1A);
@@ -2709,7 +2767,7 @@ static int sprach_rmenu_activate(struct sprach_ctx *ctx)
     ctx->rmenu_mode = 0;
     ctx->rmenu_sel_icon = -1;
     sprach_desktop_paint(ctx);   /* menu overlay off */
-    if (item < 0 || item >= (mode == 2 ? 2 : 3))
+    if (item < 0 || item >= (mode == 2 ? 2 : (mode == 3 ? 6 : 3)))
         return 1;   /* miss = close, swallow */
     if (mode == 2) {
         if (item == 0) {
@@ -2723,17 +2781,27 @@ static int sprach_rmenu_activate(struct sprach_ctx *ctx)
                 ser_puts(lp_apps[icon].path);
             ser_puts("\n");
         }
+    } else if (mode == 3) {
+        /* theme submenu pick: apply live + persist to /etc/wallpaper */
+        gui_wallpaper_set_theme(item);
+        sprach_cfg_save(ctx);
+        sprach_wallpaper_save();
+        sprach_desktop_paint(ctx);
+        ser_puts("[SPRACH] rmenu: theme ");
+        print_u32((uint32_t)item);
+        ser_puts("\n");
     } else {
         if (item == 0) {
             sprach_spawn_terminal(ctx);
         } else if (item == 1) {
-            /* Change Wallpaper: cycle theme + persist, like the
-             * settings swatch path. */
-            uint32_t t = shm_wallpaper_theme();
-            gui_wallpaper_set_theme((t + 1) % 6);
-            sprach_cfg_save(ctx);
+            /* Change Wallpaper: open the 6-theme submenu (mode 3)
+             * instead of blind-cycling. */
+            ctx->rmenu_mode = 3;
+            ctx->rmenu_items = 6;
+            ctx->rmenu_x = ctx->mouse_x;
+            ctx->rmenu_y = ctx->mouse_y;
             sprach_desktop_paint(ctx);
-            ser_puts("[SPRACH] rmenu: wallpaper cycled\n");
+            ser_puts("[SPRACH] rmenu: theme menu\n");
         } else {
             sprach_launchpad_toggle(ctx, 1);
         }

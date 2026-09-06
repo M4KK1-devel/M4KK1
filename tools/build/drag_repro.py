@@ -15,9 +15,14 @@ the vertical center-of-mass of title-bar-colored rows shifts right by
 100..140 px and down by 40..80 px between A and B, and B vs C differ
 by < 3 px.
 """
-import subprocess, time, re, sys, os
+import subprocess, time, re, sys, os, glob
 
-ISO = "output/m4kk1_0.0.1_build8-alpha1-full-test.iso"
+# build number drifts; pick the newest full-test ISO like rmenu_repro
+_C = sorted(glob.glob("output/*full-test.iso"), key=os.path.getmtime)
+if not _C:
+    print("[drag] ISO missing")
+    sys.exit(1)
+ISO = _C[-1]
 SER = "logs/drag_serial.log"
 DUMPA = "/tmp/drag_a.ppm"
 DUMPB = "/tmp/drag_b.ppm"
