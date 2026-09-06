@@ -109,6 +109,23 @@ Common flags:
 ISO files are mode-tagged, e.g. `m4kk1_0.0.1_build1-alpha1-full.iso`,
 `m4kk1_0.0.1_build1-alpha1-cmd-only.iso`, `m4kk1_0.0.1_build1-alpha1-minimal.iso`.
 
+### Interactive TUIs (ncurses, C)
+
+Three host-side ncurses dashboards (built with the host gcc against
+libncurses; python-curses ports remain as fallbacks):
+
+| Command | Tool | What it does |
+| :--- | :--- | :--- |
+| `make menuconfig` | `tools/build/tui_menuconfig.c` | Build configuration menu: mode / output dir / QEMU options / test toggles; writes `build.config` |
+| `make tui-build MODE_ARG=--full-test` | `tools/build/tui_build.c` | Build dashboard wrapping `build_krn.sh`: live log pane, stage progress bar, hotkeys `f` follow / `s` save log / `PgUp/PgDn` scroll / `q` abort |
+| `make tui-test` | `tools/testing/tui_test.c` | Test dashboard wrapping `test_all.sh`: live PASS/FAIL tally, section tracking, `s` saves a report to `logs/` |
+
+Build the C binaries explicitly with `make menuconfigc`, `make
+tui-buildc`, `make tui-testc` (requires `gcc` + `libncurses-dev` on
+the host). Without the binaries the targets fall back to the python
+curses ports; `./menuconfig` falls back further to a plain bash menu
+that also works over serial consoles.
+
 ### Test in QEMU
 
 ```bash
