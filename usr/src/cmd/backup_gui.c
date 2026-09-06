@@ -9,6 +9,7 @@
  */
 
 #include "m4sh.h"
+#include "am_sched.h"
 
 #define BK_CHUNK 4096
 static char bk_io[BK_CHUNK];
@@ -49,9 +50,38 @@ static int bk_copy_file(const char *src, const char *dst)
  */
 void musr_cmd_backup(int ac, char **av)
 {
-    (void)ac;
-    (void)av;
-    /* find the first free backup slot (backup-0..15) */
+	/* backup -s HH:MM : register a daily backup automission */
+	if (ac >= 2 && musr_strcmp(av[1], "-s") == 0) {
+		if (ac < 3) {
+			out_puts("usage: backup -s HH:MM\n");
+			return;
+		}
+		int v = am_parse_hhmm(av[2]);
+		if (v < 0) {
+			c_red();
+			out_puts("backup: bad time '");
+			out_puts(av[2]);
+			out_puts("' (use HH:MM)\n");
+			c_rst();
+			return;
+		}
+		am_sched_write(v);
+		c_grn();
+		out_puts("backup: scheduled daily at ");
+		if (v / 60 < 10)
+			out_putc('0');
+		print_u32((uint32_t)(v / 60));
+		out_putc(':');
+		if (v % 60 < 10)
+			out_putc('0');
+		print_u32((uint32_t)(v % 60));
+		out_puts(" (registered in automission)\n");
+		c_rst();
+		return;
+	}
+	(void)ac;
+	(void)av;
+	/* find the first free backup slot (backup-0..15) */
     int slot = 0;
     char dst[80];
     for (; slot < 16; slot++) {

@@ -141,6 +141,8 @@ struct sprach_ctx {
     int menubar_slot;    /* Copland surface slot for the top menubar (-1 = uninit) */
     int mouse_x, mouse_y;  /* accumulated absolute mouse position */
     int btn_was_down;      /* click edge-trigger latch (1 = button held) */
+    int resize_win;        /* window being resized by corner drag (-1=none) */
+    int resize_dw, resize_dh;  /* grab offset from the bottom-right corner */
 
     /* Terminal client window */
     int term_slot;       /* Copland surface slot owned by /bin/terminal (-1 = none) */

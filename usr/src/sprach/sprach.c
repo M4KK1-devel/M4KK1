@@ -3302,6 +3302,47 @@ void sprach_handle_mouse(struct sprach_ctx *ctx)
         ser_puts("[SPRACH] TERM DRAG END\n");
     }
 
+    /* ── Corner-drag resize: while the left button is held in the
+     * bottom-right grip zone, every cursor move re-sizes the
+     * window so the corner tracks the cursor.  The paint code
+     * writes through w->w/w->h strides, so a fresh paint after
+     * each geometry change keeps the buffer consistent (the
+     * maximize backing store is full-screen sized, so any
+     * user-reachable geometry fits). */
+    if (cursor_moved && ctx->resize_win >= 0) {
+        struct sprach_window *rw = &ctx->wins[ctx->resize_win];
+        if (rw->slot >= 0 && !rw->hidden && !rw->maximized) {
+            int nw = ctx->mouse_x - rw->x + ctx->resize_dw;
+            int nh = ctx->mouse_y - rw->y + ctx->resize_dh;
+            if (nw < 120) nw = 120;         /* keep the 3 buttons */
+            if (nw > SCREEN_W) nw = SCREEN_W;
+            if (nh < SPRACH_TITLE_H + 40)
+                nh = SPRACH_TITLE_H + 40;
+            if (nh > WORK_AREA_H) nh = WORK_AREA_H;
+            if (nw != rw->w || nh != rw->h) {
+                int idx = (int)(rw - ctx->wins);
+                rw->buf = maximize_bufs[idx];
+                rw->w = nw;
+                rw->h = nh;
+                ctx->shm->surfaces[rw->slot].buffer_ptr =
+                    (uint32_t)(uintptr_t)rw->buf;
+                ctx->shm->surfaces[rw->slot].w = nw;
+                ctx->shm->surfaces[rw->slot].h = nh;
+                sprach_paint_window(ctx, rw);
+                copland_cmd_push(ctx->shm,
+                                 COPLAND_CMD_RESIZE_SURFACE,
+                                 rw->slot, nw, nh, 0, 0, 0);
+                ctx->shm->dirty = 1;
+            }
+        } else {
+            ctx->resize_win = -1;
+        }
+    }
+    if (!ctx->btn_was_down && ctx->resize_win >= 0) {
+        ctx->resize_win = -1;
+        ser_puts("[SPRACH] RESIZE END\n");
+    }
+
     /* Terminal drag: same tracking, but on the Copland surface. */
     if (cursor_moved && ctx->term_drag && ctx->term_slot >= 0) {
         struct copland_surface *ts =
@@ -4158,6 +4199,25 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                     if (w->slot < 0 || w->hidden)
                         continue;
                     int cw = w->maximized ? SCREEN_W : w->w;
+                    int ch = w->maximized ? WORK_AREA_H : w->h;
+
+                    /* Resize grip: bottom-right 16×16 corner of a
+                     * non-maximized window, checked BEFORE the title
+                     * bar so the corner always wins. */
+                    if (!w->maximized &&
+                        ctx->mouse_x >= w->x + cw - 16 &&
+                        ctx->mouse_x <  w->x + cw &&
+                        ctx->mouse_y >= w->y + ch - 16 &&
+                        ctx->mouse_y <  w->y + ch) {
+                        ctx->resize_win = i;
+                        ctx->resize_dw = w->x + w->w - ctx->mouse_x;
+                        ctx->resize_dh = w->y + w->h - ctx->mouse_y;
+                        ctx->active = i;
+                        sprach_raise_window(ctx, i);
+                        ser_puts("[SPRACH] RESIZE START\n");
+                        hit = 1;
+                        break;
+                    }
 
                     if (ctx->mouse_x >= w->x && ctx->mouse_x < w->x + cw &&
                         ctx->mouse_y >= w->y && ctx->mouse_y < w->y + SPRACH_TITLE_H) {
@@ -4212,7 +4272,15 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                             w->click_tick = ctx->tick;
                             if (w->maximized) {
                                 int idx = (int)(w - ctx->wins);
-                                w->buf = sprach_bufs[idx];
+                                /* If the user resized beyond the static
+                                 * 256×192 backing store, keep painting in
+                                 * the full-screen buffer (restore must
+                                 * never point w->buf at a smaller array
+                                 * than w->w * w->h needs). */
+                                w->buf = (w->normal_w <= SPRACH_WIN_W &&
+                                          w->normal_h <= SPRACH_WIN_H)
+                                             ? sprach_bufs[idx]
+                                             : maximize_bufs[idx];
                                 w->w = w->normal_w;
                                 w->h = w->normal_h;
                                 w->x = w->normal_x;
@@ -4374,6 +4442,7 @@ void _start(void)
     ctx.mouse_x = SCREEN_W / 2;
     ctx.mouse_y = SCREEN_H / 2;
     ctx.btn_was_down = 0;
+    ctx.resize_win = -1;
     ctx.term_slot = -1;
     ctx.term_pid = -1;
     ctx.term_hidden = 0;
