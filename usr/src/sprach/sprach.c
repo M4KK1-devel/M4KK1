@@ -155,6 +155,9 @@ static int sp_wait_evt(uint32_t obj, uint32_t op, int spins)
  * declaration (GCC >= 14 treats implicit declarations as errors). */
 static void sprach_handle_click(struct sprach_ctx *ctx);
 static void sprach_terminal_key(struct sprach_ctx *ctx, unsigned char ch);
+static void sprach_focus_foreign(struct sprach_ctx *ctx, int slot);
+static void sprach_focus_fallback(struct sprach_ctx *ctx);
+static uint32_t focus_seen_mask;   /* new-client one-shot (poll_new_clients) */
 
 static uint32_t sprach_bufs[SPRACH_WINDOW_COUNT]
                           [SPRACH_WIN_W * SPRACH_WIN_H]
@@ -3124,40 +3127,63 @@ void sprach_raise_surface(struct sprach_ctx *ctx, int slot)
     if (top < 0 || top == slot)
         return;
 
-    /* Track slot changes in our own window table so subsequent chrome
-     * hit-tests and paints use the new slots. */
-    struct sprach_window *other = NULL;
-    for (int i = 0; i < SPRACH_WINDOW_COUNT; i++)
-        if (ctx->wins[i].slot == top) {
-            other = &ctx->wins[i];
+    /* Move, don't swap.  The legacy implementation swapped the raised
+     * surface with the top slot — but the top slot is often a CLIENT
+     * window (terminal / fm / guiapp) whose process caches its slot
+     * number; pushing it down made the client watch a surface it no
+     * longer owned (terminal then killed its shell when the displaced
+     * slot was closed).  Relocate the raised surface into the highest
+     * FREE slot above `top` instead; only fall back to the legacy
+     * swap when every slot above `top` is occupied. */
+    int f = -1;
+    for (int i = COPLAND_MAX_SURFACES - 1; i > top; i--)
+        if (!ctx->shm->surfaces[i].in_use) {
+            f = i;
             break;
         }
 
-    struct copland_surface tmp = ctx->shm->surfaces[top];
-    ctx->shm->surfaces[top] = ctx->shm->surfaces[slot];
-    ctx->shm->surfaces[slot] = tmp;
+    if (f >= 0) {
+        ctx->shm->surfaces[f] = ctx->shm->surfaces[slot];
+        ctx->shm->surfaces[slot].in_use = 0;
+        if (slot < 32)
+            focus_seen_mask &= ~(1u << slot);
+    } else {
+        /* legacy swap (last resort) */
+        struct copland_surface tmp = ctx->shm->surfaces[top];
+        ctx->shm->surfaces[top] = ctx->shm->surfaces[slot];
+        ctx->shm->surfaces[slot] = tmp;
+        f = top;
+        /* the displaced surface (was at `top`) now lives at `slot`:
+         * re-point its owner so later chrome actions still land. */
+        for (int i = 0; i < SPRACH_WINDOW_COUNT; i++)
+            if (ctx->wins[i].slot == top)
+                ctx->wins[i].slot = slot;
+        ctx->term_slot = (ctx->term_slot == top) ? slot
+                        : ctx->term_slot;
+        ctx->clock_slot = (ctx->clock_slot == top) ? slot
+                         : ctx->clock_slot;
+        ctx->menu_slot = (ctx->menu_slot == top) ? slot
+                        : ctx->menu_slot;
+        ctx->lp_slot = (ctx->lp_slot == top) ? slot
+                      : ctx->lp_slot;
+        ctx->panel_slot = (ctx->panel_slot == top) ? slot
+                         : ctx->panel_slot;
+        if (slot < 32)
+            focus_seen_mask |= (1u << slot);   /* client relocated */
+    }
 
-    /* Keep our window-table slots in sync with the swapped surfaces. */
-    int old_slot = slot;
-    if (other)
-        other->slot = old_slot;
-    ctx->term_slot = (ctx->term_slot == slot) ? top
-                    : (ctx->term_slot == top) ? old_slot
-                    : ctx->term_slot;
-    /* Chrome popup surfaces swap too — keep their slots in sync or
-     * later VISIBLE/draw calls hit the displaced surface. */
-    ctx->clock_slot = (ctx->clock_slot == slot) ? top
-                     : (ctx->clock_slot == top) ? old_slot
-                     : ctx->clock_slot;
-    ctx->menu_slot = (ctx->menu_slot == slot) ? top
-                    : (ctx->menu_slot == top) ? old_slot
-                    : ctx->menu_slot;
-    ctx->lp_slot = (ctx->lp_slot == slot) ? top
-                  : (ctx->lp_slot == top) ? old_slot
-                  : ctx->lp_slot;
-    ctx->panel_slot = (ctx->panel_slot == slot) ? top
-                     : (ctx->panel_slot == top) ? old_slot
-                     : ctx->panel_slot;
+    /* The raised surface moved slot -> f: keep every tracked owner
+     * in sync (chrome hit-tests and MOVE/MIN/CLOSE act on these). */
+    for (int i = 0; i < SPRACH_WINDOW_COUNT; i++)
+        if (ctx->wins[i].slot == slot)
+            ctx->wins[i].slot = f;
+    ctx->term_slot = (ctx->term_slot == slot) ? f : ctx->term_slot;
+    ctx->clock_slot = (ctx->clock_slot == slot) ? f : ctx->clock_slot;
+    ctx->menu_slot = (ctx->menu_slot == slot) ? f : ctx->menu_slot;
+    ctx->lp_slot = (ctx->lp_slot == slot) ? f : ctx->lp_slot;
+    ctx->panel_slot = (ctx->panel_slot == slot) ? f : ctx->panel_slot;
+    if (f < 32)
+        focus_seen_mask |= (1u << f);
 }
 
 void sprach_raise_window(struct sprach_ctx *ctx, int idx)
@@ -3165,31 +3191,64 @@ void sprach_raise_window(struct sprach_ctx *ctx, int idx)
     struct sprach_window *w = &ctx->wins[idx];
     if (w->slot < 0)
         return;
-    int slot = w->slot;
+    if (w->slot >= COPLAND_MAX_SURFACES)
+        return;
+    /* raise_surface now re-points w->slot itself (move-to-free-slot
+     * strategy; the old mirror-fix duplicated that bookkeeping). */
+    sprach_raise_surface(ctx, w->slot);
+}
+
+/* ── Focus policy helpers ──
+ * Uniform activate+raise for every focus change, each with a serial
+ * log the QEMU probes assert on ("[SPRACH] FOCUS ...").  "Foreign"
+ * below = a Copland client surface the WM does not own (terminal,
+ * fm, guiapp clients, altr2). */
+
+/* Focus a foreign client surface: make it visible, raise it to the
+ * top of the z-order and deactivate our demo windows. */
+static void sprach_focus_foreign(struct sprach_ctx *ctx, int slot)
+{
     if (slot < 0 || slot >= COPLAND_MAX_SURFACES)
         return;
     if (!ctx->shm->surfaces[slot].in_use)
         return;
-
-    /* Mirror raise_surface's top-slot scan: if the raise actually
-     * swaps, OUR surface ends up at `top` — but raise_surface cannot
-     * re-slot us because it doesn't know which window we are.  Leaving
-     * w->slot stale would make later MOVE/MIN/CLOSE act on the
-     * displaced (someone else's) surface. */
-    int top = -1;
-    for (int i = 0; i < COPLAND_MAX_SURFACES; i++)
-        if (ctx->shm->surfaces[i].in_use &&
-            i != ctx->taskbar_slot &&
-            i != ctx->menubar_slot &&
-            i != desk_slot)
-            top = i;
-
+    ctx->shm->surfaces[slot].flags |= COPLAND_SURF_VISIBLE;
     sprach_raise_surface(ctx, slot);
-    if (top >= 0 && top != slot)
-        w->slot = top;
+    ctx->active = -1;
+    ctx->last_tbar_active = -999;
+    ctx->shm->dirty = 1;
 }
 
-/* ── Mouse input ──
+/* Focus fallback after the foreground window closed, minimized or
+ * vanished: top-most visible demo window, else the terminal, else
+ * none.  NOTE: deliberately does NOT raise — raise is implemented by
+ * slot-swap, and clients (terminal/fm/guiapp) cache their slot number,
+ * so swapping a client surface down breaks the client (it then watches
+ * a slot it no longer owns).  The fallback window is visible by
+ * definition; key routing for demo windows uses ctx->active, not the
+ * z-order, so focus and input stay coherent without the raise. */
+static void sprach_focus_fallback(struct sprach_ctx *ctx)
+{
+    ctx->active = -1;
+    ctx->last_tbar_active = -999;
+    ctx->shm->dirty = 1;
+    for (int j = SPRACH_WINDOW_COUNT - 1; j >= 0; j--) {
+        if (ctx->wins[j].slot >= 0 && !ctx->wins[j].hidden) {
+            ctx->active = j;
+            ser_puts("[SPRACH] FOCUS FALLBACK window ");
+            print_u32((uint32_t)j);
+            ser_puts("\n");
+            return;
+        }
+    }
+    if (ctx->term_slot >= 0 && !ctx->term_hidden) {
+        ser_puts("[SPRACH] FOCUS FALLBACK terminal\n");
+        return;
+    }
+    ser_puts("[SPRACH] FOCUS FALLBACK none\n");
+}
+
+/* ── Mouse input ── *
  *
  * Cursor-only moves: call m4k_update_cursor() (kernel-level hardware
  * cursor, NO flip needed).  Button actions: set shm->dirty = 1
@@ -3429,13 +3488,15 @@ void sprach_poll_terminal(struct sprach_ctx *ctx)
 {
     struct term_mailbox *mb = (struct term_mailbox *)TERM_MAILBOX_BASE;
     if (ctx->term_slot >= 0) {
-        /* Terminal was killed / closed: its surface vanishes */
+        /* Terminal was killed / closed: its surface vanishes.  If it
+         * held focus, fall back to the next window (raised, logged). */
         if (!ctx->shm->surfaces[ctx->term_slot].in_use) {
+            int had_focus = (ctx->active < 0);
             ser_puts("[SPRACH] terminal surface gone\n");
             ctx->term_slot = -1;
             ctx->term_pid = -1;
-            if (ctx->active < 0)
-                ctx->active = -1;
+            if (had_focus)
+                sprach_focus_fallback(ctx);
         }
         return;
     }
@@ -3501,6 +3562,57 @@ void sprach_poll_terminal(struct sprach_ctx *ctx)
         ctx->last_tbar_active = -999;
         ctx->shm->dirty = 1;
         return;
+    }
+}
+
+/* ── New-client focus policy ──
+ * A freshly launched client (fm / guiapp suite / altr2) registers its
+ * surface asynchronously: it appears in the shm slot table with a
+ * plausible size and a client-owned pixel buffer.  Focus policy: a
+ * NEW window takes the focus (activate + raise) the moment it is
+ * first seen — this is what makes the just-launched app receive its
+ * keystrokes (ga_key dispatches by top-most surface) instead of the
+ * keystrokes leaking to the terminal.  One-shot per slot via the
+ * seen bitmask; slot swaps by raise_surface do not re-trigger because
+ * the client identity (w×h) moved with the struct. */
+
+int sprach_slot_is_ours(struct sprach_ctx *ctx, int i)
+{
+    if (i == ctx->taskbar_slot || i == ctx->menubar_slot ||
+        i == desk_slot || i == ctx->clock_slot ||
+        i == ctx->menu_slot || i == ctx->lp_slot ||
+        i == ctx->panel_slot || i == ctx->term_slot)
+        return 1;
+    for (int j = 0; j < SPRACH_WINDOW_COUNT; j++)
+        if (ctx->wins[j].slot == i)
+            return 1;
+    return 0;
+}
+
+void sprach_poll_new_clients(struct sprach_ctx *ctx)
+{
+    for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
+        if (!ctx->shm->surfaces[i].in_use) {
+            focus_seen_mask &= ~(1u << i);   /* slot freed: re-arm */
+            continue;
+        }
+        if (i >= 32 || (focus_seen_mask & (1u << i)))
+            continue;
+        if (ctx->shm->surfaces[i].w < 50 || ctx->shm->surfaces[i].h < 50)
+            continue;   /* transient half-created surface */
+        if (!ctx->shm->surfaces[i].buffer_ptr)
+            continue;   /* creator has not claimed it yet — re-poll */
+        if (sprach_slot_is_ours(ctx, i)) {
+            focus_seen_mask |= (1u << i);
+            continue;
+        }
+        focus_seen_mask |= (1u << i);
+        ser_puts("[SPRACH] FOCUS NEW CLIENT ");
+        print_u32((uint32_t)ctx->shm->surfaces[i].w);
+        ser_puts("x");
+        print_u32((uint32_t)ctx->shm->surfaces[i].h);
+        ser_puts("\n");
+        sprach_focus_foreign(ctx, i);
     }
 }
 
@@ -3725,6 +3837,7 @@ static void sprach_launch_fm(struct sprach_ctx *ctx)
                     sprach_show_desktop(ctx);  /* un-hide first */
                 ctx->shm->surfaces[i].flags |=
                     COPLAND_SURF_VISIBLE;
+                ser_puts("[SPRACH] FOCUS RAISE app 560x400 (super-e)\n");
                 sprach_raise_surface(ctx, i);
                 ctx->shm->dirty = 1;
                 ser_puts("[SPRACH] Super+E: fm already running, raised\n");
@@ -3841,14 +3954,7 @@ void sprach_handle_terminal_click(struct sprach_ctx *ctx, int sx, int sy,
             m4k_kill(ctx->term_pid, 2 /* SIGKILL */);
         ctx->term_slot = -1;
         ctx->term_pid = -1;
-        if (ctx->active < 0) {
-            ctx->active = -1;
-            for (int j = SPRACH_WINDOW_COUNT - 1; j >= 0; j--)
-                if (ctx->wins[j].slot >= 0 && !ctx->wins[j].hidden) {
-                    ctx->active = j;
-                    break;
-                }
-        }
+        sprach_focus_fallback(ctx);
         return;
     }
 
@@ -3860,14 +3966,8 @@ void sprach_handle_terminal_click(struct sprach_ctx *ctx, int sx, int sy,
         ctx->shm->surfaces[ctx->term_slot].flags &=
             ~COPLAND_SURF_VISIBLE;
         ctx->shm->dirty = 1;
-        if (ctx->active < 0) {
-            ctx->active = -1;
-            for (int j = SPRACH_WINDOW_COUNT - 1; j >= 0; j--)
-                if (ctx->wins[j].slot >= 0 && !ctx->wins[j].hidden) {
-                    ctx->active = j;
-                    break;
-                }
-        }
+        if (ctx->active < 0)
+            sprach_focus_fallback(ctx);
         return;
     }
 
@@ -3901,9 +4001,9 @@ void sprach_handle_terminal_click(struct sprach_ctx *ctx, int sx, int sy,
     /* Title bar click → activate + raise ... and start a drag (the
      * terminal is a Copland-surface client, not a ctx->wins window,
      * so it drags through its own flag). */
-    ctx->active = -1;
-    sprach_raise_surface(ctx, ctx->term_slot);
-    ctx->shm->dirty = 1;
+    if (ctx->active >= 0)
+        ser_puts("[SPRACH] FOCUS CLICK terminal\n");
+    sprach_focus_foreign(ctx, ctx->term_slot);
     if (!ctx->term_maximized) {
         ctx->term_drag = 1;
         ctx->term_drag_dx = lx;
@@ -4237,17 +4337,8 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                             ser_puts("[SPRACH] CLOSE ");
                             print_u32((uint32_t)i);
                             ser_puts("\n");
-                            if (ctx->active == i) {
-                                ctx->active = -1;
-                                for (int j = SPRACH_WINDOW_COUNT - 1;
-                                     j >= 0; j--) {
-                                    if (ctx->wins[j].slot >= 0 &&
-                                        !ctx->wins[j].hidden) {
-                                        ctx->active = j;
-                                        break;
-                                    }
-                                }
-                            }
+                            if (ctx->active == i)
+                                sprach_focus_fallback(ctx);
                             hit = 1;
                             break;
                         }
@@ -4321,6 +4412,11 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                             break;
                         }
                         /* Title bar click → raise */
+                        if (ctx->active != i) {
+                            ser_puts("[SPRACH] FOCUS CLICK window ");
+                            print_u32((uint32_t)i);
+                            ser_puts("\n");
+                        }
                         ctx->active = i;
                         sprach_raise_window(ctx, i);
                         /* ...and start a title-bar drag (unless
@@ -4334,6 +4430,62 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                         }
                         hit = 1;
                         break;
+                    }
+                }
+            }
+
+            /* Foreign client windows (fm / guiapp suite / altr2):
+             * non-client-area policy.  Hit-test TOP-MOST first — the
+             * top-most non-chrome surface is the only foreign window a
+             * click can legitimately land on.  Title-bar band (top 18
+             * px, guiapp convention GA_TITLE_H): click = focus+raise
+             * (LOG "FOCUS CLICK app"); the red close box (12x12 at
+             * w-15..w-3, 3..15 — same geometry ga_chrome draws) asks
+             * the client to exit: clear VISIBLE, the client's main
+             * loop sees it and quits, freeing its own surface.
+             * altr2 (640x460, no close box) only gets focus+raise. */
+            if (!hit) {
+                int top = -1;
+                for (int i = 0; i < COPLAND_MAX_SURFACES; i++)
+                    if (ctx->shm->surfaces[i].in_use &&
+                        i != ctx->taskbar_slot && i != ctx->menubar_slot)
+                        top = i;
+                if (top >= 0 && top != ctx->term_slot &&
+                    top != ctx->clock_slot && top != ctx->menu_slot &&
+                    top != ctx->lp_slot && top != desk_slot &&
+                    !sprach_slot_is_ours(ctx, top)) {
+                    struct copland_surface *fs = &ctx->shm->surfaces[top];
+                    int lx = ctx->mouse_x - (int)fs->x;
+                    int ly = ctx->mouse_y - (int)fs->y;
+                    if (lx >= 0 && lx < (int)fs->w &&
+                        ly >= 0 && ly < (int)fs->h) {
+                        int is_ga = 0, has_close = 1;
+                        for (unsigned g = 0;
+                             g < sizeof(ga_apps) / sizeof(ga_apps[0]);
+                             g++)
+                            if ((int)fs->w == ga_apps[g].w) {
+                                is_ga = 1;
+                                if (ga_apps[g].w == 640)
+                                    has_close = 0; /* altr2: no close box */
+                            }
+                        if (fs->w == FM_SURF_W)
+                            is_ga = 1;
+                        if (is_ga && ly < 18) {
+                            if (has_close &&
+                                lx >= (int)fs->w - 15 && lx < (int)fs->w - 3) {
+                                fs->flags &= ~COPLAND_SURF_VISIBLE;
+                                ctx->shm->dirty = 1;
+                                ser_puts("[SPRACH] APP CLOSE (ask client to exit)\n");
+                            } else {
+                                ser_puts("[SPRACH] FOCUS CLICK app ");
+                                print_u32((uint32_t)fs->w);
+                                ser_puts("x");
+                                print_u32((uint32_t)fs->h);
+                                ser_puts("\n");
+                                sprach_focus_foreign(ctx, top);
+                            }
+                            hit = 1;
+                        }
                     }
                 }
             }
@@ -4611,6 +4763,7 @@ void _start(void)
         /* ── Terminal client discovery (Ctrl+Alt+T spawns /bin/terminal;
          * the child registers its surface asynchronously) ── */
         sprach_poll_terminal(&ctx);
+        sprach_poll_new_clients(&ctx);
 
         /* ── Mode tick (may change window positions) ── */
         int old_active = ctx.active;
