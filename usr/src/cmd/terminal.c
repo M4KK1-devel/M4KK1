@@ -89,16 +89,70 @@ static const unsigned char font8x16[FONT_CHARS * FONT_H] = {
 #include "term_font_8x16.h"
 };
 
+/* ── xterm-256 palette ──
+ * Values use the same 0xAARRGGBB layout as TCOL_* above
+ * (TCOL_PROMPT 0x0000E060 = rgb(0,224,96)).  Indices 0-15 are the
+ * standard colors, 16-231 the 6x6x6 cube (steps 0/95/135/175/215/255),
+ * 232-255 a grayscale ramp 8..238. */
+
+static const uint32_t term_256_rgb[256] = {
+	0x00000000, 0x00800000, 0x00008000, 0x00808000, 0x00000080, 0x00800080,
+	0x00008080, 0x00C0C0C0, 0x00808080, 0x00FF0000, 0x0000FF00, 0x00FFFF00,
+	0x000000FF, 0x00FF00FF, 0x0000FFFF, 0x00FFFFFF, 0x00000000, 0x0000005F,
+	0x00000087, 0x000000AF, 0x000000D7, 0x000000FF, 0x00005F00, 0x00005F5F,
+	0x00005F87, 0x00005FAF, 0x00005FD7, 0x00005FFF, 0x00008700, 0x0000875F,
+	0x00008787, 0x000087AF, 0x000087D7, 0x000087FF, 0x0000AF00, 0x0000AF5F,
+	0x0000AF87, 0x0000AFAF, 0x0000AFD7, 0x0000AFFF, 0x0000D700, 0x0000D75F,
+	0x0000D787, 0x0000D7AF, 0x0000D7D7, 0x0000D7FF, 0x0000FF00, 0x0000FF5F,
+	0x0000FF87, 0x0000FFAF, 0x0000FFD7, 0x0000FFFF, 0x005F0000, 0x005F005F,
+	0x005F0087, 0x005F00AF, 0x005F00D7, 0x005F00FF, 0x005F5F00, 0x005F5F5F,
+	0x005F5F87, 0x005F5FAF, 0x005F5FD7, 0x005F5FFF, 0x005F8700, 0x005F875F,
+	0x005F8787, 0x005F87AF, 0x005F87D7, 0x005F87FF, 0x005FAF00, 0x005FAF5F,
+	0x005FAF87, 0x005FAFAF, 0x005FAFD7, 0x005FAFFF, 0x005FD700, 0x005FD75F,
+	0x005FD787, 0x005FD7AF, 0x005FD7D7, 0x005FD7FF, 0x005FFF00, 0x005FFF5F,
+	0x005FFF87, 0x005FFFAF, 0x005FFFD7, 0x005FFFFF, 0x00870000, 0x0087005F,
+	0x00870087, 0x008700AF, 0x008700D7, 0x008700FF, 0x00875F00, 0x00875F5F,
+	0x00875F87, 0x00875FAF, 0x00875FD7, 0x00875FFF, 0x00878700, 0x0087875F,
+	0x00878787, 0x008787AF, 0x008787D7, 0x008787FF, 0x0087AF00, 0x0087AF5F,
+	0x0087AF87, 0x0087AFAF, 0x0087AFD7, 0x0087AFFF, 0x0087D700, 0x0087D75F,
+	0x0087D787, 0x0087D7AF, 0x0087D7D7, 0x0087D7FF, 0x0087FF00, 0x0087FF5F,
+	0x0087FF87, 0x0087FFAF, 0x0087FFD7, 0x0087FFFF, 0x00AF0000, 0x00AF005F,
+	0x00AF0087, 0x00AF00AF, 0x00AF00D7, 0x00AF00FF, 0x00AF5F00, 0x00AF5F5F,
+	0x00AF5F87, 0x00AF5FAF, 0x00AF5FD7, 0x00AF5FFF, 0x00AF8700, 0x00AF875F,
+	0x00AF8787, 0x00AF87AF, 0x00AF87D7, 0x00AF87FF, 0x00AFAF00, 0x00AFAF5F,
+	0x00AFAF87, 0x00AFAFAF, 0x00AFAFD7, 0x00AFAFFF, 0x00AFD700, 0x00AFD75F,
+	0x00AFD787, 0x00AFD7AF, 0x00AFD7D7, 0x00AFD7FF, 0x00AFFF00, 0x00AFFF5F,
+	0x00AFFF87, 0x00AFFFAF, 0x00AFFFD7, 0x00AFFFFF, 0x00D70000, 0x00D7005F,
+	0x00D70087, 0x00D700AF, 0x00D700D7, 0x00D700FF, 0x00D75F00, 0x00D75F5F,
+	0x00D75F87, 0x00D75FAF, 0x00D75FD7, 0x00D75FFF, 0x00D78700, 0x00D7875F,
+	0x00D78787, 0x00D787AF, 0x00D787D7, 0x00D787FF, 0x00D7AF00, 0x00D7AF5F,
+	0x00D7AF87, 0x00D7AFAF, 0x00D7AFD7, 0x00D7AFFF, 0x00D7D700, 0x00D7D75F,
+	0x00D7D787, 0x00D7D7AF, 0x00D7D7D7, 0x00D7D7FF, 0x00D7FF00, 0x00D7FF5F,
+	0x00D7FF87, 0x00D7FFAF, 0x00D7FFD7, 0x00D7FFFF, 0x00FF0000, 0x00FF005F,
+	0x00FF0087, 0x00FF00AF, 0x00FF00D7, 0x00FF00FF, 0x00FF5F00, 0x00FF5F5F,
+	0x00FF5F87, 0x00FF5FAF, 0x00FF5FD7, 0x00FF5FFF, 0x00FF8700, 0x00FF875F,
+	0x00FF8787, 0x00FF87AF, 0x00FF87D7, 0x00FF87FF, 0x00FFAF00, 0x00FFAF5F,
+	0x00FFAF87, 0x00FFAFAF, 0x00FFAFD7, 0x00FFAFFF, 0x00FFD700, 0x00FFD75F,
+	0x00FFD787, 0x00FFD7AF, 0x00FFD7D7, 0x00FFD7FF, 0x00FFFF00, 0x00FFFF5F,
+	0x00FFFF87, 0x00FFFFAF, 0x00FFFFD7, 0x00FFFFFF, 0x00080808, 0x00121212,
+	0x001C1C1C, 0x00262626, 0x00303030, 0x003A3A3A, 0x00444444, 0x004E4E4E,
+	0x00585858, 0x00626262, 0x006C6C6C, 0x00767676, 0x00808080, 0x008A8A8A,
+	0x00949494, 0x009E9E9E, 0x00A8A8A8, 0x00B2B2B2, 0x00BCBCBC, 0x00C6C6C6,
+	0x00D0D0D0, 0x00DADADA, 0x00E4E4E4, 0x00EEEEEE,
+};
+
 /* ── Character grid + scrollback ── */
 
 typedef struct {
     char ch;
-    uint8_t attr;          /* palette index 0..7 */
+    uint16_t attr;         /* bit15 set: xterm-256 index in low byte;
+                            * else ATTR_* palette below */
 } term_cell_t;
 
 #define ATTR_TEXT   0
 #define ATTR_PROMPT 1
 #define ATTR_ERR    2
+#define ATTR_256    0x8000  /* OR'ed with palette index 0..255 */
 
 static term_cell_t term_lines[TERM_ROWS + TERM_SCROLLBACK][TERM_COLS];
 static int term_top = TERM_SCROLLBACK;   /* index of first visible row */
@@ -175,8 +229,10 @@ static void term_glyph(int x, int y, char ch, uint32_t fg)
     }
 }
 
-static uint32_t attr_color(uint8_t attr)
+static uint32_t attr_color(uint16_t attr)
 {
+    if (attr & ATTR_256)
+        return term_256_rgb[attr & 0xFF];
     switch (attr) {
     case ATTR_PROMPT: return TCOL_PROMPT;
     case ATTR_ERR:    return TCOL_ERR;
@@ -245,7 +301,7 @@ static void term_newline(void)
     dmg_all_rows();
 }
 
-static void term_putc_attr(char ch, uint8_t attr)
+static void term_putc_attr(char ch, uint16_t attr)
 {
     if (ch == '\n') {
         term_newline();
@@ -283,32 +339,144 @@ static void term_putc_attr(char ch, uint8_t attr)
 
 /* ── ANSI escape filter ──
  * m4sh emits \x1B[..m color sequences; the grid stores a palette
- * index, and unknown sequences are swallowed. */
+ * index, and unknown sequences are swallowed.
+ *
+ * SGR support: 0 (reset) / 30-37 (fg) / 39 (default fg) / 90-97
+ * (bright fg) / 38;5;n (xterm-256 fg) / 48;5;n (xterm-256 bg,
+ * consumed but not rendered — the terminal keeps its dark body
+ * background by design).  Anything else in a CSI sequence is
+ * dropped as before. */
 
 static int ansi_state = 0;   /* 0: normal, 1: saw ESC, 2: in CSI */
+static int ansi_params[8];   /* collected SGR parameters */
+static int ansi_nparams;
+static int ansi_cur;         /* parameter under construction */
 
-static void term_ansi_filter(char ch, uint8_t def_attr)
+/* Current SGR foreground applied to incoming text (screen-space). */
+static uint16_t sgr_fg = ATTR_TEXT;   /* ATTR_* or ATTR_256|idx */
+
+/* Basic 8-color + bright maps → legacy ATTR_* (prompt/err keep
+ * their dedicated shades; other basic colors fall back to text). */
+static uint16_t sgr_basic_attr(int p)
+{
+    switch (p) {
+    case 31: case 91: return ATTR_ERR;      /* red shades → err tint */
+    case 32: case 92: return ATTR_PROMPT;   /* green shades → prompt */
+    default:          return ATTR_TEXT;
+    }
+}
+
+/* Serial evidence line: "[TERM] SGR <hex attr> rgb=r,g,b".
+ * Pure digit/hex output (no printf machinery needed). */
+static void sgr_report(void)
+{
+    char b[48];
+    int n = 0;
+    b[n++] = '['; b[n++] = 'T'; b[n++] = 'E'; b[n++] = 'R';
+    b[n++] = 'M'; b[n++] = ']'; b[n++] = ' ';
+    b[n++] = 'S'; b[n++] = 'G'; b[n++] = 'R'; b[n++] = ' ';
+    uint16_t a = sgr_fg;
+    for (int shift = 12; shift >= 0; shift -= 4) {
+        int v = (a >> shift) & 0xF;
+        b[n++] = v < 10 ? '0' + v : 'a' + v - 10;
+    }
+    b[n++] = ' ';
+    b[n++] = 'r'; b[n++] = 'g'; b[n++] = 'b'; b[n++] = '=';
+    uint32_t c = attr_color(sgr_fg);
+    int r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, bl = c & 0xFF;
+    for (int comp = 0; comp < 3; comp++) {
+        int v = comp == 0 ? r : comp == 1 ? g : bl;
+        if (comp > 0)
+            b[n++] = ',';
+        if (v >= 100)
+            b[n++] = '0' + v / 100;
+        if (v >= 10)
+            b[n++] = '0' + (v / 10) % 10;
+        b[n++] = '0' + v % 10;
+    }
+    b[n++] = '\n';
+    b[n] = 0;
+    ser_puts(b);
+}
+
+/* Apply one parsed SGR sequence to the current colors. */
+static void sgr_apply(const int *p, int np)
+{
+    int i = 0;
+    if (np == 0) {
+        /* \x1B[m == reset */
+        sgr_fg = ATTR_TEXT;
+        return;
+    }
+    while (i < np) {
+        int v = p[i];
+        if (v == 0) {
+            sgr_fg = ATTR_TEXT;
+        } else if (v == 39) {
+            sgr_fg = ATTR_TEXT;
+        } else if ((v >= 30 && v <= 37) || (v >= 90 && v <= 97)) {
+            sgr_fg = sgr_basic_attr(v);
+        } else if (v == 38 || v == 48) {
+            /* extended color: only 5;n (256-color) supported */
+            if (i + 2 < np && p[i + 1] == 5 &&
+                p[i + 2] >= 0 && p[i + 2] <= 255) {
+                if (v == 38)
+                    sgr_fg = (uint16_t)(ATTR_256 | p[i + 2]);
+                /* 48;5;n: consumed, not rendered (dark bg by design) */
+                i += 2;
+            } else {
+                /* 38;2;r;g;b truecolor or malformed: skip the
+                 * sub-params so they are not misread as codes */
+                int j = i + 1;
+                while (j < np && p[j] != 38 && p[j] != 48 &&
+                       !(p[j] >= 30 && p[j] <= 39) &&
+                       !(p[j] >= 90 && p[j] <= 97) && p[j] != 0)
+                    j++;
+                i = j - 1;
+            }
+        }
+        i++;
+    }
+    sgr_report();
+}
+
+static void term_ansi_filter(char ch)
 {
     if (ansi_state == 1) {
         if (ch == '[') {
             ansi_state = 2;
+            ansi_nparams = 0;
+            ansi_cur = 0;
             return;
         }
         ansi_state = 0;      /* non-CSI escape: drop */
         return;
     }
     if (ansi_state == 2) {
-        if (ch == 'm' || ch < 0x20) {
-            /* end of SGR (or aborted): map basic colors */
-            ansi_state = 0;
+        if (ch >= '0' && ch <= '9') {
+            if (ansi_cur < 1000)
+                ansi_cur = ansi_cur * 10 + (ch - '0');
+            return;
         }
-        return;              /* all CSI params dropped */
+        if (ch == ';') {
+            if (ansi_nparams < 8)
+                ansi_params[ansi_nparams++] = ansi_cur;
+            ansi_cur = 0;
+            return;
+        }
+        /* any other byte ends the sequence */
+        ansi_state = 0;
+        if (ansi_nparams < 8)
+            ansi_params[ansi_nparams++] = ansi_cur;
+        if (ch == 'm')
+            sgr_apply(ansi_params, ansi_nparams);
+        return;              /* non-SGR CSI: swallowed */
     }
     if (ch == 0x1B) {
         ansi_state = 1;
         return;
     }
-    term_putc_attr(ch, def_attr);
+    term_putc_attr(ch, sgr_fg);
 }
 
 /* ── Shell child plumbing ── */
@@ -321,43 +489,39 @@ static void term_puts_err(const char *s)
 
 static void term_spawn_shell(void)
 {
-    int fds[2];
-    if (musr_sc_pipe(fds) != 0) {
+    /* Two separate pipes: the original single bidirectional pipe let
+     * m4shg read back its own echo (global fd table, one shared
+     * buffer for both directions) — every echoed char re-entered
+     * cmd_buf and duplicated itself on each scheduling round
+     * (observed: typed "echo" became "eeeeccc..." and the command
+     * was never found).  kfd carries keystrokes (we write, shell
+     * reads fd 0); ofd carries shell output (shell writes fd 1,
+     * we read). */
+    int kfd[2], ofd[2];
+    if (musr_sc_pipe(kfd) != 0 || musr_sc_pipe(ofd) != 0) {
         term_puts_err("pipe failed\n");
         return;
     }
-    /* fds[0]=read end, fds[1]=write end.  Keep the shell-side ends in
-     * the parent's table for now; the fork child inherits them. */
     int pid = musr_sc_fork();
     if (pid < 0) {
-        musr_sc_close(fds[0]);
-        musr_sc_close(fds[1]);
         term_puts_err("fork failed\n");
         return;
     }
     if (pid == 0) {
-        /* Child: wire the pipe onto stdin/stdout, then exec the
+        /* Child: wire stdin/stdout onto the two pipes, then exec the
          * graphical shell in place.  NOTE: the 4P1 fd table is a
          * GLOBAL singleton — mkrn_fork_status(RFFDG) does not copy
-         * it (see process.c) — so the child and parent share the
-         * same entries.  Closing fds[0]/fds[1] here would mark the
-         * shared pipe_buffer read_closed/write_closed and free it
-         * while the parent still polls it (observed: shell output
-         * never arrived, 0 bytes, terminal showed only its own
-         * cursor block).  POSIX-style close-on-exec of the originals
-         * is deliberately skipped: the parent owns fds[0]/fds[1]
-         * and keeps them open for the process lifetime. */
-        musr_sc_dup2(fds[0], 0);
-        musr_sc_dup2(fds[1], 1);
+         * it (see process.c) — so closing any end here would tear
+         * down the shared pipe for the parent too; the parent owns
+         * all four fds and keeps them open for the process lifetime. */
+        musr_sc_dup2(kfd[0], 0);
+        musr_sc_dup2(ofd[1], 1);
         int r = m4k_spawn("/bin/m4shg", 0);
         (void)r;
         m4k_exit(127);       /* exec failed */
     }
-    /* Parent (the terminal): keep the write end for keystrokes and the
-     * read end for output.  The child's dup2'd copies keep the pipe
-     * alive after we close the originals below. */
-    pipe_in_fd = fds[1];     /* we write to shell stdin  */
-    pipe_out_fd = fds[0];    /* we read shell stdout     */
+    pipe_in_fd = kfd[1];     /* we write keystrokes to shell stdin */
+    pipe_out_fd = ofd[0];    /* we read shell stdout              */
     shell_pid = pid;
 }
 
@@ -373,7 +537,7 @@ static int term_poll_output(void)
         if (n <= 0)
             break;
         for (int i = 0; i < n; i++)
-            term_ansi_filter(buf[i], ATTR_TEXT);
+            term_ansi_filter(buf[i]);
         total += n;
         if (n < (int)sizeof(buf))
             break;
