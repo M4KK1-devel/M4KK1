@@ -84,6 +84,7 @@
 #define SPRACH_COL_TASKBAR_TXT 0x00E8E8E8
 #define SPRACH_COL_TASKBAR_ACT 0x00F5F5F5   /* active button: near-white bg */
 #define SPRACH_COL_TASKBAR_ACTTXT 0x00101010
+#define SPRACH_COL_DOCK_HOVER  0x00A0A0B0   /* hover highlight plate under dock icon */
 
 /* Menubar (Mac OS style) */
 #define SPRACH_COL_MENUBAR_BG  0x00CCCCCC
@@ -156,6 +157,12 @@ struct sprach_ctx {
     /* Global shortcuts (kernel chord codes 0x03..0x05) */
     int show_desktop_mode; /* 1 = all windows minimized (Super+D toggle) */
     int fm_pid;            /* pid of the Super+E-spawned /bin/fm (-1=none) */
+
+    /* Dock hover state (taskbar-hover-preview): index of the dock
+     * entry under the cursor (-1 = none), and the index the taskbar
+     * was last painted with (init -2 to force the first paint). */
+    int dock_hover;
+    int dock_hover_painted;
 
     /* Taskbar redraw caching: only repaint when state actually changes */
     int last_tbar_active;    /* active window index (-1 = terminal focus) */

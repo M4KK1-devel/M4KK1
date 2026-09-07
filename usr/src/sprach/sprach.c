@@ -1029,10 +1029,154 @@ void sprach_draw_taskbar(struct sprach_ctx *ctx)
         sp_icon_terminal(taskbar_buf, SCREEN_W, TASKBAR_H, lx, icon_y, 0x00306030);
     }
 
+    /* Hover highlight (taskbar-hover-preview): light plate under the
+     * hovered dock icon.  Dock_hover is the entry index from
+     * sprach_dock_hit() — same [launchpad][windows...][terminal]
+     * [launcher] order used here for painting. */
+    if (ctx->dock_hover >= 0) {
+        int hx = -1;
+        int hidx = 0;
+
+        if (hidx == ctx->dock_hover)
+            hx = DOCK_PAD;
+        hidx++;
+        int hbx = DOCK_PAD + DOCK_ICON_PITCH;
+        for (int i = 0; i < SPRACH_WINDOW_COUNT && hx < 0; i++) {
+            if (ctx->wins[i].slot < 0)
+                continue;
+            if (hidx == ctx->dock_hover) {
+                hx = hbx;
+                break;
+            }
+            hidx++;
+            hbx += DOCK_ICON_PITCH;
+        }
+        if (hx < 0 && ctx->term_slot >= 0) {
+            if (hidx == ctx->dock_hover)
+                hx = hbx;
+            hidx++;
+            hbx += DOCK_ICON_PITCH;
+        }
+        if (hx < 0 && hidx == ctx->dock_hover)
+            hx = SCREEN_W - DOCK_ICON_SIZE - DOCK_PAD;
+
+        if (hx >= 0)
+            sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, hx - 2, icon_y - 2,
+                    DOCK_ICON_SIZE + 4, DOCK_ICON_SIZE + 4,
+                    SPRACH_COL_DOCK_HOVER);
+
+        /* Window-title tooltip on a light chip at the dock's top-left
+         * (5x7 font, ends with an accent marker pixel). */
+        sprach_dock_tip(ctx);
+    }
+
 
     /* Top highlight edge (1px light line) */
     sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, 0, 0, SCREEN_W, 1,
             SPRACH_COL_TASKBAR_TOP);
+}
+
+/* ── Dock hover hit-test (taskbar-hover-preview) ──
+ * Returns the dock entry index under the cursor, or -1 when the
+ * cursor is not over the dock strip.  Entry order MUST match the
+ * layout painted by sprach_draw_taskbar(): [launchpad][windows...]
+ * [terminal][launcher].  Windows are counted in slot order over all
+ * SPRACH_WINDOW_COUNT slots (closed slots skipped), exactly like the
+ * paint loop. */
+int sprach_dock_hit(struct sprach_ctx *ctx, int mx, int my)
+{
+    if (my < SCREEN_H - TASKBAR_H || my >= SCREEN_H)
+        return -1;
+
+    int icon_y = (TASKBAR_H - DOCK_ICON_SIZE) / 2;
+    int idx = 0;
+
+    /* entry 0: launchpad grid icon */
+    if (mx >= DOCK_PAD && mx < DOCK_PAD + DOCK_ICON_SIZE &&
+        my >= icon_y && my < icon_y + DOCK_ICON_SIZE)
+        return idx;
+    idx++;
+
+    int bx = DOCK_PAD + DOCK_ICON_PITCH;
+    for (int i = 0; i < SPRACH_WINDOW_COUNT; i++) {
+        if (ctx->wins[i].slot < 0)
+            continue;
+        if (mx >= bx && mx < bx + DOCK_ICON_SIZE &&
+            my >= icon_y && my < icon_y + DOCK_ICON_SIZE)
+            return idx;
+        idx++;
+        bx += DOCK_ICON_PITCH;
+    }
+
+    if (ctx->term_slot >= 0) {
+        if (mx >= bx && mx < bx + DOCK_ICON_SIZE &&
+            my >= icon_y && my < icon_y + DOCK_ICON_SIZE)
+            return idx;
+        idx++;
+        bx += DOCK_ICON_PITCH;
+    }
+
+    int lx = SCREEN_W - DOCK_ICON_SIZE - DOCK_PAD;
+    if (mx >= lx && mx < lx + DOCK_ICON_SIZE &&
+        my >= icon_y && my < icon_y + DOCK_ICON_SIZE)
+        return idx;
+    return -1;
+}
+
+/* ── Dock hover tooltip (taskbar-hover-preview) ──
+ * Paints the hovered entry's name in 5x7 font on a light rounded
+ * chip at the TOP-LEFT INSIDE the dock band (y = 2..17), ending in
+ * the accent colour — a fixed, easily probe-able location that
+ * never overflows the 48 px tall strip.  Returns the number of
+ * characters drawn (0 = empty name, nothing painted). */
+int sprach_dock_tip(struct sprach_ctx *ctx)
+{
+    if (ctx->dock_hover < 0)
+        return 0;
+
+    const char *name = 0;
+    int idx = 0;
+
+    if (idx == ctx->dock_hover) {
+        name = "Launchpad";
+    }
+    idx++;
+    for (int i = 0; i < SPRACH_WINDOW_COUNT; i++) {
+        if (ctx->wins[i].slot < 0)
+            continue;
+        if (idx == ctx->dock_hover) {
+            name = ctx->wins[i].title_str;
+            break;
+        }
+        idx++;
+    }
+    if (!name && ctx->term_slot >= 0) {
+        if (idx == ctx->dock_hover)
+            name = "Terminal";
+        idx++;
+    }
+    if (!name && idx == ctx->dock_hover)
+        name = "Terminal";
+    if (!name || !name[0])
+        return 0;
+
+    int n = 0;
+    while (name[n] && n < 20)
+        n++;
+
+    int cw = 2 + n * 6 + 2;                 /* 2px pad + 6px/char + 2px pad */
+    if (cw > SCREEN_W - 4)
+        cw = SCREEN_W - 4;
+
+    sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, 2, 2, cw, 16,
+            SPRACH_COL_TASKBAR_TOP);
+    sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, 2, 2, cw, 1, 0x00FFFFFF);
+    sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, 2, 2, 1, 16, 0x00FFFFFF);
+    sp_draw_str(taskbar_buf, SCREEN_W, TASKBAR_H, 4, 5, name,
+                SPRACH_COL_TASKBAR_ACTTXT);
+    sp_px(taskbar_buf, SCREEN_W, TASKBAR_H, 2 + cw, 17,
+          SPRACH_COL_ACCENT);
+    return n;
 }
 
 /* ── Taskbar invalidation ──
@@ -1056,10 +1200,16 @@ int sprach_taskbar_dirty(struct sprach_ctx *ctx)
         wstate |= (1u << 16);
     dirty |= (wstate != ctx->last_tbar_win);
 
+    /* Dock hover state (taskbar-hover-preview): repaint whenever the
+     * hovered entry changes so the highlight plate + title tooltip
+     * follow the cursor; dock_hover_painted mirrors what the buffer
+     * was last painted with. */
+    dirty |= (ctx->dock_hover != ctx->dock_hover_painted);
     if (dirty) {
         ctx->last_tbar_active = ctx->active;
         ctx->last_tbar_win = wstate;
         ctx->last_tbar_minute = 0;
+        ctx->dock_hover_painted = ctx->dock_hover;
     }
     return dirty;
 }
@@ -3318,6 +3468,28 @@ void sprach_handle_mouse(struct sprach_ctx *ctx)
     if (cursor_moved)
         m4k_get_mouse_pos(&ctx->mouse_x, &ctx->mouse_y);
 
+    /* Dock hover tracking (taskbar-hover-preview): hit-test the fresh
+     * absolute cursor position against the dock icons every time the
+     * cursor moved.  sprach_taskbar_dirty() picks up the change and
+     * schedules a taskbar repaint (highlight plate + title tooltip). */
+    if (cursor_moved) {
+        int hv = sprach_dock_hit(ctx, ctx->mouse_x, ctx->mouse_y);
+        if (hv != ctx->dock_hover) {
+            ctx->dock_hover = hv;
+            ser_puts("[SPRACH] dock hover ");
+            if (hv < 0) {
+                ser_puts("none\n");
+            } else {
+                char d[4];
+                int p = 0, v = hv;
+                do { d[p++] = '0' + (char)(v % 10); v /= 10; } while (v > 0);
+                while (p > 0)
+                    ser_putc(d[--p]);
+                ser_puts("\n");
+            }
+        }
+    }
+
     /* Title-bar drag: while the left button is held on a window's
      * title bar, every cursor move re-positions that window so the
      * grab offset stays constant.  The surface follows directly
@@ -4628,6 +4800,8 @@ void _start(void)
     ctx.term_desktop = 0;
     ctx.show_desktop_mode = 0;
     ctx.fm_pid = -1;
+    ctx.dock_hover = -1;
+    ctx.dock_hover_painted = -2;
     ctx.rmenu_mode = 0;
     ctx.rmenu_x = 0;
     ctx.rmenu_y = 0;
