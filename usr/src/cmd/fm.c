@@ -101,6 +101,13 @@ static void fm_hist_push(struct fm_tab *t, const char *path)
     musr_strncpy(fm_hist[tab][len], path, sizeof(fm_hist[tab][0]) - 1);
     fm_hist_len[tab] = len + 1;
     fm_hist_cur[tab] = len;
+    ser_puts("[FM] NAV PUSH ");
+    ser_puts(fm_hist[tab][len]);
+    ser_puts(" (");
+    print_u32((uint32_t)len);
+    ser_puts("/");
+    print_u32((uint32_t)len);
+    ser_puts(")\n");
 }
 
 /* Back: move the cursor one entry back.  Returns 1 when the tab's
@@ -919,7 +926,6 @@ static void fm_click(int lx, int ly, int dbl)
         if (lx >= 44) {
             int x = 50;
             const char *p = t->path;
-            int pref_len = 0;   /* chars of path consumed */
             while (*p && x < FM_W - 40) {
                 while (*p == '/')
                     p++;
@@ -932,12 +938,16 @@ static void fm_click(int lx, int ly, int dbl)
                 if (x + slen * 6 > FM_W - 24)
                     break;
                 if (lx >= x && lx < x + slen * 6) {
+                    /* p has advanced past this segment, so the byte
+                     * range t->path[0 .. p-t->path) is exactly the
+                     * absolute path of this ancestor, separators
+                     * included ("/export", "/export/root", ...). */
+                    int plen = (int)(p - t->path);
                     char dest[200];
-                    if (pref_len + slen >= (int)sizeof(dest))
-                        slen = (int)sizeof(dest) - 1 - pref_len;
-                    musr_strncpy(dest, t->path, pref_len);
-                    musr_strncpy(dest + pref_len, seg, slen);
-                    dest[pref_len + slen] = '\0';
+                    if (plen >= (int)sizeof(dest))
+                        plen = (int)sizeof(dest) - 1;
+                    musr_strncpy(dest, t->path, plen);
+                    dest[plen] = '\0';
                     if (!fm_streq(dest, t->path)) {
                         musr_strncpy(t->path, dest, sizeof(t->path) - 1);
                         fm_hist_push(t, t->path);
@@ -946,9 +956,6 @@ static void fm_click(int lx, int ly, int dbl)
                     return;
                 }
                 x += slen * 6 + 6;
-                pref_len += slen;
-                while (t->path[pref_len] == '/')
-                    pref_len++;
             }
         }
         return;
