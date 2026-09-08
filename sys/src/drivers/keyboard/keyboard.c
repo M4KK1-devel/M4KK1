@@ -280,12 +280,19 @@ mkrn_keyboard_handler(void)
         /* E0-extended keys that the desktop needs: PageUp / PageDown
          * (terminal scrollback).  Push private control codes into the
          * ASCII buffer so m4k_get_keyboard_event() delivers them;
-         * 0x01/0x02 never collide with printable ASCII or Ctrl+C. */
+         * 0x01/0x02 never collide with printable ASCII or Ctrl+C.
+         * Alt+Left / Alt+Right (FM Back/Forward) map to 0x1C/0x1D in
+         * the same namespace — HMP sendkey cannot latch Alt onto an
+         * arrow, so the whole chord is translated at the source. */
         if (bPressed) {
             uint8_t ext = u8Scancode;   /* base code, no make/break bit */
             char ch = 0;
             if (ext == 0x49)      ch = 0x01;   /* PageUp   */
             else if (ext == 0x51) ch = 0x02;   /* PageDown */
+            else if (ext == 0x4B && keyboard_state.alt_pressed)
+                ch = 0x1C;   /* Alt+Left  → FM Back    */
+            else if (ext == 0x4D && keyboard_state.alt_pressed)
+                ch = 0x1D;   /* Alt+Right → FM Forward */
             if (ch) {
                 uint32_t u32NextTail =
                     (keyboard_state.buffer_tail + 1)
@@ -331,6 +338,27 @@ mkrn_keyboard_handler(void)
                 ch = 0x05;   /* Super+E  → file manager  */
             else
                 ch = 0;      /* no Super+<x> typing leaks */
+        }
+        /* Ctrl+letter → classic control code, translated HERE because
+         * m4k_get_keyboard_event() samples the modifier state at
+         * dequeue time — a sendkey chord (or fast typing) has already
+         * released Ctrl by then, and the WM-side translation missed
+         * it.  Only the letters the desktop actually consumes as
+         * control codes: t/w/l/h (fm tabs + address bar + hidden).
+         * c/d/e are deliberately EXCLUDED — their codes 0x03/0x04/0x05
+         * collide with the Alt+Tab / Super+D / Super+E chord codes
+         * and Ctrl+C must stay a raw 'c' for the terminal SIGINT. */
+        else if (keyboard_state.ctrl_pressed && ch >= 'a' && ch <= 'z') {
+            if (ch == 't')
+                ch = 0x14;   /* Ctrl+T */
+            else if (ch == 'w')
+                ch = 0x17;   /* Ctrl+W */
+            else if (ch == 'l')
+                ch = 0x0C;   /* Ctrl+L */
+            else if (ch == 'h')
+                ch = 0x08;   /* Ctrl+H */
+            else
+                ch = 0;      /* other Ctrl+<x>: nothing consumes it */
         }
     }
     if (ch != 0 && bPressed) {

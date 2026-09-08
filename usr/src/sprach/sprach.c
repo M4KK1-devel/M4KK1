@@ -3829,7 +3829,6 @@ static int sprach_fm_key(struct sprach_ctx *ctx, unsigned char ch)
         (volatile struct sprach_fm_mailbox *)FM_MAILBOX_BASE;
     if (mb->magic != FM_MAILBOX_MAGIC)
         return 0;                     /* FM not running */
-
     /* Top-most non-chrome surface must be a foreign FM-sized window */
     int top = -1;
     for (int i = 0; i < COPLAND_MAX_SURFACES; i++)
@@ -5040,6 +5039,14 @@ void _start(void)
                 sprach_launch_fm(&ctx);
                 continue;
             }
+            /* Alt+Left / Alt+Right → FM Back/Forward (kernel chord
+             * codes 0x1C/0x1D, same namespace idea as 0x03..0x05).
+             * Only meaningful when the FM is the top-most client;
+             * sprach_fm_key drops them otherwise. */
+            if (ev.ascii_char == 0x1C || ev.ascii_char == 0x1D) {
+                sprach_fm_key(&ctx, ev.ascii_char);
+                continue;
+            }
 
             /* Ctrl+Alt+T → launch the terminal emulator */
             if ((ev.modifiers & (M4K_MOD_CTRL | M4K_MOD_ALT)) ==
@@ -5128,9 +5135,17 @@ void _start(void)
 
             /* File manager running and on top → forward there too.
              * The FM registers its key mailbox at FM_MAILBOX_BASE on
-             * startup; if the magic isn't there it isn't running. */
-            if (sprach_fm_key(&ctx, ev.ascii_char)) {
-                continue;
+             * startup; if the magic isn't there it isn't running.
+             * Ctrl chords arrive as raw ASCII from the kernel keymap
+             * (Ctrl+L = 'l'); translate to the control codes fm.c
+             * expects — same fix the ga dispatch needed. */
+            {
+                unsigned char fch = ev.ascii_char;
+                if ((ev.modifiers & 0x02u) && fch >= 'a' && fch <= 'z')
+                    fch = (unsigned char)(fch - 'a' + 1);
+                if (sprach_fm_key(&ctx, fch)) {
+                    continue;
+                }
             }
 
             sprach_mode_key(&ctx, ev.ascii_char);

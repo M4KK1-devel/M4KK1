@@ -10,6 +10,10 @@
  * Tabs: Ctrl+T new tab, Ctrl+W close tab, Ctrl+Tab next tab.
  * Address bar: Ctrl+L focus.  Hidden files: Ctrl+H toggle.
  * Navigation: single click enters a directory.
+ * Back/Forward: Alt+Left / Alt+Right (kernel chord 0x1C/0x1D) or
+ * the "<" ">" arrows in the address bar; breadcrumb segments jump
+ * to an ancestor directory.  History is browser-style (forward
+ * entries are truncated on every new push).
  *
  * Copyright (c) 2026 Yaku Makki
  * SPDX-License-Identifier: 4P1-Custom
@@ -53,6 +57,92 @@ struct fm_tab {
 static struct fm_tab fm_tabs[FM_MAX_TABS];
 static int fm_cur_tab = 0;
 
+/* ── Navigation history (browser-style Back/Forward) ──
+ * One stack per tab.  hcur == hlen means "at the newest entry";
+ * Back moves hcur back, Forward moves it forward.  Any new push
+ * truncates the forward tail (hcur+1..) first.  8+1 slots: the
+ * current path always lives at hist[hcur] so back is a pure index
+ * move. */
+#define FM_HIST_MAX 8
+static int fm_streq(const char *a, const char *b);   /* fwd */
+static char fm_hist[FM_MAX_TABS][FM_HIST_MAX + 1][200];
+static int fm_hist_len[FM_MAX_TABS];
+static int fm_hist_cur[FM_MAX_TABS];
+
+/* Reset the history to exactly one entry (path) — used on tab
+ * creation and when the last tab closes. */
+static void fm_hist_reset(int tab, const char *path)
+{
+    musr_strncpy(fm_hist[tab][0], path, sizeof(fm_hist[tab][0]) - 1);
+    fm_hist_len[tab] = 1;
+    fm_hist_cur[tab] = 0;
+}
+
+/* Push a new location: truncate the forward tail, drop the oldest
+ * entry when full, copy path in.  Caller reloads the directory. */
+static void fm_hist_push(struct fm_tab *t, const char *path)
+{
+    int tab = (int)(t - fm_tabs);
+    if (tab < 0 || tab >= FM_MAX_TABS)
+        return;
+    int len = fm_hist_len[tab];
+    int cur = fm_hist_cur[tab];
+    /* already there → no-op */
+    if (len > 0 && cur < len && fm_streq(fm_hist[tab][cur], path))
+        return;
+    if (cur < len - 1)
+        len = cur + 1;              /* truncate forward tail */
+    if (len > FM_HIST_MAX) {
+        for (int i = 1; i <= FM_HIST_MAX; i++)
+            musr_strncpy(fm_hist[tab][i - 1], fm_hist[tab][i],
+                         sizeof(fm_hist[tab][0]) - 1);
+        len = FM_HIST_MAX;
+    }
+    musr_strncpy(fm_hist[tab][len], path, sizeof(fm_hist[tab][0]) - 1);
+    fm_hist_len[tab] = len + 1;
+    fm_hist_cur[tab] = len;
+}
+
+/* Back: move the cursor one entry back.  Returns 1 when the tab's
+ * path changed (caller must fm_load_dir). */
+static int fm_hist_back(struct fm_tab *t)
+{
+    int tab = (int)(t - fm_tabs);
+    if (tab < 0 || tab >= FM_MAX_TABS || fm_hist_cur[tab] <= 0)
+        return 0;
+    fm_hist_cur[tab]--;
+    musr_strncpy(t->path, fm_hist[tab][fm_hist_cur[tab]],
+                 sizeof(t->path) - 1);
+    ser_puts("[FM] NAV BACK ");
+    ser_puts(t->path);
+    ser_puts(" (");
+    print_u32((uint32_t)fm_hist_cur[tab]);
+    ser_puts("/");
+    print_u32((uint32_t)(fm_hist_len[tab] - 1));
+    ser_puts(")\n");
+    return 1;
+}
+
+/* Forward: move the cursor one entry forward. */
+static int fm_hist_forward(struct fm_tab *t)
+{
+    int tab = (int)(t - fm_tabs);
+    if (tab < 0 || tab >= FM_MAX_TABS ||
+        fm_hist_cur[tab] >= fm_hist_len[tab] - 1)
+        return 0;
+    fm_hist_cur[tab]++;
+    musr_strncpy(t->path, fm_hist[tab][fm_hist_cur[tab]],
+                 sizeof(t->path) - 1);
+    ser_puts("[FM] NAV FWD ");
+    ser_puts(t->path);
+    ser_puts(" (");
+    print_u32((uint32_t)fm_hist_cur[tab]);
+    ser_puts("/");
+    print_u32((uint32_t)(fm_hist_len[tab] - 1));
+    ser_puts(")\n");
+    return 1;
+}
+
 /* Directory listing cache (reloaded on navigation) */
 struct fm_entry {
     char name[DIRENT_NAME_MAX];
@@ -87,6 +177,8 @@ static char fm_addr_buf[200];
 
 /* Sprach → FM key mailbox (same protocol as the terminal mailbox;
  * Sprach writes keys of the focused FM window here). */
+#define FM_MB_BACK     0x1C   /* Alt+Left  (kernel chord) */
+#define FM_MB_FWD      0x1D   /* Alt+Right (kernel chord) */
 struct fm_mailbox {
     uint32_t magic;
 #define FM_MAILBOX_MAGIC 0x464D4B31u   /* "FMK1" */
@@ -396,13 +488,56 @@ static void fm_render(void)
             break;
     }
 
-    /* Address bar */
+    /* Address bar: [ < > ] breadcrumb path bar.  Back/Forward arrow
+     * boxes (18x14) first, enabled only when history allows the move;
+     * then the path as clickable segments (" / export / root ")
+     * separated by '>' glyphs.  Edit mode (Ctrl+L) replaces it with
+     * the plain editable line, as before. */
     fm_rect(fm_buf, FM_W, 0, FM_TITLE_H + FM_TAB_H, FM_W, FM_ADDR_H,
             fm_addr_edit ? 0x00FFFFFF : 0x00E0E0E8);
     fm_rect(fm_buf, FM_W, 0, FM_TITLE_H + FM_TAB_H + FM_ADDR_H - 1, FM_W, 1,
             0x00A0A0A8);
-    fm_str(fm_buf, FM_W, 6, FM_TITLE_H + FM_TAB_H + 7,
-           fm_addr_edit ? fm_addr_buf : t->path, FM_COL_TEXT);
+    if (fm_addr_edit) {
+        fm_str(fm_buf, FM_W, 6, FM_TITLE_H + FM_TAB_H + 7,
+               fm_addr_buf, FM_COL_TEXT);
+    } else {
+        int tab = fm_cur_tab;
+        int can_back = fm_hist_cur[tab] > 0;
+        int can_fwd = fm_hist_cur[tab] < fm_hist_len[tab] - 1;
+        int by = FM_TITLE_H + FM_TAB_H + 4;
+        /* back box */
+        fm_rect(fm_buf, FM_W, 2, by, 18, 14, can_back ? 0x00FFFFFF
+                                                      : 0x00C8C8D0);
+        fm_char(fm_buf, FM_W, 8, by + 4, '<',
+                can_back ? 0x003060C0 : 0x00888888);
+        /* forward box */
+        fm_rect(fm_buf, FM_W, 22, by, 18, 14, can_fwd ? 0x00FFFFFF
+                                                      : 0x00C8C8D0);
+        fm_char(fm_buf, FM_W, 28, by + 4, '>',
+                can_fwd ? 0x003060C0 : 0x00888888);
+        /* breadcrumb segments: walk path components, accumulate x */
+        fm_str(fm_buf, FM_W, 44, by + 4, "/", FM_COL_TEXT);
+        int x = 50;
+        const char *p = t->path;
+        while (*p && x < FM_W - 40) {
+            while (*p == '/')
+                p++;
+            const char *seg = p;
+            while (*p && *p != '/')
+                p++;
+            int slen = (int)(p - seg);
+            if (slen > 0) {
+                if (x + slen * 6 > FM_W - 24)
+                    break;   /* clip long paths at the right edge */
+                for (int q = 0; q < slen; q++)
+                    fm_char(fm_buf, FM_W, x + q * 6, by + 4, seg[q],
+                            0x002040A0);
+                x += slen * 6;
+                fm_char(fm_buf, FM_W, x, by + 4, '>', 0x00909090);
+                x += 6;
+            }
+        }
+    }
 
     /* File rows (or the text preview when active) */
     fm_rect(fm_buf, FM_W, 0, FM_TITLE_H + FM_TAB_H + FM_ADDR_H,
@@ -484,6 +619,7 @@ static void fm_new_tab(void)
             fm_tabs[i].hidden_files = 0;
             musr_strncpy(fm_tabs[i].path, fm_tabs[fm_cur_tab].path,
                          sizeof(fm_tabs[i].path) - 1);
+            fm_hist_reset(i, fm_tabs[i].path);
             fm_cur_tab = i;
             fm_load_dir(&fm_tabs[i]);
             return;
@@ -504,6 +640,7 @@ static void fm_close_tab(void)
     /* last tab closed: open a fresh one at / */
     fm_tabs[fm_cur_tab].in_use = 1;
     musr_strncpy(fm_tabs[fm_cur_tab].path, "/", 2);
+    fm_hist_reset(fm_cur_tab, "/");
     fm_load_dir(&fm_tabs[fm_cur_tab]);
 }
 
@@ -586,6 +723,7 @@ static void fm_open_selected(void)
         return;
     if (fm_entries[t->sel].is_dir) {
         fm_path_join(t, fm_entries[t->sel].name);
+        fm_hist_push(t, t->path);
         fm_load_dir(t);
         fm_preview = 0;
         return;
@@ -760,6 +898,62 @@ static void fm_click(int lx, int ly, int dbl)
         return;
     }
 
+    /* Address-bar click (not in edit mode): Back/Forward arrow
+     * boxes, or a breadcrumb segment → jump to that ancestor. */
+    if (!fm_addr_edit &&
+        ly >= FM_TITLE_H + FM_TAB_H &&
+        ly < FM_TITLE_H + FM_TAB_H + FM_ADDR_H) {
+        int tab = fm_cur_tab;
+        if (lx >= 2 && lx < 20 && fm_hist_cur[tab] > 0) {
+            if (fm_hist_back(t))
+                fm_load_dir(t);
+            return;
+        }
+        if (lx >= 22 && lx < 40 &&
+            fm_hist_cur[tab] < fm_hist_len[tab] - 1) {
+            if (fm_hist_forward(t))
+                fm_load_dir(t);
+            return;
+        }
+        /* breadcrumb segment: re-walk the same layout as fm_render */
+        if (lx >= 44) {
+            int x = 50;
+            const char *p = t->path;
+            int pref_len = 0;   /* chars of path consumed */
+            while (*p && x < FM_W - 40) {
+                while (*p == '/')
+                    p++;
+                const char *seg = p;
+                while (*p && *p != '/')
+                    p++;
+                int slen = (int)(p - seg);
+                if (slen <= 0)
+                    continue;
+                if (x + slen * 6 > FM_W - 24)
+                    break;
+                if (lx >= x && lx < x + slen * 6) {
+                    char dest[200];
+                    if (pref_len + slen >= (int)sizeof(dest))
+                        slen = (int)sizeof(dest) - 1 - pref_len;
+                    musr_strncpy(dest, t->path, pref_len);
+                    musr_strncpy(dest + pref_len, seg, slen);
+                    dest[pref_len + slen] = '\0';
+                    if (!fm_streq(dest, t->path)) {
+                        musr_strncpy(t->path, dest, sizeof(t->path) - 1);
+                        fm_hist_push(t, t->path);
+                        fm_load_dir(t);
+                    }
+                    return;
+                }
+                x += slen * 6 + 6;
+                pref_len += slen;
+                while (t->path[pref_len] == '/')
+                    pref_len++;
+            }
+        }
+        return;
+    }
+
     /* File row click: select / (double) open */
     int list_y = ly - (FM_TITLE_H + FM_TAB_H + FM_ADDR_H + 2);
     if (lx >= 0 && lx < FM_W && list_y >= 0) {
@@ -787,6 +981,7 @@ static void fm_key(unsigned char ch)
     if (fm_addr_edit) {
         if (ch == '\r' || ch == '\n') {
             musr_strncpy(t->path, fm_addr_buf, sizeof(t->path) - 1);
+            fm_hist_push(t, t->path);
             fm_load_dir(t);
             fm_addr_edit = 0;
         } else if (ch == 0x1B) {
@@ -811,6 +1006,18 @@ static void fm_key(unsigned char ch)
     }
     if (ch == 0x08) { t->hidden_files = !t->hidden_files; fm_load_dir(t); return; }
     if (ch == 0x09) { fm_next_tab(); return; }
+
+    /* Back/Forward (Alt+Left / Alt+Right, kernel chord codes) */
+    if (ch == FM_MB_BACK) {
+        if (fm_hist_back(t))
+            fm_load_dir(t);
+        return;
+    }
+    if (ch == FM_MB_FWD) {
+        if (fm_hist_forward(t))
+            fm_load_dir(t);
+        return;
+    }
 
     /* rename / new-folder input mode */
     if (fm_op_mode) {
@@ -873,6 +1080,7 @@ void _start(void)
     }
     fm_tabs[0].in_use = 1;
     fm_tabs[0].hidden_files = 0;
+    fm_hist_reset(0, fm_tabs[0].path);
     fm_load_dir(&fm_tabs[0]);
 
     /* Create our surface */
