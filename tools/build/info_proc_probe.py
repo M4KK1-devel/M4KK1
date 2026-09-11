@@ -161,7 +161,16 @@ try:
         # ps ran BEFORE info was spawned; info adds itself (+1)
         check("total matches ps+1", n == len(ps_rows) + 1,
               f"info n={n} ps={len(ps_rows)}")
-        rows = re.findall(rb"^ *(\d+) (\S+) +(\w+) (\d+)K$", blk, re.M)
+        # PROC page auto-refreshes (dumps every ~2s); the accumulated
+        # buffer holds several dumps of the same rows.  Parse ONE block
+        # (text after the first header up to the next header) instead.
+        blkall = plain()
+        hdrs = [mm.start() for mm in
+                re.finditer(rb"\[INFO\] PROC p=", blkall)]
+        first_blk = blkall[hdrs[0]:(hdrs[1] if len(hdrs) > 1
+                                    else len(blkall))] if hdrs else b""
+        rows = re.findall(rb"^ *(\d+) (\S+) +(\w+) (\d+)K$",
+                          first_blk, re.M)
         check("visible rows parsed", len(rows) == min(8, n),
               f"{len(rows)} rows")
         info_pids = {int(r[0]) for r in rows}
@@ -191,14 +200,33 @@ try:
     check("P went back", m3 is not None and int(m3.group(1)) == 0,
           m3.group(0).decode() if m3 else "")
 
-    # Tab -> back to sys page (no more PROC dumps on refresh)
+    # Tab -> back to sys page.  The auto-refresh dump races with the
+    # page switch (a periodic dump due around the key event still
+    # lands), so a fixed window can false-FAIL.  Deterministic check:
+    # wait for the dump stream to go quiet for >=3s (>1 refresh
+    # period), then Tab again and verify dumps RESUME (page cycles).
     readserial()
-    before = plain().count(b"[INFO] PROC p=")
     sendkey("tab", 1.0)
-    time.sleep(4.0)   # covers a 2 s auto-refresh
+    quiet_ok = False
+    last = plain().count(b"[INFO] PROC p=")
+    stable = 0
+    for _ in range(10):
+        time.sleep(1.0)
+        readserial()
+        c = plain().count(b"[INFO] PROC p=")
+        if c == last:
+            stable += 1
+            if stable >= 3:
+                quiet_ok = True
+                break
+        else:
+            stable = 0
+            last = c
+    sendkey("tab", 2.0)
     readserial()
-    check("Tab back to sys page",
-          plain().count(b"[INFO] PROC p=") == before)
+    resumed = plain().count(b"[INFO] PROC p=") > last
+    check("Tab back to sys page", quiet_ok and resumed,
+          f"quiet={quiet_ok} resumed={resumed} last={last}")
 
     check("no PANIC", b"PANIC" not in plain())
     check("no EXC", b"[EXC]" not in plain())
