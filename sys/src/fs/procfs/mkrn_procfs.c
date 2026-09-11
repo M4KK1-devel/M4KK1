@@ -571,6 +571,12 @@ int mkrn_procfs_write(int fd, const void *buf, uint32_t count)
                 if (env_copy) {
                     mkrn_memcpy(env_copy, ev, elen);
                     env_copy[elen] = '\0';
+                    /* Free the string being replaced: the old entry
+                     * held its own mkrn_alloc'd copy (or an empty
+                     * tombstone "" that still owns a 1-byte block).
+                     * Overwriting the pointer leaked it. */
+                    if (proc->envp[idx])
+                        mkrn_free(proc->envp[idx]);
                     proc->envp[idx] = env_copy;
                 }
             }

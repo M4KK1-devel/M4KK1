@@ -382,6 +382,142 @@ static void copland_protocol_tick(void)
     }
 }
 
+/* ── Dead-client reaping ──
+ * The conn table (8 slots) used to be append-only: a client that
+ * exited (terminal closed, app killed, cptest finished) left its
+ * slot marked in_use forever, so ~8 client lifecycles exhausted the
+ * table and every new attach was REJECTED — a slow resource leak
+ * that took the whole desktop down.  Poll each attached client's
+ * pid against the process table every ~2 s and tear down the ones
+ * that are gone: release their compositor objects (surfaces to the
+ * wallpaper via damage, pools/buffers/callbacks/regions slots),
+ * clear the client record, and free the conn-table slot so a new
+ * process can connect. */
+static void copland_reap_dead_clients(void)
+{
+    /* throttle: the server loop iterates every ~5 ms (m4k_sleep(5)
+     * on the idle path, faster under load) — ~200 iterations/s.
+     * Reap at ~1 Hz: 200 iterations. */
+    static uint32_t reap_tick;
+    if (++reap_tick < 200)
+        return;
+    reap_tick = 0;
+
+    /* snapshot the process table once (PROCBUF_MAX=64 from m4sh.h;
+     * registry holds idle+MDM+copland+sprach+apps, well under 64) */
+    static struct procinfo pi[64];
+    int n = musr_sc_getprocs(pi, 64);
+    if (n <= 0)
+        return;
+
+    struct cp_conn_table *ct =
+        (struct cp_conn_table *)COPLAND_CONN_BASE;
+    if (ct->magic != COPLAND_CONN_MAGIC)
+        return;
+
+    for (int i = 0; i < CP_MAX_CLIENTS; i++) {
+        struct cp_client *cl = &cp_comp.clients[i];
+        if (!cl->active || cl->conn_pid == 0)
+            continue;
+
+        int alive = 0;
+        for (int k = 0; k < n; k++) {
+            if (pi[k].pid == cl->conn_pid) {
+                alive = 1;
+                break;
+            }
+        }
+        if (alive)
+            continue;
+
+        ser_puts("[COPLAND] client #");
+        print_u32(cl->client_id);
+        ser_puts(" (pid ");
+        print_u32(cl->conn_pid);
+        ser_puts(") gone, reaping\n");
+
+        /* release the client's objects: surfaces first so their
+         * area gets damaged and repainted below; others just free
+         * their slots. */
+        int damaged = 0;
+        for (int s = 0; s < CP_MAX_SURFACES; s++) {
+            struct cp_surface_state *ss = &cp_comp.surfaces[s];
+            if (ss->obj_id == 0 || ss->client_id != cl->client_id)
+                continue;
+            /* union into frame damage so the next composite paints
+             * wallpaper over the vanished surface */
+            if (!damaged) {
+                cp_comp.frame_dmg_x = ss->x;
+                cp_comp.frame_dmg_y = ss->y;
+                cp_comp.frame_dmg_w = ss->w;
+                cp_comp.frame_dmg_h = ss->h;
+                cp_comp.frame_dirty = 1;
+                damaged = 1;
+            } else {
+                int x2 = cp_comp.frame_dmg_x + cp_comp.frame_dmg_w;
+                int y2 = cp_comp.frame_dmg_y + cp_comp.frame_dmg_h;
+                if (ss->x < cp_comp.frame_dmg_x)
+                    cp_comp.frame_dmg_x = ss->x;
+                if (ss->y < cp_comp.frame_dmg_y)
+                    cp_comp.frame_dmg_y = ss->y;
+                if (ss->x + ss->w > x2) x2 = ss->x + ss->w;
+                if (ss->y + ss->h > y2) y2 = ss->y + ss->h;
+                cp_comp.frame_dmg_w = x2 - cp_comp.frame_dmg_x;
+                cp_comp.frame_dmg_h = y2 - cp_comp.frame_dmg_y;
+            }
+            /* remove from zlist (compact) */
+            for (int z = 0; z < cp_comp.zcount; z++) {
+                if (cp_comp.zlist[z] == s) {
+                    for (int zz = z; zz < cp_comp.zcount - 1; zz++)
+                        cp_comp.zlist[zz] = cp_comp.zlist[zz + 1];
+                    cp_comp.zcount--;
+                    break;
+                }
+            }
+            ss->obj_id = 0;
+        }
+        for (int p = 0; p < CP_MAX_POOLS; p++)
+            if (cp_comp.pools[p].obj_id != 0 &&
+                cp_comp.pools[p].client_id == cl->client_id)
+                cp_comp.pools[p].obj_id = 0;
+        for (int b = 0; b < CP_MAX_BUFFERS; b++)
+            if (cp_comp.buffers[b].obj_id != 0 &&
+                cp_comp.buffers[b].client_id == cl->client_id)
+                cp_comp.buffers[b].obj_id = 0;
+        for (int cb = 0; cb < CP_MAX_CALLBACKS; cb++)
+            if (cp_comp.callbacks[cb].obj_id != 0 &&
+                cp_comp.callbacks[cb].client_id == cl->client_id)
+                cp_comp.callbacks[cb].obj_id = 0;
+        for (int r = 0; r < CP_MAX_REGIONS; r++)
+            if (cp_comp.regions[r].obj_id != 0 &&
+                cp_comp.regions[r].client_id == cl->client_id)
+                cp_comp.regions[r].obj_id = 0;
+
+        /* WM identity lost with its owner */
+        if (cp_comp.wm_client_id == cl->client_id)
+            cp_comp.wm_client_id = 0;
+
+        /* free the conn-table slot so a new process may connect
+         * (BEFORE clearing conn_pid — the slot is matched by it) */
+        for (int t = 0; t < CP_CONN_SLOTS; t++) {
+            if (ct->slots[t].in_use &&
+                ct->slots[t].client_pid == cl->conn_pid) {
+                ct->slots[t].in_use = 0;
+                ct->slots[t].client_pid = 0;
+                ct->slots[t].conn_addr = 0;
+                break;
+            }
+        }
+
+        /* clear the client record */
+        cl->conn = 0;
+        cl->active = 0;
+        cl->client_id = 0;
+        cl->conn_pid = 0;
+        cl->protocol_errors = 0;
+    }
+}
+
 /* ── Sprach watchdog (phase 3) ── */
 
 #define COPLAND_SIGKILL 2  /* M4K_SIGKILL (signal.h); kernel-internal value */
@@ -533,6 +669,7 @@ void _start(void)
             had_commands = (shm->cmd_read_idx != saved_r);
         }
         copland_protocol_tick();
+        copland_reap_dead_clients();
 
         /* Proto-frame telemetry: one line per ~60 s of frames (the
          * wall-clock gate via uptime misfired — serial shows a line

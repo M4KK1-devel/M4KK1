@@ -160,6 +160,9 @@ void mkrn_vesa_update_cursor(void)
     cursor_old_y = ny;
 }
 
+/* ── VBLANK sync (defined after the inb helper below) ── */
+static void mkrn_vesa_wait_vblank(void);
+
 /* ── Partial flip: copy a rect from back_buffer to LFB ── */
 void mkrn_vesa_flip_rect(int x, int y, int w, int h)
 {
@@ -180,6 +183,8 @@ void mkrn_vesa_flip_rect(int x, int y, int w, int h)
     uint32_t *lfb = (uint32_t *)fb_info.phys_addr;
     uint32_t *src = back_buffer + y * scr_w + x;
     uint32_t *dst = lfb + y * scr_w + x;
+
+    mkrn_vesa_wait_vblank();
 
 #ifdef M4K_FLIP_DEBUG
     {
@@ -225,6 +230,42 @@ static inline uint8_t inb(uint16_t port)
     uint8_t ret;
     __asm__ volatile("inb %1, %0" : "=a"(ret) : "Nd"(port));
     return ret;
+}
+
+/* ── VBLANK sync ──
+ * The LFB copy (rep movsl) used to run mid-scan, tearing windows on
+ * every composite.  Wait for the vertical retrace before flipping:
+ * poll 0x3DA bit 3 — first wait for any current retrace to END, then
+ * for the next one to START, so the copy begins at the very top of
+ * the blank period.
+ * CRITICAL: this kernel is cooperatively scheduled — a long
+ * kernel-side spin starves every user process (observed: terminal
+ * SGR redraw storm → flip_rect vblank waits → sprach heartbeat
+ * stalled → watchdog kill loop).  The spin bound must stay SHORT
+ * (a few hundred port reads ≈ sub-millisecond): if the retrace is
+ * not imminent, flip immediately rather than wait a full frame.
+ * Worst case we miss the sync for that one small rect — identical
+ * to the previous unsynchronised behaviour. */
+#define VGA_INPUT_STATUS_1 0x3DA
+#define VGA_VRETRACE_BIT   0x08
+#define VGA_VBLANK_SPIN_MAX 300u
+
+static void mkrn_vesa_wait_vblank(void)
+{
+    if (!fb_info.initialized)
+        return;
+    uint32_t guard = 0;
+    /* phase 1: wait for retrace to end (bit clear) */
+    while ((inb(VGA_INPUT_STATUS_1) & VGA_VRETRACE_BIT) &&
+           ++guard < VGA_VBLANK_SPIN_MAX)
+        ;
+    if (guard >= VGA_VBLANK_SPIN_MAX)
+        return;   /* retrace not imminent: flip unguarded */
+    /* phase 2: wait for retrace to start (bit set) */
+    guard = 0;
+    while (!(inb(VGA_INPUT_STATUS_1) & VGA_VRETRACE_BIT) &&
+           ++guard < VGA_VBLANK_SPIN_MAX)
+        ;
 }
 
 static inline void outw(uint16_t port, uint16_t val)
@@ -503,6 +544,8 @@ void mkrn_vesa_flip(void)
 
     uint32_t *lfb = (uint32_t *)fb_info.phys_addr;
     uint32_t pixels = fb_info.width * fb_info.height;
+
+    mkrn_vesa_wait_vblank();
 
     __asm__ volatile("cld; rep movsl"
         : "+c"(pixels), "+D"(lfb)
