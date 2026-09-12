@@ -273,6 +273,8 @@ void sprach_poll_terminal(struct sprach_ctx *ctx);
 void sprach_handle_terminal_click(struct sprach_ctx *ctx, int sx, int sy,
                                   int sw, int sh, int lx, int ly);
 int sprach_taskbar_dirty(struct sprach_ctx *ctx);
+int sprach_dock_hit(struct sprach_ctx *ctx, int mx, int my);
+int sprach_dock_tip(struct sprach_ctx *ctx);
 
 /* Mode interface (one mode file per binary) */
 void sprach_mode_init(struct sprach_ctx *ctx);

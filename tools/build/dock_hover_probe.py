@@ -27,21 +27,31 @@ print("[dockhover]", iso)
 mon = "/tmp/dockhover_qmp.sock"
 if os.path.exists(mon):
     os.unlink(mon)
+ser_sock = "/tmp/dockhover_ser.sock"
+if os.path.exists(ser_sock):
+    os.unlink(ser_sock)
 qlog = open("/tmp/dockhover_qemu.log", "wb")
 p = subprocess.Popen(
     ["qemu-system-i386", "-cdrom", iso, "-m", "512", "-vga", "std",
      "-serial", "file:logs/dockhover_serial.log",
-     "-qmp", f"unix:{mon},server,nowait", "-display", "none"],
+     "-qmp", f"unix:{mon},server,nowait",
+     "-monitor", f"unix:{ser_sock},server,nowait",
+     "-display", "none"],
     stdout=qlog, stderr=qlog)
 
 for _ in range(100):
-    if os.path.exists(mon):
+    if os.path.exists(mon) and os.path.exists(ser_sock):
         break
     time.sleep(0.1)
 
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.connect(mon)
 s.setblocking(False)
+
+m = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+m.connect(ser_sock)
+m.setblocking(False)
+
 acc = b""
 
 def drain(t=0.3):
@@ -55,26 +65,33 @@ def drain(t=0.3):
             acc += b
     except socket.timeout:
         pass
+    m.settimeout(0.05)
+    try:
+        while True:
+            b = m.recv(65536)
+            if not b:
+                break
+    except socket.timeout:
+        pass
 
 def hmp(cmd):
-    s.sendall((cmd + "\n").encode())
+    m.sendall((cmd + "\n").encode())
+    drain(0.15)
 
 def jump_to(tx, ty):
-    """Relative move via QMP input-send-event, split into hops of
-    <=200 px: the PS/2 packet format caps deltas at 255 (overflow
-    packets get clamped by the kernel driver), so one big event would
-    undershoot.  y is inverted (PS/2 y grows up, screen y down)."""
+    """Absolute move via HMP mouse_move (QEMU's default PS/2 mouse —
+    the injection path verified working by appmenu_probe.py; QMP
+    input-send-event does NOT reach the guest on this setup).
+    Hops of 8px keep deltas well inside the PS/2 255 limit.  HMP
+    mouse_move y grows DOWN like screen y (QEMU applies the PS/2
+    y inversion itself)."""
     global cur_x, cur_y
     while cur_x != tx or cur_y != ty:
-        dx = max(-100, min(100, tx - cur_x))
-        dy = max(-100, min(100, ty - cur_y))
-        s.sendall(('{"execute":"input-send-event","arguments":{"events":['
-                   '{"type":"rel","data":{"axis":"x","value":%d}},'
-                   '{"type":"rel","data":{"axis":"y","value":%d}}]}}\n'
-                   % (dx, -dy)).encode())
+        dx = max(-8, min(8, tx - cur_x))
+        dy = max(-8, min(8, ty - cur_y))
+        hmp("mouse_move %d %d" % (dx, dy))
         cur_x += dx
         cur_y += dy
-        drain(0.15)
     drain(0.8)
 
 cur_x, cur_y = 400, 300
@@ -144,41 +161,56 @@ pix = load_ppm("/tmp/dockhover1.ppm")
 def near(c, t, tol=18):
     return all(abs(a - b) <= tol for a, b in zip(c, t))
 
-# launchpad icon at bx=8, icon_y=8 within the 48px dock at y=552;
-# plate = (6,554)-(42,590).  Sample inside the plate border ring but
-# off the icon body: x in 20..28, y in 566..570 (icon rows) — the
-# icon fills 8..39 inside, so instead sample the plate's left margin
-# column x=7 (between plate edge 6 and icon 8) and the corner band
-# x=20..28/y=555..556 above the icon.
-plate_hits = 0
-for y in range(554, 590):
-    if near(pix(7, y), (0xB0, 0xA0, 0xA0)):   # BGR: B=0xB0,G=0xA0,R=0xA0
-        plate_hits += 1
-corner_hits = sum(1 for x in range(20, 29) for y in (555, 556)
-                  if near(pix(x, y), (0xB0, 0xA0, 0xA0)))
-print(f"[dockhover] plate column hits={plate_hits} corner={corner_hits}")
-ok_plate = plate_hits >= 20 and corner_hits >= 6
+# Byte order (live-verified this round): PPM tuples read the u32
+# colour straight as 0x00RRGGBB, i.e. 0x00A0A0B0 -> (0xA0,0xA0,0xB0),
+# 0x00FFD060 -> (0xFF,0xD0,0x60).
+#
+# launchpad icon at bx=8, plate = (6,558)-(41,593).  The tooltip
+# chip (x 2..59, y 554..569) covers the plate's upper rows, so
+# sample the plate's left margin columns x=6..7 BELOW the chip
+# (y 571..593; icon body starts at x=8, chip ends at y=569).
+plate_hits = sum(1 for x in (6, 7) for y in range(571, 594)
+                 if near(pix(x, y), (0xA0, 0xA0, 0xB0)))
+print(f"[dockhover] launchpad plate margin hits={plate_hits}")
+ok_plate_l = plate_hits >= 30
 
-# tooltip chip at (2,554)-(2+cw,570): background 0xC0C0C0, text 0x101010.
+# tooltip chip (x 2..59, y 554..569): bg 0x00C0C0C0, dark 5x7
+# glyphs 0x00101010 ("Launchpad" drawn at (4,557), 9 chars).
 chip_bg = sum(1 for x in range(4, 56) for y in range(556, 570)
               if near(pix(x, y), (0xC0, 0xC0, 0xC0)))
 glyph = sum(1 for x in range(4, 56) for y in range(556, 570)
             if near(pix(x, y), (0x10, 0x10, 0x10), 30))
-# accent marker pixel right after the chip: scan y=571 x=6..70
-accent = sum(1 for x in range(4, 80) if near(pix(x, 571), (0xC0, 0xE0, 0x50), 30))
+# accent marker pixel at local (2+cw,17) = (60,569) screen.
+accent = sum(1 for x in range(52, 68)
+             if near(pix(x, 569), (0xFF, 0xD0, 0x60), 40))
 print(f"[dockhover] chip_bg={chip_bg} glyph={glyph} accent={accent}")
 ok_tip = chip_bg > 40 and glyph > 15 and accent >= 1
 
-# --- Phase 2: move away to work area — hover state must clear ---
-jump_to(400, 300)
+# --- Phase 2: hover the far-right terminal launcher (775,575) ---
+# lx=760 -> plate=(758,558)-(793,593): NO chip overlap here, so all
+# four margin columns are pure plate colour (icon body x 760..791).
+jump_to(775, 575)
 drain(2.0)
 dump("/tmp/dockhover2.ppm")
 pix2 = load_ppm("/tmp/dockhover2.ppm")
-plate2 = sum(1 for y in range(554, 590) if near(pix2(7, y), (0xB0, 0xA0, 0xA0)))
-chip2 = sum(1 for x in range(4, 56) for y in range(556, 570)
-            if near(pix2(x, y), (0xC0, 0xC0, 0xC0)))
-print(f"[dockhover] after-leave plate={plate2} chip={chip2}")
-ok_clear = plate2 == 0 and chip2 == 0
+ring = sum(1 for x in (758, 759, 792, 793) for y in range(560, 592)
+           if near(pix2(x, y), (0xA0, 0xA0, 0xB0)))
+print(f"[dockhover] launcher plate ring hits={ring}")
+ok_plate_t = ring >= 100
+
+# --- Phase 3: move away to work area — hover state must clear ---
+jump_to(400, 300)
+drain(2.0)
+dump("/tmp/dockhover3.ppm")
+pix3 = load_ppm("/tmp/dockhover3.ppm")
+plate3 = sum(1 for x in (6, 7) for y in range(571, 594)
+             if near(pix3(x, y), (0xA0, 0xA0, 0xB0)))
+plate3b = sum(1 for x in (758, 759, 792, 793) for y in range(560, 592)
+              if near(pix3(x, y), (0xA0, 0xA0, 0xB0)))
+chip3 = sum(1 for x in range(4, 56) for y in range(556, 570)
+            if near(pix3(x, y), (0xC0, 0xC0, 0xC0)))
+print(f"[dockhover] after-leave launchpad={plate3} launcher={plate3b} chip={chip3}")
+ok_clear = plate3 == 0 and plate3b == 0 and chip3 == 0
 
 try:
     p.terminate(); p.wait(5)
@@ -194,6 +226,7 @@ except OSError:
 ok_trace = ("dock hover 0" in trace) and ("dock hover none" in trace)
 print(f"[dockhover] serial trace ok={ok_trace}")
 
+ok_plate = ok_plate_l and ok_plate_t
 print(f"HIGHLIGHT={'PASS' if ok_plate else 'FAIL'}")
 print(f"TOOLTIP={'PASS' if ok_tip else 'FAIL'}")
 print(f"CLEAR={'PASS' if ok_clear else 'FAIL'}")

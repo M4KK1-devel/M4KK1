@@ -969,6 +969,44 @@ void sprach_draw_taskbar(struct sprach_ctx *ctx)
     int icon_y = (TASKBAR_H - DOCK_ICON_SIZE) / 2;
     int bx = DOCK_PAD;
 
+    /* Hover highlight plate (taskbar-hover-preview): painted BEFORE
+     * the icons so it sits UNDER them — a solid plate drawn after
+     * would cover the 32x32 icon entirely.  Dock_hover is the entry
+     * index from sprach_dock_hit() — same [launchpad][windows...]
+     * [terminal][launcher] order used by the icon loops below. */
+    if (ctx->dock_hover >= 0) {
+        int hx = -1;
+        int hidx = 0;
+
+        if (hidx == ctx->dock_hover)
+            hx = DOCK_PAD;
+        hidx++;
+        int hbx = DOCK_PAD + DOCK_ICON_PITCH;
+        for (int i = 0; i < SPRACH_WINDOW_COUNT && hx < 0; i++) {
+            if (ctx->wins[i].slot < 0)
+                continue;
+            if (hidx == ctx->dock_hover) {
+                hx = hbx;
+                break;
+            }
+            hidx++;
+            hbx += DOCK_ICON_PITCH;
+        }
+        if (hx < 0 && ctx->term_slot >= 0) {
+            if (hidx == ctx->dock_hover)
+                hx = hbx;
+            hidx++;
+            hbx += DOCK_ICON_PITCH;
+        }
+        if (hx < 0 && hidx == ctx->dock_hover)
+            hx = SCREEN_W - DOCK_ICON_SIZE - DOCK_PAD;
+
+        if (hx >= 0)
+            sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, hx - 2, icon_y - 2,
+                    DOCK_ICON_SIZE + 4, DOCK_ICON_SIZE + 4,
+                    SPRACH_COL_DOCK_HOVER);
+    }
+
     /* Far-left: the Launchpad grid icon (nine-square).  Opens the
      * app launcher overlay.  Uses the PNG grid icon when available,
      * pixel-drawn fallback otherwise. */
@@ -1029,46 +1067,12 @@ void sprach_draw_taskbar(struct sprach_ctx *ctx)
         sp_icon_terminal(taskbar_buf, SCREEN_W, TASKBAR_H, lx, icon_y, 0x00306030);
     }
 
-    /* Hover highlight (taskbar-hover-preview): light plate under the
-     * hovered dock icon.  Dock_hover is the entry index from
-     * sprach_dock_hit() — same [launchpad][windows...][terminal]
-     * [launcher] order used here for painting. */
-    if (ctx->dock_hover >= 0) {
-        int hx = -1;
-        int hidx = 0;
-
-        if (hidx == ctx->dock_hover)
-            hx = DOCK_PAD;
-        hidx++;
-        int hbx = DOCK_PAD + DOCK_ICON_PITCH;
-        for (int i = 0; i < SPRACH_WINDOW_COUNT && hx < 0; i++) {
-            if (ctx->wins[i].slot < 0)
-                continue;
-            if (hidx == ctx->dock_hover) {
-                hx = hbx;
-                break;
-            }
-            hidx++;
-            hbx += DOCK_ICON_PITCH;
-        }
-        if (hx < 0 && ctx->term_slot >= 0) {
-            if (hidx == ctx->dock_hover)
-                hx = hbx;
-            hidx++;
-            hbx += DOCK_ICON_PITCH;
-        }
-        if (hx < 0 && hidx == ctx->dock_hover)
-            hx = SCREEN_W - DOCK_ICON_SIZE - DOCK_PAD;
-
-        if (hx >= 0)
-            sp_rect(taskbar_buf, SCREEN_W, TASKBAR_H, hx - 2, icon_y - 2,
-                    DOCK_ICON_SIZE + 4, DOCK_ICON_SIZE + 4,
-                    SPRACH_COL_DOCK_HOVER);
-
-        /* Window-title tooltip on a light chip at the dock's top-left
-         * (5x7 font, ends with an accent marker pixel). */
+    /* Window-title tooltip (taskbar-hover-preview) on a light chip at
+     * the dock's top-left (5x7 font, ends with an accent marker
+     * pixel).  Painted AFTER the icons so the chip stays readable
+     * even when it overlaps a hovered window icon. */
+    if (ctx->dock_hover >= 0)
         sprach_dock_tip(ctx);
-    }
 
 
     /* Top highlight edge (1px light line) */
@@ -1088,12 +1092,16 @@ int sprach_dock_hit(struct sprach_ctx *ctx, int mx, int my)
     if (my < SCREEN_H - TASKBAR_H || my >= SCREEN_H)
         return -1;
 
+    /* Translate the absolute screen y into dock-local coordinates —
+     * icon_y below is local to the 48px strip (0..47), while mx/my
+     * arrive as absolute screen positions. */
+    int ly = my - (SCREEN_H - TASKBAR_H);
     int icon_y = (TASKBAR_H - DOCK_ICON_SIZE) / 2;
     int idx = 0;
 
     /* entry 0: launchpad grid icon */
     if (mx >= DOCK_PAD && mx < DOCK_PAD + DOCK_ICON_SIZE &&
-        my >= icon_y && my < icon_y + DOCK_ICON_SIZE)
+        ly >= icon_y && ly < icon_y + DOCK_ICON_SIZE)
         return idx;
     idx++;
 
@@ -1102,7 +1110,7 @@ int sprach_dock_hit(struct sprach_ctx *ctx, int mx, int my)
         if (ctx->wins[i].slot < 0)
             continue;
         if (mx >= bx && mx < bx + DOCK_ICON_SIZE &&
-            my >= icon_y && my < icon_y + DOCK_ICON_SIZE)
+            ly >= icon_y && ly < icon_y + DOCK_ICON_SIZE)
             return idx;
         idx++;
         bx += DOCK_ICON_PITCH;
@@ -1110,7 +1118,7 @@ int sprach_dock_hit(struct sprach_ctx *ctx, int mx, int my)
 
     if (ctx->term_slot >= 0) {
         if (mx >= bx && mx < bx + DOCK_ICON_SIZE &&
-            my >= icon_y && my < icon_y + DOCK_ICON_SIZE)
+            ly >= icon_y && ly < icon_y + DOCK_ICON_SIZE)
             return idx;
         idx++;
         bx += DOCK_ICON_PITCH;
@@ -1118,7 +1126,7 @@ int sprach_dock_hit(struct sprach_ctx *ctx, int mx, int my)
 
     int lx = SCREEN_W - DOCK_ICON_SIZE - DOCK_PAD;
     if (mx >= lx && mx < lx + DOCK_ICON_SIZE &&
-        my >= icon_y && my < icon_y + DOCK_ICON_SIZE)
+        ly >= icon_y && ly < icon_y + DOCK_ICON_SIZE)
         return idx;
     return -1;
 }
