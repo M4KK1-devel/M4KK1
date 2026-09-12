@@ -1,11 +1,11 @@
 /* M4KK1 4P1 - logview.ld
- * logview loads at 0xEC80000, clear of the other GUI apps and m4sh variants. */
+ * logview loads at 0xE20000, clear of the other GUI apps and m4sh variants. */
 
 ENTRY(_start)
 
 SECTIONS
 {
-    . = 0xF50000;
+    . = 0xE20000;
 
     .text : {
         *(.text*)

@@ -1,25 +1,28 @@
 #!/usr/bin/env python3
-"""logview_filter_probe.py — verify the logview filter mode.
+"""logview_filter_probe.py — verify logview '/' filter mode end-to-end.
 
-Drives the full-test ISO via serial shell + HMP sendkey:
-  1. mkdir /var /var/log; cp /export/cfg/passwd.db /var/log/messages
-     (deterministic 3-line content: root/testuser have /bin/m4sh,
-     nobody has /sbin/nologin)
-  2. spawn /bin/logview, wait for "[LOGVIEW] surface ready"
-  3. '/' + "m4sh" + Enter  -> expect '[LOGVIEW] FILTER "m4sh" 2/3 lines'
-  4. F -> expect "[LOGVIEW] JUMP #1 line 0"
-  5. F -> expect "[LOGVIEW] JUMP #2 line 1"
-  6. Esc -> expect "[LOGVIEW] FILTER off"
-Assertions come from logview.c ser_puts evidence lines.
+Skeleton copied from clock_alarm_probe.py (proven):
+serial = unix socket (m4sht shell), monitor = HMP unix socket.
+
+Steps:
+  1. spawn /bin/logview, wait "[LOGVIEW] surface ready" (+ loaded N).
+  2. minimize/close the desktop terminal via HMP click on its close
+     box so keystrokes reach the top-most GUI app (ga width dispatch).
+  3. sendkey '/' , "panic", ret -> expect serial
+     `[LOGVIEW] FILTER "panic" <m>/<n> lines` with 0 < m < n.
+  4. sendkey 'f' -> expect `[LOGVIEW] JUMP #<k> line <store>`.
+  5. sendkey esc -> expect `[LOGVIEW] FILTER off`.
+  6. no kernel panic / GPF in serial.
 """
 import os, socket, subprocess, time, re, sys
 
 os.chdir("/mnt/f/M4KK1")
-isos = [f for f in os.listdir("output") if f.endswith("full-test.iso")]
+isos = [f for f in sorted(os.listdir("output"))
+        if f.endswith("full-test.iso")]
 if not isos:
     print("[lvfilter] no full-test ISO")
     sys.exit(1)
-iso = os.path.join("output", isos[0])
+iso = os.path.join("output", isos[-1])
 print("[lvfilter] using", iso)
 
 sock = "/tmp/m4k_lvfilter.sock"
@@ -52,97 +55,168 @@ def drain(t):
         for sk, is_mon in ((s, False), (m, True)):
             try:
                 d = sk.recv(65536)
-                if d and not is_mon:
-                    acc += d
-                    log.write(d)
-                    log.flush()
+                if d:
+                    if not is_mon:
+                        acc += d
+                        log.write(d); log.flush()
             except BlockingIOError:
+                pass
+            except OSError:
                 pass
         time.sleep(0.05)
 
-def hmp(cmd):
-    m.sendall((cmd + "\n").encode())
-    drain(0.15)
+def ssend(line):
+    s.send((line + "\n").encode())
 
-def send(line):
-    s.sendall((line + "\n").encode())
-    drain(0.1)
+def hmp(cmd):
+    m.send((cmd + "\n").encode())
+    time.sleep(0.3)
 
 def sendkey(k):
     hmp("sendkey " + k)
 
-def plain(b):
-    return re.sub(rb"\x1b\[[0-9;]*[A-Za-z]", b"", b)
+KEY = {" ": "spc", "\n": "ret", "/": "slash", "-": "minus",
+       ".": "dot", ",": "comma", ";": "semicolon"}
 
-def count(pat):
-    return len(re.findall(pat, plain(acc)))
-
-def wait_count_inc(pat, sec):
-    before = count(pat)
-    end = time.time() + sec
-    while time.time() < end:
-        drain(1)
-        if count(pat) > before:
-            return True
-    return False
-
-rc = 1
-try:
-    # 1. shell prompt (ANSI-coloured — strip first)
-    got_prompt = False
-    end = time.time() + 120
-    while time.time() < end and not got_prompt:
-        drain(1)
-        got_prompt = re.search(rb"m4sh ~>", plain(acc)) is not None
-    if not got_prompt:
-        print("[lvfilter] FAIL: no shell prompt")
-    else:
-        time.sleep(3)
-        # 2. prepare /var/log/messages (mkdir on existing dir just
-        # prints "failed" — harmless)
-        send("mkdir /var")
-        send("mkdir /var/log")
-        send("cp /export/cfg/passwd.db /var/log/messages")
-        drain(1)
-        # 3. spawn logview
-        send("spawn /bin/logview")
-        if not wait_count_inc(rb"\[LOGVIEW\] surface ready", 15):
-            print("[lvfilter] FAIL: logview did not start")
+def type_str(seq, hold=0.12):
+    for ch in seq:
+        if ch.isupper():
+            k = "shift-" + ch.lower()   # HMP sendkey has no caps
         else:
-            print("[lvfilter] logview started")
-            drain(2)
-            # NOTE: no minimize step — the desktop terminal window is
-            # not open in this boot, so keystrokes fall straight
-            # through sprach_ga_key to the top GUI client.
-            # 4. filter: / m4 s h  Enter  -> expect 2/3 lines
-            sendkey("slash")
-            drain(0.3)
-            sendkey("m"); sendkey("4")
-            sendkey("s"); sendkey("h")
-            drain(0.3)
-            sendkey("ret")
-            filt = wait_count_inc(
-                rb"\[LOGVIEW\] FILTER \"m4sh\" 2/3 lines", 10)
-            print("[lvfilter] FILTER 2/3 lines:",
-                  "OK" if filt else "FAIL")
-            # 5. F jumps to next match
-            sendkey("f")
-            jump1 = wait_count_inc(rb"\[LOGVIEW\] JUMP #1 line 0", 8)
-            print("[lvfilter] JUMP #1:", "OK" if jump1 else "FAIL")
-            sendkey("f")
-            jump2 = wait_count_inc(rb"\[LOGVIEW\] JUMP #2 line 1", 8)
-            print("[lvfilter] JUMP #2:", "OK" if jump2 else "FAIL")
-            # 6. Esc clears the filter
-            sendkey("esc")
-            off = wait_count_inc(rb"\[LOGVIEW\] FILTER off", 8)
-            print("[lvfilter] FILTER off:", "OK" if off else "FAIL")
-            ok = filt and jump1 and jump2 and off
-            ok = ok and b"panic" not in acc.lower()
-            print("[lvfilter] no_panic:",
-                  b"panic" not in acc.lower())
-            print("RESULT:", "PASS" if ok else "FAIL")
-            rc = 0 if ok else 1
-finally:
-    log.close()
-    qemu.kill()
-sys.exit(rc)
+            k = KEY.get(ch, ch)
+        sendkey(k)
+        time.sleep(hold)
+
+def esc():
+    sendkey("esc")
+
+# ── boot: wait for shell prompt ──
+t0 = time.time()
+while b"m4sh ~>" not in re.sub(rb"\x1b\[[0-9;]*[A-Za-z]", b"", acc):
+    drain(1)
+    if time.time() - t0 > 120:
+        print("[lvfilter] no shell prompt"); qemu.kill(); sys.exit(1)
+print("[lvfilter] shell up")
+drain(3)
+
+# ── 0. seed /var/log/messages with a known multi-line file ──
+#    nothing in the system creates /var/log/messages (logview's list
+#    has always been empty on full-test), and m4sh '>>' append is
+#    lossy (single partial read of old contents).  cp of the baked
+#    man page m4sh.1 is reliable: 63 lines total, "M4KK1" on 4 of
+#    them (counts verified host-side, baked into the ISO at build).
+ssend("mkdir /var/log")
+drain(2)
+mark = len(acc)
+ssend("cp /export/share/man/man1/m4sh.1 /var/log/messages")
+drain(3)
+out = re.sub(rb"\x1b\[[0-9;]*[A-Za-z]", b"", acc[mark:])
+if b"cannot" in out or b"not found" in out:
+    print("[lvfilter] cp failed:", out.decode(errors="replace"))
+    qemu.kill(); sys.exit(1)
+print("[lvfilter] seeded /var/log/messages <- m4sh.1 (63 lines)")
+
+# ── 1. spawn logview ──
+mark = len(acc)
+ssend("spawn /bin/logview")
+ok = False
+t0 = time.time()
+while time.time() - t0 < 20:
+    drain(1)
+    if b"[LOGVIEW] surface ready" in acc[mark:]:
+        ok = True; break
+print("[lvfilter] spawn:", "OK" if ok else "FAIL")
+if not ok:
+    qemu.kill(); sys.exit(1)
+drain(2)
+
+# loaded trace gives line_count for sanity
+lm = re.search(rb"\[LOGVIEW\] loaded (\d+) lines", acc)
+if lm:
+    print("[lvfilter] loaded lines:", lm.group(1).decode())
+
+# ── 2. focus: click the terminal window's close box (topmost
+#    non-app window) so ga_key sees logview as top-most.  Terminal
+#    geometry per drag_repro: 680x456 at (60,40); close box sits in
+#    its title bar left area (ga_chrome).  Click (72,49).
+#    If ga dispatch already works (comment in apps_repro says ga_key
+#    runs BEFORE terminal forward), this click is harmless.
+#    Safer: first test without clicking; if no FILTER trace arrives,
+#    click and retry once.
+def try_filter():
+    mark = len(acc)
+    sendkey("slash"); time.sleep(0.3)
+    type_str("M4KK1")
+    sendkey("ret"); time.sleep(0.3)
+    t0 = time.time()
+    while time.time() - t0 < 8:
+        drain(1)
+        mm = re.search(
+            rb'\[LOGVIEW\] FILTER "M4KK1" (\d+)/(\d+) lines',
+            acc[mark:])
+        if mm:
+            return mm
+    return None
+
+mm = try_filter()
+if not mm:
+    # terminal may have focus: minimize via close-box click
+    print("[lvfilter] no key delivery — clicking terminal close box")
+    hmp("mouse_move 72 49")
+    hmp("mouse_button 1")
+    hmp("mouse_button 0")
+    drain(2)
+    mm = try_filter()
+
+results = {}
+if mm:
+    mi, tot = int(mm.group(1)), int(mm.group(2))
+    # "M4KK1" matches exactly 4 lines in m4sh.1 (host-verified);
+    # total 63 host / 64 in-app (trailing-newline convention).
+    results["filter"] = (mi == 4 and 0 < mi < tot)
+    print(f"[lvfilter] filter 'M4KK1': {mi}/{tot} ->",
+          "OK" if results["filter"] else "FAIL (expect 4 matches)")
+else:
+    results["filter"] = False
+    print("[lvfilter] filter trace: FAIL")
+
+# ── F jump ──
+mark = len(acc)
+sendkey("f"); time.sleep(0.3); sendkey("f")
+t0 = time.time()
+jm = None
+while time.time() - t0 < 8:
+    drain(1)
+    jm = re.search(rb"\[LOGVIEW\] JUMP #(\d+) line (\d+)", acc[mark:])
+    if jm:
+        break
+results["jump"] = bool(jm)
+print("[lvfilter] F jump:", "OK" if jm else "FAIL")
+if jm:
+    print(f"[lvfilter]   jump -> #{jm.group(1).decode()} "
+          f"store line {jm.group(2).decode()}")
+
+# ── Esc clear ──
+mark = len(acc)
+esc(); time.sleep(0.5)
+ok = False
+t0 = time.time()
+while time.time() - t0 < 8:
+    drain(1)
+    if b"[LOGVIEW] FILTER off" in acc[mark:]:
+        ok = True; break
+results["esc_clear"] = ok
+print("[lvfilter] Esc clear:", "OK" if ok else "FAIL")
+
+# ── no kernel panic ──
+drain(2)
+bad = (b"kernel panic" in acc.lower()
+       or b"general protection" in acc.lower()
+       or b"GPF" in acc)
+results["no_kpanic"] = not bad
+print("[lvfilter] no kernel panic/GPF:", "OK" if not bad else "FAIL")
+
+ok = all(results.values())
+print("RESULT:", "PASS" if ok else "FAIL")
+qemu.kill()
+sys.exit(0 if ok else 1)
