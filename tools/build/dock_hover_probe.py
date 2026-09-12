@@ -16,8 +16,12 @@ Colour format is 0x00BBGGRR (matches fm_visual.py conventions).
 import os, socket, subprocess, time, sys
 
 os.chdir("/mnt/f/M4KK1")
+# Prefer full-test.iso (has M4K_TEST_AUTOLOGIN — boots straight to
+# the desktop).  A plain full.iso boots into the MDM login gate and
+# the probe times out; lexicographic sort would wrongly pick it
+# (full.iso > full-test.iso), so match the full-test suffix first.
 isos = sorted(f for f in os.listdir("output")
-              if f.endswith(".iso") and "full" in f)
+              if f.endswith("full-test.iso"))
 if not isos:
     print("no full-test ISO; rebuild first")
     sys.exit(2)
@@ -199,8 +203,10 @@ print(f"[dockhover] launcher plate ring hits={ring}")
 ok_plate_t = ring >= 100
 
 # --- Phase 3: move away to work area — hover state must clear ---
+# 3s settle (not 2s): the taskbar repaint + copland composite can lag
+# a full anim tick (~0.5s each way) and a tight window flaked here.
 jump_to(400, 300)
-drain(2.0)
+drain(3.0)
 dump("/tmp/dockhover3.ppm")
 pix3 = load_ppm("/tmp/dockhover3.ppm")
 plate3 = sum(1 for x in (6, 7) for y in range(571, 594)
