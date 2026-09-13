@@ -760,7 +760,11 @@ void _start(void)
             }
         }
 
-        m4k_yield();
+        /* hlt-sleep instead of bare yield (same fix as calc_gui):
+         * the terminal is a permanent desktop resident, and a
+         * yield-only loop starves the WM once several GUI apps run
+         * (measured 1 FPS desktop-wide with 12 processes). */
+        m4k_sleep(5);
     }
 
     ser_puts("[TERM] surface gone, killing shell pid=");

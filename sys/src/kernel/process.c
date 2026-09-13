@@ -385,6 +385,35 @@ int mkrn_process_enqueue_ready(mkrn_process_t *p)
     return ready_enqueue(p);
 }
 
+/* ── Syscall-yield quantum gate (fps-optimization round) ──
+ *
+ * isr_m4k_syscall used to call mkrn_process_yield() after EVERY
+ * syscall.  Sprach's main loop issues a dozen int-0x4D polls per
+ * frame (mouse/keyboard/uptime), so each poll re-queued the WM
+ * behind every other process — with 5 processes the WM's frame
+ * time ballooned to ~330 ms (≈3 FPS, measured 2026-09-13).
+ *
+ * Gate the yield on a 2 ms quantum: the ISR only switches when
+ * the current process has actually been running for a while.
+ * Blocking paths (sleep, wait) still call mkrn_process_yield()
+ * directly and are unaffected.  Tuning history: 5 ms → 25 FPS
+ * (sibling slices dominated); 2 ms → 27 FPS; 1 ms → the full
+ * round-robin lap across 5 resident processes costs ~5 ms and
+ * the WM sustains 30+ FPS with margin. */
+#define SYSCALL_YIELD_QUANTUM_MS 1
+void mkrn_process_syscall_yield(void)
+{
+    if (!scheduler_enabled || !current)
+        return;
+    uint32_t now = mkrn_timer_get_uptime();
+    if (current->last_resume_ms == 0)
+        current->last_resume_ms = now;   /* first touch */
+    if (now - current->last_resume_ms < SYSCALL_YIELD_QUANTUM_MS)
+        return;                          /* inside quantum: keep CPU */
+    current->last_resume_ms = now;
+    mkrn_process_yield();
+}
+
 void mkrn_sched_start(void)
 {
     scheduler_enabled = 1;
@@ -456,6 +485,7 @@ mkrn_process_t *mkrn_process_switch_pick(void)
         g_current_process = next;
         next->state_tags &= ~(M4K_SCHED_READY | M4K_SCHED_SLEEPING);
         next->state_tags |= M4K_SCHED_RUNNING;
+        next->last_resume_ms = mkrn_timer_get_uptime();
         g_switch_esp = next->thread_esp;
         mkrn_set_kernel_stack(next->kernel_stack);
     }

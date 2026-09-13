@@ -581,6 +581,11 @@ void _start(void)
             ca_render(shm, my_slot);
             need_render = 0;
         }
-        m4k_yield();
+        /* hlt-sleep instead of bare yield: a yield-only loop re-queues
+         * the process immediately and, once a dozen GUI apps are
+         * resident, the scheduler lap between returns starves the WM
+         * (measured: desktop-wide 1 FPS).  5 ms poll cadence keeps
+         * key latency imperceptible. */
+        m4k_sleep(5);
     }
 }

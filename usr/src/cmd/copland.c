@@ -778,7 +778,10 @@ void _start(void)
             }
         }
 
-        /* Coarse frame pacing (no sleep syscall in 4P1) */
-        for (volatile int i = 0; i < 5000; i++);
+        /* Coarse frame pacing: hlt-sleep 1 ms instead of the old
+         * volatile spin loop (which burned a full quantum slice per
+         * iteration and delayed every other process's syscall-yield
+         * by up to a full 5 ms gate window). */
+        m4k_sleep(1);
     }
 }

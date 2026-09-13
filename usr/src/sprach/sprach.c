@@ -4899,6 +4899,16 @@ void _start(void)
     ser_puts("' initialized\n");
     ser_puts("[SPRACH] Entering main loop\n");
 
+#ifdef SPRACH_FPS_DIAG
+    /* Per-stage timing accumulators (see the main loop). */
+    static uint32_t fpsdiag_frames, fpsdiag_last;
+    static uint32_t fpsdiag_ms_mouse, fpsdiag_ms_paint;
+    static uint32_t fpsdiag_ms_tb, fpsdiag_ms_mb, fpsdiag_ms_kbd;
+    static uint32_t fpsdiag_ms_loop;
+    uint32_t fpsdiag_t0 = musr_sc_uptime();
+    fpsdiag_last = fpsdiag_t0;
+#endif
+
     /*
      * ── MAIN LOOP (refactored) ──
      *
@@ -4918,6 +4928,41 @@ void _start(void)
 
     for (;;) {
         ctx.tick++;
+
+#ifdef SPRACH_FPS_DIAG
+        /* ── FPS + per-stage timing instrumentation.  Build with
+         * -DSPRACH_FPS_DIAG to enable; auto-throttled to one line
+         * per second so the serial log stays readable. ── */
+        {
+            uint32_t t_loop = musr_sc_uptime();
+            fpsdiag_frames++;
+            if (t_loop - fpsdiag_last >= 1000) {
+                ser_puts("[FPS] ");
+                print_u32(fpsdiag_frames);
+                ser_puts(" FPS  mouse=");
+                print_u32(fpsdiag_ms_mouse / fpsdiag_frames);
+                ser_puts("ms paint=");
+                print_u32(fpsdiag_ms_paint / fpsdiag_frames);
+                ser_puts("ms tb=");
+                print_u32(fpsdiag_ms_tb / fpsdiag_frames);
+                ser_puts("ms mb=");
+                print_u32(fpsdiag_ms_mb / fpsdiag_frames);
+                ser_puts("ms kbd=");
+                print_u32(fpsdiag_ms_kbd / fpsdiag_frames);
+                ser_puts("ms loop=");
+                print_u32(fpsdiag_ms_loop / fpsdiag_frames);
+                ser_puts("ms (avg over frame)\n");
+                fpsdiag_frames = 0;
+                fpsdiag_ms_mouse = 0;
+                fpsdiag_ms_paint = 0;
+                fpsdiag_ms_tb = 0;
+                fpsdiag_ms_mb = 0;
+                fpsdiag_ms_kbd = 0;
+                fpsdiag_ms_loop = 0;
+                fpsdiag_last = t_loop;
+            }
+        }
+#endif
 
         /* ── DIAG: frame timing + memory watchdog.  Off by default;
          * build with -DSPRACH_DIAG to re-enable the ≈2 s serial
@@ -4969,17 +5014,29 @@ void _start(void)
             ((epoch_now % 86400) != ctx.menu_last_second) ||
             ((ctx.tick % SPRACH_ANIM_TICKS) == 0);
         if (need_composite) {
+#ifdef SPRACH_FPS_DIAG
+            uint32_t t_p = musr_sc_uptime();
+#endif
             for (int i = 0; i < SPRACH_WINDOW_COUNT; i++) {
                 if (ctx.wins[i].slot >= 0 && !ctx.wins[i].hidden)
                     sprach_paint_window(&ctx, &ctx.wins[i]);
             }
+#ifdef SPRACH_FPS_DIAG
+            fpsdiag_ms_paint += musr_sc_uptime() - t_p;
+#endif
         }
 
         /* ── Dock: repaint only when the window set or the active
          * window / terminal-launcher highlight changed ── */
         int taskbar_repainted = 0;
         if (sprach_taskbar_dirty(&ctx)) {
+#ifdef SPRACH_FPS_DIAG
+            uint32_t t_tb = musr_sc_uptime();
+#endif
             sprach_draw_taskbar(&ctx);
+#ifdef SPRACH_FPS_DIAG
+            fpsdiag_ms_tb += musr_sc_uptime() - t_tb;
+#endif
             taskbar_repainted = 1;
         }
 
@@ -4987,8 +5044,14 @@ void _start(void)
         int menubar_repainted = 0;
         int sec_now = epoch_now % 86400;
         if (sec_now != ctx.menu_last_second) {
+#ifdef SPRACH_FPS_DIAG
+            uint32_t t_mb = musr_sc_uptime();
+#endif
             ctx.menu_last_second = sec_now;
             sprach_draw_menubar(&ctx);
+#ifdef SPRACH_FPS_DIAG
+            fpsdiag_ms_mb += musr_sc_uptime() - t_mb;
+#endif
             menubar_repainted = 1;
             /* Clock popup (if open) repaints on the same 1 Hz tick. */
             if (ctx.clock_open && ctx.clock_slot >= 0) {
@@ -5028,6 +5091,10 @@ void _start(void)
         shm->heartbeat++;
 
         /* ── Keyboard ── */
+#ifdef SPRACH_FPS_DIAG
+        {
+        uint32_t t_kbd = musr_sc_uptime();
+#endif
         struct m4k_keyboard_event ev;
         while (m4k_get_keyboard_event(&ev)) {
             if (!ev.ascii_char)
@@ -5158,12 +5225,31 @@ void _start(void)
 
             sprach_mode_key(&ctx, ev.ascii_char);
         }
+#ifdef SPRACH_FPS_DIAG
+        fpsdiag_ms_kbd += musr_sc_uptime() - t_kbd;
+        }
+#endif
 
         /* ── Mouse ── */
+#ifdef SPRACH_FPS_DIAG
+        {
+            uint32_t t_ms = musr_sc_uptime();
+            sprach_handle_mouse(&ctx);
+            fpsdiag_ms_mouse += musr_sc_uptime() - t_ms;
+        }
+#else
         sprach_handle_mouse(&ctx);
+#endif
 
-        /* ── Frame pacing (~50 FPS).  The syscall ISR yields to other
-         * processes after the handler, so no extra m4k_yield needed. ── */
-        m4k_sleep(20);
+        /* ── Frame pacing.  The syscall ISR (quantum-gated yield)
+         * hands the CPU to other processes once the 1 ms quantum
+         * expires, so fairness no longer depends on this sleep;
+         * 5 ms keeps the poll cadence high (input latency low)
+         * while still hlt-idling between polls. ── */
+#ifdef SPRACH_FPS_DIAG
+        fpsdiag_ms_loop += musr_sc_uptime() - fpsdiag_t0;
+        fpsdiag_t0 = musr_sc_uptime();   /* reset per-frame */
+#endif
+        m4k_sleep(5);
     }
 }

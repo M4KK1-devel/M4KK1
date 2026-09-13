@@ -472,6 +472,11 @@ if [ -n "$SPR_DRAW_OBJS" ]; then
 else
     UCC_FLAGS_ZIG=""
 fi
+# FPS diagnostics build: SPRACH_FPS_DIAG=1 adds the per-second
+# [FPS] serial telemetry line (frames + per-stage ms averages).
+if [ "${SPRACH_FPS_DIAG:-0}" = "1" ]; then
+    UCC_FLAGS_ZIG="$UCC_FLAGS_ZIG -DSPRACH_FPS_DIAG"
+fi
 $UCC $M4SH_CFLAGS $UCC_FLAGS_ZIG -c usr/src/sprach/sprach.c -o usr/src/sprach/sprach.o
 for m in stack; do
     $UCC $M4SH_CFLAGS -c "usr/src/sprach/sprach_mode_${m}.c" -o "usr/src/sprach/sprach_mode_${m}.o"

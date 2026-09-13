@@ -120,6 +120,11 @@ typedef struct mkrn_process {
      * #GP/#DF'd on resume. */
     uint32_t user_frame[6];
     uint32_t sleep_ticks;
+    /* Uptime (ms) when this process was last switched TO (or first
+     * gated): the syscall-yield quantum check in
+     * mkrn_process_syscall_yield() uses it to avoid re-queueing the
+     * caller behind every peer on each int-0x4D poll. */
+    uint32_t last_resume_ms;
     uint32_t exit_status;
     uint32_t pending_signals;
     uint32_t zombie_children;
@@ -181,6 +186,7 @@ int mkrn_process_is_ready(pid_t pid);
 uint32_t mkrn_process_get_tags(pid_t pid);
 uint32_t mkrn_process_get_thread_esp(pid_t pid);
 uint32_t mkrn_process_get_pid(void);
+void mkrn_process_syscall_yield(void);
 uint32_t mkrn_process_get_ppid(void);
 uint32_t mkrn_process_get_uid(void);
 uint32_t mkrn_process_get_euid(void);

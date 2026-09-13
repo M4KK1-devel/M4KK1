@@ -429,8 +429,10 @@ isr_syscall:
     ; Cooperative scheduling: give other ready processes (e.g. a forked
     ; child) a chance to run before returning to user mode.  EAX holds
     ; the syscall return value, so save it across the switch.
+    ; Quantum-gated variant: only actually switches when the current
+    ; process has run >= 5 ms (see mkrn_process_syscall_yield).
     push eax
-    call mkrn_process_yield
+    call mkrn_process_syscall_yield
     pop eax
 
     ; NOTE: this ISR pushes EAX first (bottom of the saved block, [esp+24]),
@@ -487,8 +489,9 @@ isr_m4k_syscall:
     ; Cooperative scheduling: give other ready processes (e.g. a forked
     ; child) a chance to run before returning to user mode.  EAX holds
     ; the syscall return value, so save it across the switch.
+    ; Quantum-gated variant (>= 5 ms quantum, process.c).
     push eax
-    call mkrn_process_yield
+    call mkrn_process_syscall_yield
     pop eax
 
     add esp, 4              ; skip saved EAX (syscall number at entry)
@@ -592,6 +595,7 @@ extern m4k_syscall_handler
 extern mkrn_idt_handle_irq
 extern g_current_process
 extern mkrn_process_yield
+extern mkrn_process_syscall_yield
 extern mkrn_console_write
 extern mkrn_console_write_hex
 
