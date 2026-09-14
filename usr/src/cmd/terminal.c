@@ -146,7 +146,9 @@ static const uint32_t term_256_rgb[256] = {
 typedef struct {
     char ch;
     uint16_t attr;         /* bit15 set: xterm-256 index in low byte;
-                            * else ATTR_* palette below */
+                            * else ATTR_* palette above */
+    uint16_t bg;           /* background, same encoding as attr:
+                            * ATTR_256|idx, else ATTR_TEXT = default */
 } term_cell_t;
 
 #define ATTR_TEXT   0
@@ -248,6 +250,7 @@ static void term_clear_screen(void)
         for (int c = 0; c < TERM_COLS; c++) {
             term_lines[r][c].ch = ' ';
             term_lines[r][c].attr = ATTR_TEXT;
+            term_lines[r][c].bg = ATTR_TEXT;
         }
     term_top = TERM_SCROLLBACK;
     term_row = 0;
@@ -262,6 +265,7 @@ static void term_scroll_up(void)
     for (int c = 0; c < TERM_COLS; c++) {
         term_lines[term_top - 1][c].ch = ' ';
         term_lines[term_top - 1][c].attr = ATTR_TEXT;
+        term_lines[term_top - 1][c].bg = ATTR_TEXT;
     }
     term_top--;
     if (term_row > 0)
@@ -291,17 +295,19 @@ static void term_newline(void)
         for (int c = 0; c < TERM_COLS; c++) {
             term_lines[TERM_ROWS + TERM_SCROLLBACK - 1][c].ch = ' ';
             term_lines[TERM_ROWS + TERM_SCROLLBACK - 1][c].attr = ATTR_TEXT;
+            term_lines[TERM_ROWS + TERM_SCROLLBACK - 1][c].bg = ATTR_TEXT;
         }
     }
     for (int c = 0; c < TERM_COLS; c++) {
         term_lines[term_top + TERM_ROWS - 1][c].ch = ' ';
         term_lines[term_top + TERM_ROWS - 1][c].attr = ATTR_TEXT;
+        term_lines[term_top + TERM_ROWS - 1][c].bg = ATTR_TEXT;
     }
     /* Scroll shifted every viewport row: whole body is damaged */
     dmg_all_rows();
 }
 
-static void term_putc_attr(char ch, uint16_t attr)
+static void term_putc_attr(char ch, uint16_t attr, uint16_t bg)
 {
     if (ch == '\n') {
         term_newline();
@@ -316,13 +322,18 @@ static void term_putc_attr(char ch, uint16_t attr)
             term_col--;
         term_lines[term_top + term_row][term_col].ch = ' ';
         term_lines[term_top + term_row][term_col].attr = ATTR_TEXT;
+        term_lines[term_top + term_row][term_col].bg = ATTR_TEXT;
         dmg_row(term_row);
         return;
     }
     if (ch == '\t') {
         int n = 8 - (term_col % 8);
-        while (n-- > 0 && term_col < TERM_COLS)
-            term_lines[term_top + term_row][term_col++].ch = ' ';
+        while (n-- > 0 && term_col < TERM_COLS) {
+            term_lines[term_top + term_row][term_col].ch = ' ';
+            term_lines[term_top + term_row][term_col].attr = attr;
+            term_lines[term_top + term_row][term_col].bg = bg;
+            term_col++;
+        }
         dmg_row(term_row);
         return;
     }
@@ -333,6 +344,7 @@ static void term_putc_attr(char ch, uint16_t attr)
     }
     term_lines[term_top + term_row][term_col].ch = ch;
     term_lines[term_top + term_row][term_col].attr = attr;
+    term_lines[term_top + term_row][term_col].bg = bg;
     term_col++;
     dmg_row(term_row);
 }
@@ -342,18 +354,18 @@ static void term_putc_attr(char ch, uint16_t attr)
  * index, and unknown sequences are swallowed.
  *
  * SGR support: 0 (reset) / 30-37 (fg) / 39 (default fg) / 90-97
- * (bright fg) / 38;5;n (xterm-256 fg) / 48;5;n (xterm-256 bg,
- * consumed but not rendered — the terminal keeps its dark body
- * background by design).  Anything else in a CSI sequence is
- * dropped as before. */
+ * (bright fg) / 38;5;n (xterm-256 fg) / 48;5;n (xterm-256 bg) /
+ * 40-47 (basic bg → palette 0-7) / 100-107 (bright bg → 8-15) /
+ * 49 (default bg).  Anything else in a CSI sequence is dropped. */
 
-static int ansi_state = 0;   /* 0: normal, 1: saw ESC, 2: in CSI */
-static int ansi_params[8];   /* collected SGR parameters */
+static int ansi_state = 0;    /* 0: normal, 1: saw ESC, 2: in CSI */
+static int ansi_params[16];   /* collected SGR parameters */
 static int ansi_nparams;
-static int ansi_cur;         /* parameter under construction */
+static int ansi_cur;          /* parameter under construction */
 
-/* Current SGR foreground applied to incoming text (screen-space). */
+/* Current SGR colors applied to incoming text (screen-space). */
 static uint16_t sgr_fg = ATTR_TEXT;   /* ATTR_* or ATTR_256|idx */
+static uint16_t sgr_bg = ATTR_TEXT;   /* same encoding; default = body */
 
 /* Basic 8-color + bright maps → legacy ATTR_* (prompt/err keep
  * their dedicated shades; other basic colors fall back to text). */
@@ -366,15 +378,25 @@ static uint16_t sgr_basic_attr(int p)
     }
 }
 
-/* Serial evidence line: "[TERM] SGR <hex attr> rgb=r,g,b".
- * Pure digit/hex output (no printf machinery needed). */
+/* Basic bg codes 40-47 / 100-107 map straight onto the xterm-256
+ * base palette (0-7 / 8-15), reusing the ATTR_256|idx encoding. */
+static uint16_t sgr_basic_bg(int p)
+{
+    if (p >= 40 && p <= 47)
+        return (uint16_t)(ATTR_256 | (p - 40));
+    return (uint16_t)(ATTR_256 | (p - 100 + 8));
+}
+
+/* Serial evidence line: "[TERM] SGR <hex fg> rgb=r,g,b bg=<hex> bg_rgb=r,g,b".
+ * Pure digit/hex output (no printf machinery needed).  The fg half
+ * keeps the historical format (probes grep for it). */
 static void sgr_report(void)
 {
-    char b[48];
+    char b[96];
     int n = 0;
-    b[n++] = '['; b[n++] = 'T'; b[n++] = 'E'; b[n++] = 'R';
-    b[n++] = 'M'; b[n++] = ']'; b[n++] = ' ';
-    b[n++] = 'S'; b[n++] = 'G'; b[n++] = 'R'; b[n++] = ' ';
+    const char *pfx = "[TERM] SGR ";
+    while (*pfx)
+        b[n++] = *pfx++;
     uint16_t a = sgr_fg;
     for (int shift = 12; shift >= 0; shift -= 4) {
         int v = (a >> shift) & 0xF;
@@ -384,6 +406,28 @@ static void sgr_report(void)
     b[n++] = 'r'; b[n++] = 'g'; b[n++] = 'b'; b[n++] = '=';
     uint32_t c = attr_color(sgr_fg);
     int r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, bl = c & 0xFF;
+    for (int comp = 0; comp < 3; comp++) {
+        int v = comp == 0 ? r : comp == 1 ? g : bl;
+        if (comp > 0)
+            b[n++] = ',';
+        if (v >= 100)
+            b[n++] = '0' + v / 100;
+        if (v >= 10)
+            b[n++] = '0' + (v / 10) % 10;
+        b[n++] = '0' + v % 10;
+    }
+    b[n++] = ' ';
+    b[n++] = 'b'; b[n++] = 'g'; b[n++] = '=';
+    a = sgr_bg;
+    for (int shift = 12; shift >= 0; shift -= 4) {
+        int v = (a >> shift) & 0xF;
+        b[n++] = v < 10 ? '0' + v : 'a' + v - 10;
+    }
+    b[n++] = ' ';
+    b[n++] = 'b'; b[n++] = 'g'; b[n++] = '_'; b[n++] = 'r'; b[n++] = 'g';
+    b[n++] = 'b'; b[n++] = '=';
+    c = attr_color(sgr_bg);
+    r = (c >> 16) & 0xFF; g = (c >> 8) & 0xFF; bl = c & 0xFF;
     for (int comp = 0; comp < 3; comp++) {
         int v = comp == 0 ? r : comp == 1 ? g : bl;
         if (comp > 0)
@@ -406,23 +450,30 @@ static void sgr_apply(const int *p, int np)
     if (np == 0) {
         /* \x1B[m == reset */
         sgr_fg = ATTR_TEXT;
+        sgr_bg = ATTR_TEXT;
         return;
     }
     while (i < np) {
         int v = p[i];
         if (v == 0) {
             sgr_fg = ATTR_TEXT;
+            sgr_bg = ATTR_TEXT;
         } else if (v == 39) {
             sgr_fg = ATTR_TEXT;
+        } else if (v == 49) {
+            sgr_bg = ATTR_TEXT;
         } else if ((v >= 30 && v <= 37) || (v >= 90 && v <= 97)) {
             sgr_fg = sgr_basic_attr(v);
+        } else if ((v >= 40 && v <= 47) || (v >= 100 && v <= 107)) {
+            sgr_bg = sgr_basic_bg(v);
         } else if (v == 38 || v == 48) {
             /* extended color: only 5;n (256-color) supported */
             if (i + 2 < np && p[i + 1] == 5 &&
                 p[i + 2] >= 0 && p[i + 2] <= 255) {
                 if (v == 38)
                     sgr_fg = (uint16_t)(ATTR_256 | p[i + 2]);
-                /* 48;5;n: consumed, not rendered (dark bg by design) */
+                else
+                    sgr_bg = (uint16_t)(ATTR_256 | p[i + 2]);
                 i += 2;
             } else {
                 /* 38;2;r;g;b truecolor or malformed: skip the
@@ -430,7 +481,7 @@ static void sgr_apply(const int *p, int np)
                 int j = i + 1;
                 while (j < np && p[j] != 38 && p[j] != 48 &&
                        !(p[j] >= 30 && p[j] <= 39) &&
-                       !(p[j] >= 90 && p[j] <= 97) && p[j] != 0)
+                       !(p[j] >= 90 && p[j] <= 107) && p[j] != 0)
                     j++;
                 i = j - 1;
             }
@@ -476,7 +527,7 @@ static void term_ansi_filter(char ch)
         ansi_state = 1;
         return;
     }
-    term_putc_attr(ch, sgr_fg);
+    term_putc_attr(ch, sgr_fg, sgr_bg);
 }
 
 /* ── Shell child plumbing ── */
@@ -484,7 +535,7 @@ static void term_ansi_filter(char ch)
 static void term_puts_err(const char *s)
 {
     while (*s)
-        term_putc_attr(*s++, ATTR_ERR);
+        term_putc_attr(*s++, ATTR_ERR, ATTR_TEXT);
 }
 
 static void term_spawn_shell(void)
@@ -569,6 +620,9 @@ static void term_render(void)
         int y = TERM_ORIGIN_Y + r * TERM_CHAR_H;
         for (int c = 0; c < TERM_COLS; c++) {
             term_cell_t cell = term_lines[src][c];
+            if (cell.bg != ATTR_TEXT)
+                term_rect(TERM_ORIGIN_X + c * TERM_CHAR_W, y,
+                          TERM_CHAR_W, TERM_CHAR_H, attr_color(cell.bg));
             if (cell.ch == ' ')
                 continue;
             term_glyph(TERM_ORIGIN_X + c * TERM_CHAR_W, y,

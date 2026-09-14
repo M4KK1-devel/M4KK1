@@ -18,7 +18,7 @@ m4shg child, then asserts:
 Non-goal: exact glyph positions — text row found by scanning for the
 marker line's distinctive colors.
 """
-import subprocess, time, sys, os, socket
+import subprocess, time, sys, os, socket, select
 
 os.chdir("/mnt/f/M4KK1")
 ISOS = [f for f in os.listdir("output") if f.endswith("full-test.iso")]
@@ -66,14 +66,20 @@ def sendkey(keys):
     time.sleep(0.3)
 
 def pump(t=2.0):
-    """Read serial + monitor traffic into buf/log."""
+    """Read serial + monitor traffic into buf/log.
+    select() with timeout: read1() on an empty pipe would block
+    forever, and since the m4k_sleep() pacing commits the guest can
+    stay serial-silent for long stretches — a bare read1() hangs
+    the probe right after 'terminal open'."""
     end = time.time() + t
     while time.time() < end:
-        chunk = qemu.stdout.read1(65536) if hasattr(qemu.stdout, "read1") else b""
-        if chunk:
-            buf.extend(chunk)
-            log.write(chunk)
-            log.flush()
+        r, _, _ = select.select([qemu.stdout], [], [], 0.05)
+        if r:
+            chunk = qemu.stdout.read1(65536)
+            if chunk:
+                buf.extend(chunk)
+                log.write(chunk)
+                log.flush()
         try:
             m.recv(65536)
         except BlockingIOError:
@@ -144,7 +150,7 @@ buf.clear()
 move_to(800 - 32 - 8 + 16, 600 - 48 + (48 - 32) // 2 + 16)
 mdrain(0.3)
 left_click()
-if not wait_for("[SPRACH] terminal window registered", 30):
+if not wait_for("[TERM] terminal ready", 30):
     print("FAIL: terminal window did not open")
     qemu.kill()
     sys.exit(1)
@@ -157,10 +163,10 @@ pump(2)
 buf.clear()
 
 # 4. type the test command (single line, lowercase):
-#    echo '\033[38;5;196mrr\033[38;5;51mcc\033[48;5;21mbb\033[0mdd'
+#    echo '\033[38;5;196mrr\033[38;5;51mcc\033[48;5;21mbb\033[41mqq\033[0mdd'
 #    echo interprets \033 octal escapes by default; single quotes
 #    keep the whole thing one argument.
-literal = "echo '\\033[38;5;196mrr\\033[38;5;51mcc\\033[48;5;21mbb\\033[0mdd'"
+literal = "echo '\\033[38;5;196mrr\\033[38;5;51mcc\\033[48;5;21mbb\\033[41mqq\\033[0mdd'"
 type_cmd(literal + "\n")
 pump(4)
 
@@ -174,8 +180,13 @@ check("A1 serial [TERM] SGR 80c4 rgb=255,0,0 (fg 196)",
       "[TERM] SGR 80c4 rgb=255,0,0" in s)
 check("A2 serial [TERM] SGR 8033 rgb=0,255,255 (fg 51)",
       b"[TERM] SGR 8033 rgb=0,255,255" in buf)
-check("A3 serial [TERM] SGR 0000 after reset (48;5 + 0)",
-      "[TERM] SGR 0000" in s)
+check("A3 serial [TERM] SGR 0000 after reset (48;5;41 + 0)",
+      s.find("bg=8001") >= 0 and
+      s.rfind("[TERM] SGR 0000") > s.find("bg=8001"))
+check("A4 serial bg=8015 bg_rgb=0,0,255 (48;5;21 parsed+stored)",
+      "bg=8015 bg_rgb=0,0,255" in s)
+check("A5 serial bg=8001 bg_rgb=128,0,0 (basic bg 41 -> palette 1)",
+      "bg=8001 bg_rgb=128,0,0" in s)
 
 # 5. screendump pixel assert
 m.sendall(b"screendump /tmp/t256.ppm\n")
@@ -194,8 +205,9 @@ try:
     def sample_rgba(x, y):
         off = (y * w + x) * 3
         return pix[off], pix[off + 1], pix[off + 2]
-    # scan full frame for pure red (255,0,0) and pure cyan (0,255,255)
-    found_red = found_cyan = False
+    # scan full frame for pure red (255,0,0), pure cyan (0,255,255)
+    # and pure blue (0,0,255 — the 48;5;21 background blocks)
+    found_red = found_cyan = found_blue = False
     step = 3
     npix = w * h
     for off in range(0, npix * 3, 3 * step):
@@ -204,10 +216,13 @@ try:
             found_red = True
         elif (r, g, b) == (0, 255, 255):
             found_cyan = True
-        if found_red and found_cyan:
+        elif (r, g, b) == (0, 0, 255):
+            found_blue = True
+        if found_red and found_cyan and found_blue:
             break
     check("B1 screen pure-red pixels (fg 38;5;196 rendered)", found_red)
     check("B2 screen pure-cyan pixels (fg 38;5;51 rendered)", found_cyan)
+    check("B3 screen pure-blue pixels (bg 48;5;21 rendered)", found_blue)
 except Exception as e:
     check("B screendump parse", False)
     print("screendump error:", e)
