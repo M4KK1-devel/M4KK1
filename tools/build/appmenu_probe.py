@@ -13,7 +13,7 @@ Drives QEMU (full-test ISO) via HMP mouse:
                                                  "force quit: closed N"
 Assertions come from sprach.c ser_puts lines on the serial console.
 """
-import os, socket, subprocess, time
+import os, re, socket, subprocess, time
 
 os.chdir("/mnt/f/M4KK1")
 isos = sorted(f for f in os.listdir("output")
@@ -146,6 +146,10 @@ drain(2.5)
 
 text = acc.decode("utf-8", "replace")
 
+fq_win_n = len(re.findall(r"FQ-WIN:", text))
+_m = re.search(r"force quit: closed (\d+) window", text)
+fq_closed_n = int(_m.group(1)) if _m else -1
+
 def after(marker, needle):
     i = text.find(marker)
     return i >= 0 and needle in text[i:]
@@ -165,6 +169,10 @@ checks = {
     "fq_nonzero":   (lambda t: any(
                         "force quit: closed %d" % n in t
                         for n in range(1, 20)))(text),
+    # every enumerated window must actually be closed: the "closed N"
+    # count reported by sprach must equal the number of FQ-WIN lines
+    # (demo windows + client windows combined).
+    "fq_all_closed": fq_win_n > 0 and fq_closed_n == fq_win_n,
     "no_panic":     "PANIC" not in text,
     "no_gpf":       "#GP" not in text and "General Protection" not in text,
 }
