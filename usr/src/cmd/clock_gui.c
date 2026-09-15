@@ -181,6 +181,28 @@ void _start(void)
                 }
             }
             *p = 0;
+            /* echo the state line to serial whenever it changes
+             * (add/del/ring/off transitions) — probe evidence for
+             * the on-screen ALARMS: status row */
+            {
+                static char last_al[30];
+                int diff = 0;
+                for (int i = 0; i < 30; i++) {
+                    if (aline[i] != last_al[i]) {
+                        diff = 1;
+                        break;
+                    }
+                    if (aline[i] == 0)
+                        break;
+                }
+                if (diff) {
+                    for (int i = 0; i < 30; i++)
+                        last_al[i] = aline[i];
+                    ser_puts("[CLOCK] ALST ");
+                    ser_puts(aline);
+                    ser_puts("\n");
+                }
+            }
             ga_str(&app, 4, 94, aline,
                    ringing ? 0x00FF6060 : 0x00909090);
 

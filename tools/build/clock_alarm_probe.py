@@ -122,11 +122,18 @@ try:
             sendkey("a")
             add1 = wait_for(rb"\[CLOCK\] ALARM ADD", 10)
             print("[clkalarm] ALARM ADD:", "OK" if add1 else "FAIL")
+            # 3b. status row must now list the armed time:
+            #     "[CLOCK] ALST ALARMS:HH:MM"
+            alst1 = wait_for(rb"\[CLOCK\] ALST ALARMS:[0-9:]{5}", 10)
+            print("[clkalarm] ALST after ADD:", "OK" if alst1 else "FAIL")
             # 5. delete alarm
             mark = len(acc)
             sendkey("d")
             dele = wait_for(rb"\[CLOCK\] ALARM DEL", 10)
             print("[clkalarm] ALARM DEL:", "OK" if dele else "FAIL")
+            # 5b. status row must drop back to the bare header
+            alst2 = wait_for(rb"\[CLOCK\] ALST ALARMS:(?![0-9])", 10)
+            print("[clkalarm] ALST after DEL:", "OK" if alst2 else "FAIL")
             # 5. re-add and wait for the ring.  plain() strips ANSI
             # escapes so a raw-offset mark cannot index into it —
             # count occurrences instead.
@@ -152,7 +159,11 @@ try:
                     ring = True
                     break
             print("[clkalarm] ALARM RING:", "OK" if ring else "FAIL")
-            ok = add1 and dele and add2 and ring
+            # 6. status row must mark the ringing alarm with '*'
+            alst3 = wait_for(rb"\[CLOCK\] ALST ALARMS:[0-9:]{5}\*", 10)
+            print("[clkalarm] ALST ring marker:", "OK" if alst3 else "FAIL")
+            ok = add1 and alst1 and dele and alst2 and add2 and ring
+            ok = ok and alst3
             ok = ok and b"panic" not in acc.lower()
             print("[clkalarm] no_panic:", b"panic" not in acc.lower())
             print("RESULT:", "PASS" if ok else "FAIL")
