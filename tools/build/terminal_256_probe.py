@@ -170,6 +170,23 @@ literal = "echo '\\033[38;5;196mrr\\033[38;5;51mcc\\033[48;5;21mbb\\033[41mqq\\0
 type_cmd(literal + "\n")
 pump(4)
 
+# 4b. long combined SGR (>8 params): old parser capped at 8 stored
+#     params, dropping the trailing 38;5;51.  New parser stores 24.
+#     echo '\033[38;5;196;48;5;21;1;4;5;7;38;5;51mzz\033[0m'
+buf2_start = len(buf)
+literal2 = "echo '\\033[38;5;196;48;5;21;1;4;5;7;38;5;51mzz\\033[0m'"
+type_cmd(literal2 + "\n")
+pump(4)
+
+# 4c. OSC title-set must be swallowed whole — the payload word
+#     'ttjunk' must never appear as printable grid text.  Serial
+#     evidence: "[TERM] OSC end" after the BEL terminator.
+#     echo '\033]0;ttjunk\007ok'
+literal3 = "echo '\\033]0;ttjunk\\007ok'"
+buf3_start = len(buf)
+type_cmd(literal3 + "\n")
+pump(4)
+
 # 4. serial asserts
 def check(name, cond):
     results.append((name, cond))
@@ -187,6 +204,18 @@ check("A4 serial bg=8015 bg_rgb=0,0,255 (48;5;21 parsed+stored)",
       "bg=8015 bg_rgb=0,0,255" in s)
 check("A5 serial bg=8001 bg_rgb=128,0,0 (basic bg 41 -> palette 1)",
       "bg=8001 bg_rgb=128,0,0" in s)
+
+# A6: >8-param combined SGR — the trailing 38;5;51 must still be
+# applied (fg 8033 with bg 8015 in ONE report line).  The old 8-slot
+# cap dropped params 9+ and left fg at 80c4.
+s2 = buf[buf2_start:buf3_start].decode("latin1") if buf3_start > buf2_start else s
+check("A6 long SGR (12 params) applies trailing 38;5;51 -> 8033+bg8015",
+      "SGR 8033 rgb=0,255,255 bg=8015" in s2)
+
+# A7: OSC swallowed whole — serial evidence line after BEL.
+s3 = buf[buf3_start:].decode("latin1")
+check("A7 OSC sequence swallowed ([TERM] OSC end evidence)",
+      "[TERM] OSC end" in s3)
 
 # 5. screendump pixel assert
 m.sendall(b"screendump /tmp/t256.ppm\n")

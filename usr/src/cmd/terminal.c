@@ -356,10 +356,17 @@ static void term_putc_attr(char ch, uint16_t attr, uint16_t bg)
  * SGR support: 0 (reset) / 30-37 (fg) / 39 (default fg) / 90-97
  * (bright fg) / 38;5;n (xterm-256 fg) / 48;5;n (xterm-256 bg) /
  * 40-47 (basic bg → palette 0-7) / 100-107 (bright bg → 8-15) /
- * 49 (default bg).  Anything else in a CSI sequence is dropped. */
+ * 49 (default bg).  Anything else in a CSI sequence is dropped.
+ *
+ * OSC sequences (ESC ] ... BEL, e.g. \x1B]0;title\x07) are swallowed
+ * whole up to BEL (0x07) or ST (ESC \\) — the payload (window title
+ * text) must never leak into the grid as printable text. */
 
-static int ansi_state = 0;    /* 0: normal, 1: saw ESC, 2: in CSI */
-static int ansi_params[16];   /* collected SGR parameters */
+/* parser states: 0 normal / 1 saw ESC / 2 in CSI / 3 in OSC */
+enum { ANS_NORMAL = 0, ANS_ESC = 1, ANS_CSI = 2, ANS_OSC = 3 };
+
+static int ansi_state = ANS_NORMAL;
+static int ansi_params[24];   /* collected SGR parameters (see below) */
 static int ansi_nparams;
 static int ansi_cur;          /* parameter under construction */
 
@@ -493,38 +500,50 @@ static void sgr_apply(const int *p, int np)
 
 static void term_ansi_filter(char ch)
 {
-    if (ansi_state == 1) {
+    if (ansi_state == ANS_ESC) {
         if (ch == '[') {
-            ansi_state = 2;
+            ansi_state = ANS_CSI;
             ansi_nparams = 0;
             ansi_cur = 0;
             return;
         }
-        ansi_state = 0;      /* non-CSI escape: drop */
+        if (ch == ']') {          /* OSC: swallow up to BEL / ESC \\ */
+            ansi_state = ANS_OSC;
+            return;
+        }
+        ansi_state = ANS_NORMAL;  /* non-CSI escape: drop */
         return;
     }
-    if (ansi_state == 2) {
+    if (ansi_state == ANS_OSC) {
+        if (ch == 0x07) {         /* BEL terminator */
+            ansi_state = ANS_NORMAL;
+            ser_puts("[TERM] OSC end\n");   /* probe evidence: swallowed */
+        } else if (ch == 0x1B)
+            ansi_state = ANS_ESC; /* ESC \ (ST) or a fresh escape */
+        return;                   /* payload never reaches the grid */
+    }
+    if (ansi_state == ANS_CSI) {
         if (ch >= '0' && ch <= '9') {
             if (ansi_cur < 1000)
                 ansi_cur = ansi_cur * 10 + (ch - '0');
             return;
         }
         if (ch == ';') {
-            if (ansi_nparams < 8)
+            if (ansi_nparams < (int)(sizeof(ansi_params) / sizeof(ansi_params[0])))
                 ansi_params[ansi_nparams++] = ansi_cur;
             ansi_cur = 0;
             return;
         }
         /* any other byte ends the sequence */
-        ansi_state = 0;
-        if (ansi_nparams < 8)
+        ansi_state = ANS_NORMAL;
+        if (ansi_nparams < (int)(sizeof(ansi_params) / sizeof(ansi_params[0])))
             ansi_params[ansi_nparams++] = ansi_cur;
         if (ch == 'm')
             sgr_apply(ansi_params, ansi_nparams);
         return;              /* non-SGR CSI: swallowed */
     }
     if (ch == 0x1B) {
-        ansi_state = 1;
+        ansi_state = ANS_ESC;
         return;
     }
     term_putc_attr(ch, sgr_fg, sgr_bg);
