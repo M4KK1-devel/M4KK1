@@ -26,9 +26,13 @@ FPS_RE = re.compile(rb"\[FPS\] (\d+) FPS")
 
 
 def main():
+    # Prefer the autologin full-test ISO; fall back to -full only if
+    # the other cron's default build replaced it (MDM login ISO has
+    # no serial shell — boot probe would false-fail on it).
     isos = sorted((f for f in os.listdir(ISO_CAND)
                    if f.endswith("-full-test.iso") or f.endswith("-full.iso")),
-                  key=lambda f: os.path.getmtime(os.path.join(ISO_CAND, f)))
+                  key=lambda f: (not f.endswith("-full-test.iso"),
+                                 os.path.getmtime(os.path.join(ISO_CAND, f))))
     iso = os.path.join(ISO_CAND, isos[-1])
     print("ISO:", iso)
     for p in (SER, MON):
