@@ -746,6 +746,9 @@ void _start(void)
                     render_line();
             }
         }
-        __asm__ volatile("pause");
+        /* hlt-sleep instead of pause busy-poll: the shell idle loop
+         * no longer steals cycles from GUI apps at the same priority
+         * (5 ms chunks, same pacing the WM servers use). */
+        m4k_sleep(5);
     }
 }

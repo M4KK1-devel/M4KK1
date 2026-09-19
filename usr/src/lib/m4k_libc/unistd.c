@@ -52,6 +52,7 @@ static inline long m4k_syscall3(long num, long a1, long a2, long a3)
 #define SYS_GETCWD      0x4D000010
 #define SYS_PIPE        0x4D000028
 #define SYS_DUP2        0x4D00002A
+#define SYS_SLEEP       0x4D00005B
 
 ssize_t read(int fd, void *buf, size_t count)
 {
@@ -217,14 +218,34 @@ int dup2(int oldfd, int newfd)
 
 unsigned int sleep(unsigned int seconds)
 {
-    for (unsigned int i = 0; i < seconds * 1000000; i++)
-        __asm__ volatile("nop");
+    /* Blocking SYS_SLEEP parks the caller off the ready queue until
+     * the PIT tick scan wakes it (mkrn_process_sleep).  The kernel
+     * clamps one sleep to 10 s, so chunk longer waits.  The old
+     * nop-busy-wait burned 100% CPU for the whole interval. */
+    while (seconds > 10) {
+        m4k_syscall1(SYS_SLEEP, 10000);
+        seconds -= 10;
+    }
+    if (seconds)
+        m4k_syscall1(SYS_SLEEP, seconds * 1000);
     return 0;
 }
 
 int usleep(useconds_t usec)
 {
-    for (useconds_t i = 0; i < usec; i++)
-        __asm__ volatile("nop");
+    /* Same blocking syscall, millisecond resolution: round up so a
+     * sub-tick request still yields one full tick to other tasks
+     * instead of returning early via the busy path. */
+    unsigned int ms = (unsigned int)(usec / 1000);
+    if (usec % 1000)
+        ms++;
+    if (ms == 0)
+        ms = 1;
+    while (ms > 10000) {
+        m4k_syscall1(SYS_SLEEP, 10000);
+        ms -= 10000;
+    }
+    if (ms)
+        m4k_syscall1(SYS_SLEEP, ms);
     return 0;
 }

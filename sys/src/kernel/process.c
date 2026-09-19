@@ -564,7 +564,23 @@ void mkrn_process_sleep(uint32_t ms)
         return;
     if (ms > 10000)
         ms = 10000;             /* same clamp the old handler had */
-    current->sleep_ticks = ms;
+    /* sleep_ticks is in PIT ticks, not milliseconds.  The PIT is
+     * normally programmed at 1000 Hz (1 tick == 1 ms), but if the
+     * frequency is ever reconfigured via mkrn_timer_set_frequency
+     * a raw ms count would silently mis-scale every sleep in the
+     * system.  Convert ms -> ticks against the live frequency; the
+     * +500 rounding keeps a 1 ms request at least one tick at any
+     * supported rate (>= 100 Hz) instead of truncating to zero. */
+    {
+        extern u32 mkrn_timer_get_frequency(void);
+        u32 freq = mkrn_timer_get_frequency();
+        if (freq == 0)
+            freq = 1000;
+        current->sleep_ticks =
+            (ms * freq + 500) / 1000;
+        if (current->sleep_ticks == 0)
+            current->sleep_ticks = 1;
+    }
     current->state_tags &= ~M4K_SCHED_RUNNING;
     current->state_tags |= M4K_SCHED_SLEEPING | M4K_WAIT_TIMER;
     mkrn_process_yield();

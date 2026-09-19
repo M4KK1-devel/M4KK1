@@ -156,6 +156,13 @@ void mkrn_timer_usleep(u32 microseconds);
 void mkrn_timer_sleep(u32 seconds);
 
 /**
+ * mkrn_timer_get_frequency - Get the current PIT frequency
+ *
+ * Return: Timer frequency in Hz (ticks per second)
+ */
+u32 mkrn_timer_get_frequency(void);
+
+/**
  * mkrn_timer_get_cpu_frequency - Get CPU frequency
  *
  * Return: CPU frequency in MHz
