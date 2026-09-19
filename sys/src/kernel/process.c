@@ -96,6 +96,14 @@ static void ready_remove(mkrn_process_t *p)
 static mkrn_process_t *all_procs = NULL;
 static uint32_t all_procs_count = 0;
 
+/* Number of processes carrying M4K_WAIT_TIMER (blocked in
+ * mkrn_process_sleep).  Lets the PIT tick handler skip the
+ * all_procs walk entirely when nobody sleeps — with 200+ resident
+ * processes that turns a per-tick O(n) scan into O(1) in the
+ * common case.  Invariant: equals the count of PCBs whose
+ * state_tags contain M4K_WAIT_TIMER. */
+static volatile uint32_t u32TimerWaiters = 0;
+
 static void proc_registry_add(mkrn_process_t *p)
 {
     if (!p)
@@ -533,6 +541,16 @@ void mkrn_process_wakeup(mkrn_process_t *p)
     if (!p)
         return;
     if (p->state_tags & M4K_SCHED_SLEEPING) {
+        /* Invariant: u32TimerWaiters counts processes carrying the
+         * WAIT_TIMER tag.  Clearing the tag here (whether the wakeup
+         * ultimately succeeds or rolls back) keeps the counter in
+         * sync; the tick handler re-arms WAIT_TIMER itself if the
+         * ready queue was full and it wants a next-tick retry. */
+        if (p->state_tags & M4K_WAIT_TIMER) {
+            p->state_tags &= ~M4K_WAIT_TIMER;
+            if (u32TimerWaiters > 0)
+                u32TimerWaiters--;
+        }
         p->state_tags &= ~M4K_SCHED_SLEEPING;
         p->state_tags |= M4K_SCHED_READY;
         if (ready_enqueue(p) != 0) {
@@ -583,6 +601,7 @@ void mkrn_process_sleep(uint32_t ms)
     }
     current->state_tags &= ~M4K_SCHED_RUNNING;
     current->state_tags |= M4K_SCHED_SLEEPING | M4K_WAIT_TIMER;
+    u32TimerWaiters++;
     mkrn_process_yield();
     /* Resumed here after the timer scan requeued us.  WAIT_TIMER is
      * purely informational, but clear it so a later unrelated
@@ -598,6 +617,12 @@ void mkrn_process_timer_tick(void)
 {
     if (!scheduler_enabled)
         return;
+    /* Fast skip: nobody carries WAIT_TIMER, so the walk below could
+     * not match anything.  Keeps the per-tick cost O(1) when the
+     * system is idle of sleepers (the common case), independent of
+     * the resident process count. */
+    if (u32TimerWaiters == 0)
+        return;
     mkrn_process_t *p = all_procs;
     while (p) {
         if ((p->state_tags & M4K_SCHED_SLEEPING)
@@ -609,8 +634,12 @@ void mkrn_process_timer_tick(void)
                 if (p->state_tags & M4K_SCHED_SLEEPING) {
                     /* Wakeup rolled back (ready queue full).
                      * Retry next tick — leaving sleep_ticks at 0
-                     * would strand the sleeper forever. */
+                     * would strand the sleeper forever.  wakeup()
+                     * cleared WAIT_TIMER per the counter invariant,
+                     * so re-arm it here along with the retry. */
                     p->sleep_ticks = 1;
+                    p->state_tags |= M4K_WAIT_TIMER;
+                    u32TimerWaiters++;
                 }
             }
         }
@@ -803,6 +832,7 @@ void mkrn_process_init(void)
     ready_queue_count = 0;
     all_procs = NULL;
     all_procs_count = 0;
+    u32TimerWaiters = 0;
 
     mkrn_process_t *idle = mkrn_execve_create_idle();
     if (!idle) {
@@ -1198,6 +1228,15 @@ void mkrn_process_terminate(pid_t pid)
 
     target->state_tags &= ~M4K_SCHED_SLEEPING;
     target->state_tags |= M4K_TERMINATE;
+    /* A SIGKILLed sleeper leaves the timer-waiter set through this
+     * path (not wakeup()), so drop it from the fast-skip counter
+     * here — otherwise u32TimerWaiters would never reach zero and
+     * the tick scan would stay permanently enabled. */
+    if (target->state_tags & M4K_WAIT_TIMER) {
+        target->state_tags &= ~M4K_WAIT_TIMER;
+        if (u32TimerWaiters > 0)
+            u32TimerWaiters--;
+    }
     if (!(target->state_tags & M4K_STATE_SCHED_MASK))
         target->state_tags |= M4K_SCHED_READY;
     /* A SLEEPING or STOPPED target is not in the ready queue — merely

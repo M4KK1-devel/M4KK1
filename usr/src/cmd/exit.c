@@ -20,6 +20,12 @@ void musr_cmd_exit(int ac, char **av)
     (void)av;
     out_puts("exit\n");
     musr_sc0(S_EXIT);
-    for (;;)
-        __asm__ volatile("hlt");
+    /* S_EXIT never returns (the kernel reaps this process), but be
+     * defensive: if it ever did, `hlt` is a ring-3 #GP — spin on
+     * `pause` and retry the exit syscall so a kernel bug surfaces
+     * as a livelock we can diagnose instead of a cryptic #GP. */
+    for (;;) {
+        musr_sc0(S_EXIT);
+        __asm__ volatile("pause");
+    }
 }
