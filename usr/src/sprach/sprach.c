@@ -158,6 +158,7 @@ static void sprach_terminal_key(struct sprach_ctx *ctx, unsigned char ch);
 static void sprach_focus_foreign(struct sprach_ctx *ctx, int slot);
 static void sprach_focus_fallback(struct sprach_ctx *ctx);
 static uint32_t focus_seen_mask;   /* new-client one-shot (poll_new_clients) */
+static int focus_fg_slot = -1;     /* last foreign client we focused (-1 none) */
 
 static uint32_t sprach_bufs[SPRACH_WINDOW_COUNT]
                           [SPRACH_WIN_W * SPRACH_WIN_H]
@@ -3403,6 +3404,29 @@ static void sprach_focus_fallback(struct sprach_ctx *ctx)
         ser_puts("[SPRACH] FOCUS FALLBACK terminal\n");
         return;
     }
+    /* Focus-policy fix (2026-09-19): after the foreground window is
+     * gone there may still be a foreign CLIENT window (fm / guiapp
+     * suite / altr2) left on screen — the old policy dropped focus
+     * entirely ("FALLBACK none") even though a visible window could
+     * take it.  Activate the top-most visible non-chrome client
+     * surface (raise is NOT needed: it is already top-most among
+     * the survivors, and raise relocates slots behind client
+     * processes' backs).  ctx->active stays -1 = "foreign has
+     * focus", which routes keystrokes via ga_key/FM top-most
+     * dispatch — coherent with the click-to-focus policy. */
+    for (int i = COPLAND_MAX_SURFACES - 1; i >= 0; i--) {
+        if (!ctx->shm->surfaces[i].in_use ||
+            !(ctx->shm->surfaces[i].flags & COPLAND_SURF_VISIBLE))
+            continue;
+        if (sprach_slot_is_ours(ctx, i))
+            continue;
+        ser_puts("[SPRACH] FOCUS FALLBACK app ");
+        print_u32((uint32_t)ctx->shm->surfaces[i].w);
+        ser_puts("x");
+        print_u32((uint32_t)ctx->shm->surfaces[i].h);
+        ser_puts("\n");
+        return;
+    }
     ser_puts("[SPRACH] FOCUS FALLBACK none\n");
 }
 
@@ -3793,6 +3817,27 @@ void sprach_poll_new_clients(struct sprach_ctx *ctx)
         print_u32((uint32_t)ctx->shm->surfaces[i].h);
         ser_puts("\n");
         sprach_focus_foreign(ctx, i);
+        focus_fg_slot = ctx->term_slot >= 0 && i == ctx->term_slot
+                            ? -1 : i;
+    }
+
+    /* Focus-policy fix (2026-09-19): a foreign client that OWNED the
+     * focus (focus_fg_slot) may exit on its own — its 'q'/Esc key
+     * handler, a crash — freeing its surface slot directly.  The
+     * focus then evaporates: no FOCUS line is ever printed again and
+     * keystrokes fall through to whatever dispatch happens to match.
+     * Detect the freed slot here and hand the focus to the next
+     * visible window via the standard fallback (demo window →
+     * terminal → top-most client → none).  (The WM-close path —
+     * APP CLOSE via the red box — already cleared focus_fg_slot and
+     * ran the fallback from the click handler, so it does not pass
+     * through here twice.) */
+    if (focus_fg_slot >= 0 &&
+        !ctx->shm->surfaces[focus_fg_slot].in_use) {
+        ser_puts("[SPRACH] FOCUS FG GONE\n");
+        focus_fg_slot = -1;
+        if (ctx->active < 0)
+            sprach_focus_fallback(ctx);
     }
 }
 
@@ -4532,6 +4577,12 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                             ser_puts("[SPRACH] MIN ");
                             print_u32((uint32_t)i);
                             ser_puts("\n");
+                            /* Focus-policy fix (2026-09-19): minimizing
+                             * the ACTIVE window must hand the focus to
+                             * the next visible window — same rule as
+                             * CLOSE, which already did this. */
+                            if (ctx->active == i)
+                                sprach_focus_fallback(ctx);
                             hit = 1;
                             break;
                         }
@@ -4655,6 +4706,16 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                                 fs->flags &= ~COPLAND_SURF_VISIBLE;
                                 ctx->shm->dirty = 1;
                                 ser_puts("[SPRACH] APP CLOSE (ask client to exit)\n");
+                                /* Focus-policy fix (2026-09-19): closing the
+                                 * top-most client via its red box must hand
+                                 * the focus to the next window NOW (the
+                                 * client only frees its slot dozens of ms
+                                 * later, after its exit path runs).  Drop
+                                 * the fg-client marker so the later
+                                 * slot-free detection does not fire a
+                                 * second FOCUS line for the same close. */
+                                focus_fg_slot = -1;
+                                sprach_focus_fallback(ctx);
                             } else {
                                 ser_puts("[SPRACH] FOCUS CLICK app ");
                                 print_u32((uint32_t)fs->w);
@@ -4662,6 +4723,7 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                                 print_u32((uint32_t)fs->h);
                                 ser_puts("\n");
                                 sprach_focus_foreign(ctx, top);
+                                focus_fg_slot = top;
                             }
                             hit = 1;
                         }
