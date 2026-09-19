@@ -179,6 +179,8 @@ void mkrn_process_switch_first(void);
 void mkrn_process_exit(int status);
 void mkrn_process_block(void);
 void mkrn_process_wakeup(mkrn_process_t *process);
+void mkrn_process_sleep(uint32_t ms);
+void mkrn_process_timer_tick(void);
 
 mkrn_process_t *mkrn_process_get_current(void);
 void mkrn_process_dump_sched(void);

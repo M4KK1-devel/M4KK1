@@ -301,22 +301,23 @@ static uint32_t m4k_syscall_play_pcm_impl(
     return 0;
 }
 
-/* -- Syscall: sleep (busy-wait N ms; used for frame pacing) --
+/* -- Syscall: sleep (blocking; used for frame pacing) --
  *
- * Called from the int 0x4D interrupt gate, which clears IF on entry,
- * so re-enable interrupts before the hlt-based wait or the PIT IRQ
- * would never wake it.  The ISR yields to other processes right after
- * this handler returns (cooperative scheduling). */
+ * The old implementation hlt-busy-waited (mkrn_timer_wait) with the
+ * caller still on the CPU: every GUI app's m4k_sleep(100) poll lap
+ * monopolised the CPU for the whole 100 ms and starved the WM
+ * (12-process load: sprach at ~1 FPS, 2026-09-18).  Now the caller
+ * is parked SLEEPING off the ready queue and woken by the PIT tick
+ * scan (mkrn_process_timer_tick).  The ISR-side quantum-gated yield
+ * after this handler returns is skipped for the blocked path — the
+ * context switch already happened inside mkrn_process_sleep. */
 static uint32_t m4k_syscall_sleep_impl(uint32_t arg1, uint32_t arg2,
                                        uint32_t arg3, uint32_t arg4,
                                        uint32_t arg5)
 {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     uint32_t ms = arg1;
-    if (ms > 10000)
-        ms = 10000;
-    __asm__ volatile("sti");
-    mkrn_timer_wait(ms);
+    mkrn_process_sleep(ms);
     return 0;
 }
 

@@ -545,6 +545,63 @@ void mkrn_process_wakeup(mkrn_process_t *p)
     }
 }
 
+/* ── Timer-driven sleep (blocking) ──
+ *
+ * m4k_sleep used to hlt-busy-wait inside the syscall handler
+ * (mkrn_timer_wait), so a sleeping process kept the CPU for the
+ * whole interval.  With 7 GUI apps frame-pacing at m4k_sleep(100)
+ * each one monopolised the CPU 100 ms per lap and sprach starved
+ * down to ~1 FPS (measured, 2026-09-18 weekly report).
+ *
+ * Now the sleeper is parked off the ready queue (SLEEPING |
+ * M4K_WAIT_TIMER) and mkrn_process_timer_tick() — called from the
+ * PIT IRQ handler — requeues it when sleep_ticks expires.
+ * sleep_ticks is in PIT ticks; the PIT runs at 1000 Hz so one
+ * tick == one millisecond. */
+void mkrn_process_sleep(uint32_t ms)
+{
+    if (!current || !scheduler_enabled || ms == 0)
+        return;
+    if (ms > 10000)
+        ms = 10000;             /* same clamp the old handler had */
+    current->sleep_ticks = ms;
+    current->state_tags &= ~M4K_SCHED_RUNNING;
+    current->state_tags |= M4K_SCHED_SLEEPING | M4K_WAIT_TIMER;
+    mkrn_process_yield();
+    /* Resumed here after the timer scan requeued us.  WAIT_TIMER is
+     * purely informational, but clear it so a later unrelated
+     * SLEEPING state is not misreported as a timer wait. */
+    current->state_tags &= ~M4K_WAIT_TIMER;
+}
+
+/* Called from the PIT tick handler (IRQ0 context): decrement the
+ * sleep counter of every timer-waiting process and wake the ones
+ * that expired.  Memory-only walk plus ready_enqueue — the same
+ * operations device ISRs already perform from interrupt context. */
+void mkrn_process_timer_tick(void)
+{
+    if (!scheduler_enabled)
+        return;
+    mkrn_process_t *p = all_procs;
+    while (p) {
+        if ((p->state_tags & M4K_SCHED_SLEEPING)
+            && (p->state_tags & M4K_WAIT_TIMER)
+            && p->sleep_ticks != 0) {
+            p->sleep_ticks--;
+            if (p->sleep_ticks == 0) {
+                mkrn_process_wakeup(p);
+                if (p->state_tags & M4K_SCHED_SLEEPING) {
+                    /* Wakeup rolled back (ready queue full).
+                     * Retry next tick — leaving sleep_ticks at 0
+                     * would strand the sleeper forever. */
+                    p->sleep_ticks = 1;
+                }
+            }
+        }
+        p = p->next;
+    }
+}
+
 void mkrn_process_switch_first(void)
 {
     if (!current) {

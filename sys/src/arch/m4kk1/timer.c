@@ -289,6 +289,14 @@ mkrn_timer_handler(uint32_t *frame)
     if (pfnTimerCallback)
         pfnTimerCallback();
 
+    /* Timer-driven process wakeups: decrement sleep counters and
+     * requeue expired sleepers (mkrn_process_sleep).  Cheap when
+     * nobody sleeps — one registry-head check per tick. */
+    {
+        extern void mkrn_process_timer_tick(void);
+        mkrn_process_timer_tick();
+    }
+
     /* Network RX polling fallback: cheap when the NIC is idle (one
      * register-free descriptor check per ring slot). */
     {
