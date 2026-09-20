@@ -1169,6 +1169,7 @@ static u32 mkrn_syscall_sysinfo_impl(u32 uArg1,
     pInfo->free_ram = mkrn_memory_get_free();
     pInfo->used_ram = mkrn_memory_get_used();
     pInfo->process_count = mkrn_process_get_count();
+    pInfo->timer_waiters = mkrn_process_timer_waiter_count();
     return M4K_SC_SUCCESS;
 }
 

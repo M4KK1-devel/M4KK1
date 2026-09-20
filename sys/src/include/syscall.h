@@ -174,6 +174,7 @@ struct mkrn_sysinfo {
     u32 free_ram;
     u32 used_ram;
     u32 process_count;
+    u32 timer_waiters;   /* procs blocked in m4k_sleep (PIT wakeup) */
 };
 
 struct mkrn_statfs {

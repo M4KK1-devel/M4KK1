@@ -37,4 +37,7 @@ void musr_cmd_free(int ac, char **av)
     out_puts("Proc:  ");
     print_pad_u32(info.process_count, 10);
     out_puts(" running\n");
+    out_puts("Sleep: ");
+    print_pad_u32(info.timer_waiters, 10);
+    out_puts(" in m4k_sleep\n");
 }

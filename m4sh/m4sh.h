@@ -161,6 +161,7 @@ struct dirent {
 };
 struct sysinfo {
     uint32_t total_ram, free_ram, used_ram, process_count;
+    uint32_t timer_waiters;
 };
 #define PROCBUF_MAX 64
 struct procinfo {

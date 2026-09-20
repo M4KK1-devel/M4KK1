@@ -104,6 +104,15 @@ static uint32_t all_procs_count = 0;
  * state_tags contain M4K_WAIT_TIMER. */
 static volatile uint32_t u32TimerWaiters = 0;
 
+/** mkrn_process_timer_waiter_count - read-only view of
+ * u32TimerWaiters for the SYSINFO syscall (free(1), sysmon).
+ * Volatile read is atomic enough on UP: the value is advisory
+ * telemetry, a torn read only skews one sample. */
+uint32_t mkrn_process_timer_waiter_count(void)
+{
+    return u32TimerWaiters;
+}
+
 static void proc_registry_add(mkrn_process_t *p)
 {
     if (!p)
@@ -578,8 +587,17 @@ void mkrn_process_wakeup(mkrn_process_t *p)
  * tick == one millisecond. */
 void mkrn_process_sleep(uint32_t ms)
 {
-    if (!current || !scheduler_enabled || ms == 0)
+    if (!current || !scheduler_enabled)
         return;
+    if (ms == 0) {
+        /* sleep(0) is a pure yield request (POSIX semantic): give
+         * up the remainder of the quantum to any READY peer instead
+         * of returning instantly — the old `return` made sleep(0)
+         * a no-op that silently re-monopolised the CPU.  Blocked
+         * path below is only for an actual timeout. */
+        mkrn_process_yield();
+        return;
+    }
     if (ms > 10000)
         ms = 10000;             /* same clamp the old handler had */
     /* sleep_ticks is in PIT ticks, not milliseconds.  The PIT is

@@ -29,12 +29,17 @@ def main():
     # Prefer the autologin full-test ISO; fall back to -full only if
     # the other cron's default build replaced it (MDM login ISO has
     # no serial shell — boot probe would false-fail on it).
-    isos = sorted((f for f in os.listdir(ISO_CAND)
-                   if f.endswith("-full-test.iso") or f.endswith("-full.iso")),
-                  key=lambda f: (not f.endswith("-full-test.iso"),
-                                 os.path.getmtime(os.path.join(ISO_CAND, f))))
-    iso = os.path.join(ISO_CAND, isos[-1])
-    print("ISO:", iso)
+    # Pick the NEWEST full-test ISO, else the newest full ISO:
+    # sorting both criteria together and taking [-1] could return a
+    # stale full-test that is older than a fresh full build (seen
+    # 2026-09-20 when a concurrent build swapped the ISO mid-probe).
+    cands = [f for f in os.listdir(ISO_CAND)
+             if f.endswith("-full-test.iso") or f.endswith("-full.iso")]
+    if not cands:
+        print("RESULT: FAIL (no candidate ISO)"); sys.exit(1)
+    newest = lambda fs: max(fs, key=lambda f: os.path.getmtime(os.path.join(ISO_CAND, f)))
+    ft = [f for f in cands if f.endswith("-full-test.iso")]
+    iso = os.path.join(ISO_CAND, newest(ft) if ft else newest(cands))
     for p in (SER, MON):
         if os.path.exists(p):
             os.unlink(p)
