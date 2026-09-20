@@ -21,7 +21,7 @@
  * this file compiles with glibc headers). */
 struct m4k_heap_stats {
     size_t heap_size, top_off, used_bytes, free_bytes;
-    size_t live_blocks, free_blocks;
+    size_t live_blocks, free_blocks, largest_free;
     size_t bad_free, double_free, corrupted;
 };
 struct m4k_heap_stats heap_stats(void);
@@ -107,6 +107,27 @@ int main(void)
 		ok = ok && r && strncmp(r, "realloc-data-ok", 15) == 0;
 		free(r);
 		check("realloc", ok);
+	}
+	/* 7b. realloc shrink splits the tail back to the free list and
+	 * regrow re-absorbs it in place: same pointer, zero arena growth.
+	 * (The split tail may coalesce with the following free block —
+	 * counts are therefore checked after the final free(), against
+	 * the pre-alloc snapshot, not in between.) */
+	{
+		struct m4k_heap_stats b = heap_stats();
+		char *p = malloc(2048);
+		char *s = realloc(p, 32);   /* shrink: tail becomes free */
+		struct m4k_heap_stats m = heap_stats();
+		int ok = s == p && m.top_off == b.top_off
+			&& m.largest_free >= 1900;
+		char *g = realloc(s, 2048); /* regrow: absorb own tail back */
+		ok = ok && g == p;
+		free(g);                    /* full restoration */
+		struct m4k_heap_stats a = heap_stats();
+		ok = ok && a.top_off == b.top_off
+			&& a.free_blocks == b.free_blocks
+			&& a.live_blocks == b.live_blocks;
+		check("reallocsplit", ok);
 	}
 	/* 8. recycle does not grow the arena */
 	{

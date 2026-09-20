@@ -3,7 +3,7 @@
 # Compiles usr/src/lib/m4k_libc/stdlib.c natively (its own headers,
 # unistd include stripped, _exit stubbed) plus heap_host_test.c
 # (glibc headers), links with --allow-multiple-definition so the
-# allocator's malloc/free win, runs it, expects RESULT: 9/9.
+# allocator's malloc/free win, runs it, expects RESULT: 10/10.
 # Dev/QA tool — NOT shipped in the ISO.
 set -e
 cd "$(dirname "$0")/../.."

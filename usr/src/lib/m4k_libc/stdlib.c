@@ -55,17 +55,21 @@ static struct m4k_heap_stats hstats;
 struct m4k_heap_stats heap_stats(void)
 {
     /* Refresh the derived counters (kept O(n) but only on demand). */
-    size_t used = 0, freeb = 0, live = 0, fb = 0;
+    size_t used = 0, freeb = 0, live = 0, fb = 0, largest = 0;
     block_header_t *b = heap_start;
     while (b) {
         if (b->magic == HEAP_MAGIC_USED) { used += b->size; live++; }
-        else { freeb += b->size; fb++; }
+        else {
+            freeb += b->size; fb++;
+            if (b->size > largest) largest = b->size;
+        }
         b = b->next;
     }
     hstats.used_bytes = used;
     hstats.free_bytes = freeb;
     hstats.live_blocks = live;
     hstats.free_blocks = fb;
+    hstats.largest_free = largest;
     hstats.heap_size = HEAP_SIZE;
     hstats.top_off = heap_ptr;
     return hstats;
@@ -183,7 +187,71 @@ void *realloc(void *ptr, size_t size)
         return NULL;    /* not a live allocation */
     }
     size_t want = (size + 8) & ~(size_t)7;
-    if (block->size >= want) return ptr;
+    if (block->size >= want) {
+        /* Shrink in place; split the tail back to the free list when
+         * the remainder can host header + a usable block, so a big
+         * allocation shrunk to tiny does not hog the arena. */
+        size_t rem = block->size - want;
+        if (rem >= sizeof(block_header_t) + HEAP_SPLIT_MIN) {
+            block_header_t *split =
+                (block_header_t *)((char *)(block + 1) + want);
+            split->magic = HEAP_MAGIC_FREE;
+            split->canary = 0;
+            split->size = rem - sizeof(block_header_t);
+            split->req_size = 0;
+            split->next = block->next;
+            block->next = split;
+            block->size = want;
+            /* forward-coalesce the new free block with any free
+             * neighbours already following it in list order */
+            block_header_t *pNext = split->next;
+            while (pNext && pNext->magic == HEAP_MAGIC_FREE) {
+                split->size += sizeof(block_header_t) + pNext->size;
+                split->next = pNext->next;
+                pNext = split->next;
+            }
+        }
+        block->req_size = size;
+        block_set_canary(block);
+        return ptr;
+    }
+
+    /* Grow in place by absorbing the following free neighbour(s):
+     * pass 1 computes the total without touching the list, pass 2
+     * unlinks — a partial absorb that still falls short would
+     * otherwise corrupt the chain. */
+    {
+        size_t total = block->size;
+        block_header_t *it;
+        for (it = block->next;
+             it && it->magic == HEAP_MAGIC_FREE;
+             it = it->next)
+            total += sizeof(block_header_t) + it->size;
+        if (total >= want) {
+            it = block->next;
+            while (it && it->magic == HEAP_MAGIC_FREE) {
+                block->next = it->next;
+                it = block->next;
+            }
+            size_t rem = total - want;
+            if (rem >= sizeof(block_header_t) + HEAP_SPLIT_MIN) {
+                block_header_t *split =
+                    (block_header_t *)((char *)(block + 1) + want);
+                split->magic = HEAP_MAGIC_FREE;
+                split->canary = 0;
+                split->size = rem - sizeof(block_header_t);
+                split->req_size = 0;
+                split->next = block->next;
+                block->next = split;
+            } else {
+                want = total;   /* keep the slack, not worth a split */
+            }
+            block->size = want;
+            block->req_size = size;
+            block_set_canary(block);
+            return ptr;
+        }
+    }
 
     size_t copy = block->req_size < size ? block->req_size : size;
     void *new_ptr = malloc(size);

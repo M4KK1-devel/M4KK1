@@ -411,7 +411,10 @@ echo "   INFO ELF: usr/src/cmd/info_gui.elf ($(stat -c%s usr/src/cmd/info_gui.el
 
 # === Desktop suite apps (2026-09): sysmon/mpl4yer/cal/disk/pref ===
 $UCC $M4SH_CFLAGS -c usr/src/cmd/sysmon.c -o usr/src/cmd/sysmon.o
-$LD -m elf_i386 -T usr/src/cmd/sysmon.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/sysmon.elf usr/src/cmd/sysmon.o $PCC_RUNTIME
+$LD -m elf_i386 -T usr/src/cmd/sysmon.ld -nostdlib -z max-page-size=0x1000 -o usr/src/cmd/sysmon.elf usr/src/cmd/sysmon.o \
+    usr/src/lib/m4k_libc/stdio_pcc.o usr/src/lib/m4k_libc/string_pcc.o \
+    usr/src/lib/m4k_libc/stdlib_pcc.o usr/src/lib/m4k_libc/unistd_pcc.o \
+    usr/src/lib/m4k_libc/errno_pcc.o $PCC_RUNTIME
 echo "   SYSMON ELF: usr/src/cmd/sysmon.elf ($(stat -c%s usr/src/cmd/sysmon.elf) bytes)"
 
 $UCC $M4SH_CFLAGS -c usr/src/cmd/mpl4yer.c -o usr/src/cmd/mpl4yer.o

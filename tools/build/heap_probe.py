@@ -58,8 +58,9 @@ CHECKS = [
     ("callocover", rb"\[HEAP\] callocover: OK"),
     ("calloczero", rb"\[HEAP\] calloczero: OK"),
     ("realloc",   rb"\[HEAP\] realloc: OK"),
+    ("reallocsplit", rb"\[HEAP\] reallocsplit: OK"),
     ("recycle",   rb"\[HEAP\] recycle: OK"),
-    ("summary",   rb"\[HEAP\] RESULT: 9/9"),
+    ("summary",   rb"\[HEAP\] RESULT: 10/10"),
 ]
 
 try:

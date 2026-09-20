@@ -22,6 +22,7 @@
  */
 
 #include "guiapp.h"
+#include <stdlib.h>   /* m4k_libc: heap_stats() (hardened allocator) */
 
 int out_fd = 1;
 char cwd[256] = "/";
@@ -57,7 +58,9 @@ static struct ga_app app = {
     .title = "System Monitor",
 };
 
-static struct procinfo procs[SM_PROCS_MAX];
+static struct procinfo *procs;  /* heap-alloc'd: dogfoods the hardened
+                                 * allocator so the heap panel below
+                                 * shows real numbers */
 static int n_procs;
 static int sel = -1;            /* proc index, not row */
 static char filter[16];
@@ -70,6 +73,7 @@ static uint32_t last_poll;
 
 static struct sysinfo sinfo;
 static uint32_t uptime_secs;
+static struct m4k_heap_stats hst;   /* own arena (stdlib_pcc link) */
 
 /* ── helpers ── */
 
@@ -117,7 +121,7 @@ static void sm_poll(void)
         n_procs = 0;
     if (n_procs > SM_PROCS_MAX)
         n_procs = SM_PROCS_MAX;
-    uptime_secs = musr_sc_uptime() / 1000;
+    hst = heap_stats();   /* own arena: 1 live block (procs) + filters */
 
     /* CPU proxy: share of RUNNING procs, floored so the graph
      * stays alive on the cooperative scheduler. */
@@ -231,6 +235,37 @@ static void sm_render(void)
     ga_graph(&app, SM_GRAPH_X, gy, SM_GRAPH_W, SM_G2_H,
              mem_hist, hist_n, 0x00C03030, 0x004A1010);
 
+    /* heap panel: this process's own m4k_libc arena (hardened
+     * allocator).  live/free = block counts, frag = share of free
+     * bytes NOT in the largest block (1 = fully fragmented). */
+    {
+        int hy = gy + SM_G2_H + 14;
+        ga_str(&app, SM_GRAPH_X, hy, "Heap", 0x00606060);
+        char b[80];
+        int o = 0;
+        APPEND("live ");
+        strcat_num(b, o, (int)hst.live_blocks);
+        o = ga_strlen(b);
+        APPEND(" free ");
+        strcat_num(b, o, (int)hst.free_blocks);
+        o = ga_strlen(b);
+        APPEND(" frag ");
+        if (hst.free_bytes) {
+            int frag = (int)((hst.free_bytes - hst.largest_free)
+                             * 100 / hst.free_bytes);
+            strcat_num(b, o, frag);
+            o = ga_strlen(b);
+            APPEND("%");
+        } else {
+            APPEND("-");
+        }
+        o = ga_strlen(b);
+        APPEND(" bad ");
+        strcat_num(b, o, (int)(hst.bad_free + hst.double_free
+                               + hst.corrupted));
+        ga_str(&app, SM_GRAPH_X + 34, hy, b, 0x00202020);
+    }
+
     /* buttons */
     ga_button(&app, SM_BTN_KILL_X, SM_BTN_KILL_Y, 60, 18,
               "Kill", 0);
@@ -296,6 +331,12 @@ void _start(void)
         m4k_exit(1);
     }
     ser_puts("[SYSMON] surface ready\n");
+
+    procs = malloc(SM_PROCS_MAX * sizeof(struct procinfo));
+    if (!procs) {
+        ser_puts("[SYSMON] heap alloc failed\n");
+        m4k_exit(1);
+    }
 
     sm_poll();
     sm_render();

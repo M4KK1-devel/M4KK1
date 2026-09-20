@@ -25,6 +25,8 @@ struct m4k_heap_stats {
     size_t free_bytes;   /* sum of user capacities, free blocks */
     size_t live_blocks;  /* used blocks */
     size_t free_blocks;
+    size_t largest_free; /* biggest single free block (fragmentation
+                          * indicator: free_bytes vs largest_free) */
     size_t bad_free;     /* wild free() calls ignored */
     size_t double_free;  /* double free() calls ignored */
     size_t corrupted;    /* canary mismatches detected at free() */

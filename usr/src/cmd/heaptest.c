@@ -139,6 +139,28 @@ static void test_realloc(void)
 	check("realloc", ok);
 }
 
+static void test_realloc_split(void)
+{
+	/* shrink splits the tail back to the free list, regrow
+	 * re-absorbs it: same pointer, arena never grows.  Counts are
+	 * checked after the final free() against the pre-alloc
+	 * snapshot (the split tail may coalesce meanwhile). */
+	struct m4k_heap_stats b = heap_stats();
+	char *p = malloc(2048);
+	char *s = realloc(p, 32);
+	struct m4k_heap_stats m = heap_stats();
+	int ok = s == p && m.top_off == b.top_off
+		&& m.largest_free >= 1900;
+	char *g = realloc(s, 2048);
+	ok = ok && g == p;
+	free(g);
+	struct m4k_heap_stats a = heap_stats();
+	ok = ok && a.top_off == b.top_off
+		&& a.free_blocks == b.free_blocks
+		&& a.live_blocks == b.live_blocks;
+	check("reallocsplit", ok);
+}
+
 static void test_recycle(void)
 {
 	/* 200 cycles of pseudo-random sizes; arena high-water must not
@@ -172,6 +194,7 @@ int main(void)
 	test_canary();
 	test_calloc_overflow();
 	test_realloc();
+	test_realloc_split();
 	test_recycle();
 	struct m4k_heap_stats s = heap_stats();
 	printf("[HEAP] stats: arena=%d top=%d used=%d free=%d bad=%d dbl=%d corr=%d\n",
