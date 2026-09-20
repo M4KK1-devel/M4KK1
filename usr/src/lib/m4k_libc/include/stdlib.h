@@ -17,6 +17,20 @@ void *calloc(size_t nmemb, size_t size);
 void *realloc(void *ptr, size_t size);
 void free(void *ptr);
 
+/* Heap allocator statistics (hardened allocator, 2026-09-20) */
+struct m4k_heap_stats {
+    size_t heap_size;    /* arena size */
+    size_t top_off;      /* bump offset (high-water growth) */
+    size_t used_bytes;   /* sum of user capacities, used blocks */
+    size_t free_bytes;   /* sum of user capacities, free blocks */
+    size_t live_blocks;  /* used blocks */
+    size_t free_blocks;
+    size_t bad_free;     /* wild free() calls ignored */
+    size_t double_free;  /* double free() calls ignored */
+    size_t corrupted;    /* canary mismatches detected at free() */
+};
+struct m4k_heap_stats heap_stats(void);
+
 /* Process control */
 void exit(int status);
 void abort(void);

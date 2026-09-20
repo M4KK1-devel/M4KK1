@@ -7,75 +7,162 @@
  */
 
 #include "include/stdlib.h"
+#include "include/stdint.h"
 #include "include/string.h"
 #include "include/unistd.h"
 #include "include/errno.h"
 
-/* Simple heap allocator */
+/* Hardened heap allocator (2026-09-20 heap-hardening round).
+ *
+ * Guarantees:
+ *  - free() coalesces with the next (and previous) free neighbour, so
+ *    interleaved alloc/free cycles do not fragment the 1 MB arena.
+ *  - malloc() splits oversized free blocks (remainder >= header + 16).
+ *  - double-free and wild-free (pointer that is not a live block) are
+ *    detected and ignored, never corrupt the list.
+ *  - a canary byte after every user region catches off-by-one / small
+ *    overflows at free() time (recorded in heap_stats(), no crash —
+ *    the corruption is already done, but it is now observable).
+ *  - calloc() rejects nmemb*size overflow.
+ *
+ * The free list is address-ordered (bump allocation appends at the
+ * top), so next-block coalescing is a simple ->next walk and the
+ * previous free neighbour is found by list order.
+ */
 #define HEAP_SIZE (1024 * 1024)  /* 1MB heap */
-static char heap[HEAP_SIZE];
-static size_t heap_ptr = 0;
+static char heap[HEAP_SIZE] __attribute__((aligned(8)));
+static size_t heap_ptr = 0;      /* bump offset of the next new block */
+
+#define HEAP_MAGIC_USED 0x4D484B31u  /* "MHK1" */
+#define HEAP_MAGIC_FREE 0x4D484B30u  /* same, low bit clear = free */
+#define HEAP_CANARY     0xC7u
+#define HEAP_SPLIT_MIN  16          /* smallest worth-while split */
 
 typedef struct block_header {
-    size_t size;
-    int free;
-    struct block_header *next;
+    uint32_t magic;      /* HEAP_MAGIC_USED / HEAP_MAGIC_FREE */
+    uint32_t canary;     /* copy of the canary value at data[req] */
+    size_t size;         /* capacity of the user area (8-aligned) */
+    size_t req_size;     /* exact requested bytes (canary anchor) */
+    struct block_header *next;  /* address-ordered free list */
 } block_header_t;
 
 static block_header_t *heap_start = NULL;
+
+/* Observability counters — struct lives in stdlib.h so callers
+ * (heaptest, sysmon) can read it. */
+static struct m4k_heap_stats hstats;
+
+struct m4k_heap_stats heap_stats(void)
+{
+    /* Refresh the derived counters (kept O(n) but only on demand). */
+    size_t used = 0, freeb = 0, live = 0, fb = 0;
+    block_header_t *b = heap_start;
+    while (b) {
+        if (b->magic == HEAP_MAGIC_USED) { used += b->size; live++; }
+        else { freeb += b->size; fb++; }
+        b = b->next;
+    }
+    hstats.used_bytes = used;
+    hstats.free_bytes = freeb;
+    hstats.live_blocks = live;
+    hstats.free_blocks = fb;
+    hstats.heap_size = HEAP_SIZE;
+    hstats.top_off = heap_ptr;
+    return hstats;
+}
+
+static void block_set_canary(block_header_t *b)
+{
+    unsigned char *data = (unsigned char *)(b + 1);
+    data[b->req_size] = HEAP_CANARY;
+    b->canary = HEAP_CANARY;
+}
+
+static int block_canary_ok(block_header_t *b)
+{
+    unsigned char *data = (unsigned char *)(b + 1);
+    return data[b->req_size] == (unsigned char)b->canary;
+}
 
 void *malloc(size_t size)
 {
     if (size == 0) return NULL;
 
-    /* Align to 8 bytes */
-    size = (size + 7) & ~7;
-
-    if (!heap_start) {
-        /* First allocation */
-        if (heap_ptr + sizeof(block_header_t) + size > HEAP_SIZE) {
-            errno = ENOMEM;
-            return NULL;
-        }
-        block_header_t *block = (block_header_t *)&heap[heap_ptr];
-        block->size = size;
-        block->free = 0;
-        block->next = NULL;
-        heap_start = block;
-        heap_ptr += sizeof(block_header_t) + size;
-        return (void *)((char *)block + sizeof(block_header_t));
+    /* Capacity = align8(request + 1): guarantees at least one pad
+     * byte after the user area for the canary, so it can never
+     * spill into the next block's header. */
+    size_t orig = size;
+    size = (orig + 8) & ~(size_t)7;
+    if (size > HEAP_SIZE) {
+        errno = ENOMEM;
+        return NULL;
     }
 
-    /* Search for free block */
+    /* First-fit over the address-ordered list, splitting when the
+     * remainder can host header + a usable block. */
     block_header_t *current = heap_start;
     while (current) {
-        if (current->free && current->size >= size) {
-            current->free = 0;
-            return (void *)((char *)current + sizeof(block_header_t));
+        if (current->magic == HEAP_MAGIC_FREE && current->size >= size) {
+            size_t rem = current->size - size;
+            if (rem >= sizeof(block_header_t) + HEAP_SPLIT_MIN) {
+                /* Split: new free block right after the taken part. */
+                block_header_t *split =
+                    (block_header_t *)((char *)(current + 1) + size);
+                split->magic = HEAP_MAGIC_FREE;
+                split->canary = 0;
+                split->size = rem - sizeof(block_header_t);
+                split->req_size = 0;
+                split->next = current->next;
+                current->next = split;
+                current->size = size;
+            }
+            current->magic = HEAP_MAGIC_USED;
+            current->req_size = orig;
+            block_set_canary(current);
+            return (void *)(current + 1);
         }
         if (!current->next) {
-            /* Allocate new block at end */
+            /* Allocate new block at the top (capacity already has
+             * the canary pad baked in — no extra slack needed) */
             if (heap_ptr + sizeof(block_header_t) + size > HEAP_SIZE) {
                 errno = ENOMEM;
                 return NULL;
             }
             block_header_t *block = (block_header_t *)&heap[heap_ptr];
-            block->size = size;
-            block->free = 0;
-            block->next = NULL;
-            current->next = block;
             heap_ptr += sizeof(block_header_t) + size;
-            return (void *)((char *)block + sizeof(block_header_t));
+            block->magic = HEAP_MAGIC_USED;
+            block->size = size;
+            block->req_size = orig;
+            block->next = NULL;
+            block_set_canary(block);
+            current->next = block;
+            return (void *)(block + 1);
         }
         current = current->next;
     }
 
-    errno = ENOMEM;
-    return NULL;
+    /* Empty list: first allocation ever. */
+    if (heap_ptr + sizeof(block_header_t) + size > HEAP_SIZE) {
+        errno = ENOMEM;
+        return NULL;
+    }
+    block_header_t *block = (block_header_t *)&heap[heap_ptr];
+    heap_ptr += sizeof(block_header_t) + size;
+    block->magic = HEAP_MAGIC_USED;
+    block->size = size;
+    block->req_size = orig;
+    block->next = NULL;
+    heap_start = block;
+    block_set_canary(block);
+    return (void *)(block + 1);
 }
 
 void *calloc(size_t nmemb, size_t size)
 {
+    if (nmemb != 0 && size > (size_t)-1 / nmemb) {
+        errno = ENOMEM;
+        return NULL;    /* nmemb*size would overflow */
+    }
     size_t total = nmemb * size;
     void *ptr = malloc(total);
     if (ptr) memset(ptr, 0, total);
@@ -90,12 +177,18 @@ void *realloc(void *ptr, size_t size)
         return NULL;
     }
 
-    block_header_t *block = (block_header_t *)((char *)ptr - sizeof(block_header_t));
-    if (block->size >= size) return ptr;
+    block_header_t *block = (block_header_t *)ptr - 1;
+    if (block->magic != HEAP_MAGIC_USED) {
+        errno = EINVAL;
+        return NULL;    /* not a live allocation */
+    }
+    size_t want = (size + 8) & ~(size_t)7;
+    if (block->size >= want) return ptr;
 
+    size_t copy = block->req_size < size ? block->req_size : size;
     void *new_ptr = malloc(size);
     if (new_ptr) {
-        memcpy(new_ptr, ptr, block->size);
+        memcpy(new_ptr, ptr, copy);
         free(ptr);
     }
     return new_ptr;
@@ -104,8 +197,44 @@ void *realloc(void *ptr, size_t size)
 void free(void *ptr)
 {
     if (!ptr) return;
-    block_header_t *block = (block_header_t *)((char *)ptr - sizeof(block_header_t));
-    block->free = 1;
+    block_header_t *block = (block_header_t *)ptr - 1;
+    if (block->magic != HEAP_MAGIC_USED &&
+        block->magic != HEAP_MAGIC_FREE) {
+        hstats.bad_free++;      /* wild free: not a heap block */
+        return;
+    }
+    if (block->magic == HEAP_MAGIC_FREE) {
+        hstats.double_free++;   /* already freed: ignore */
+        return;
+    }
+    if (!block_canary_ok(block)) {
+        hstats.corrupted++;     /* overflow detected; still reclaim */
+    }
+    block->magic = HEAP_MAGIC_FREE;
+
+    /* Coalesce forward: list is address-ordered. */
+    block_header_t *pNext = block->next;
+    while (pNext && pNext->magic == HEAP_MAGIC_FREE) {
+        block->size += sizeof(block_header_t) + pNext->size;
+        block->next = pNext->next;
+        pNext = block->next;
+    }
+
+    /* Coalesce backward: find the list predecessor and absorb this
+     * block if it is free too (O(n) walk — the arena is one page
+     * list, at most a few hundred blocks; correctness first). */
+    if (block != heap_start) {
+        block_header_t *p = heap_start;
+        while (p && p->next != block)
+            p = p->next;
+        if (p && p->magic == HEAP_MAGIC_FREE) {
+            p->size += sizeof(block_header_t) + block->size;
+            p->next = block->next;
+            /* the predecessor may now touch further free blocks that
+             * were already merged above — it cannot: forward merge
+             * consumed every adjacent free block after `block`. */
+        }
+    }
 }
 
 void exit(int status)

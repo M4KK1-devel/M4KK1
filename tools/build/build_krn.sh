@@ -267,7 +267,7 @@ M4SH_CFLAGS="$M4SH_CFLAGS -I$PWD/sys/src/include -I$PWD/include -I$PWD/sys/src/a
 # PCC 编译产物需要编译器运行时（__divdi3 等），等价于 gcc 隐式链接的 libgcc
 PCC_RUNTIME="$PWD/usr/src/lib/m4k_libc/libpcc.a"
 OBJS=""
-for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/altr/*' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/cmd/sysmon.c' ! -path 'usr/src/cmd/mpl4yer.c' ! -path 'usr/src/cmd/cal_gui.c' ! -path 'usr/src/cmd/disk_gui.c' ! -path 'usr/src/cmd/pref_gui.c' ! -path 'usr/src/lib/*' | sort); do
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/heaptest.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/altr/*' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/cmd/sysmon.c' ! -path 'usr/src/cmd/mpl4yer.c' ! -path 'usr/src/cmd/cal_gui.c' ! -path 'usr/src/cmd/disk_gui.c' ! -path 'usr/src/cmd/pref_gui.c' ! -path 'usr/src/lib/*' | sort); do
     o="${f%.c}.o"
     $UCC $M4SH_CFLAGS -c "$f" -o "$o"
     OBJS="$OBJS $o"
@@ -280,7 +280,7 @@ echo "=== Building M4SHG (graphical-terminal shell) ==="
 # and skips the serial login gate.  Linked at 0x1000000 so the exec'd
 # image never overlaps any live process (see m4sh/m4shg.ld).
 OBJS_G=""
-for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/altr/*' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/cmd/sysmon.c' ! -path 'usr/src/cmd/mpl4yer.c' ! -path 'usr/src/cmd/cal_gui.c' ! -path 'usr/src/cmd/disk_gui.c' ! -path 'usr/src/cmd/pref_gui.c' ! -path 'usr/src/lib/*' | sort); do
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/heaptest.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/altr/*' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/cmd/sysmon.c' ! -path 'usr/src/cmd/mpl4yer.c' ! -path 'usr/src/cmd/cal_gui.c' ! -path 'usr/src/cmd/disk_gui.c' ! -path 'usr/src/cmd/pref_gui.c' ! -path 'usr/src/lib/*' | sort); do
     o="${f%.c}.g.o"
     $UCC $M4SH_CFLAGS -DM4SH_GRAPHICAL -c "$f" -o "$o"
     OBJS_G="$OBJS_G $o"
@@ -295,7 +295,7 @@ echo "=== Building M4SHT (serial test shell, full-test builds) ==="
 # (observed: EIP in set_env mid-instruction -> GPF).  This variant is
 # spawned by MDM under M4K_TEST_AUTOLOGIN for headless shell tests.
 OBJS_T=""
-for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/altr/*' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/cmd/sysmon.c' ! -path 'usr/src/cmd/mpl4yer.c' ! -path 'usr/src/cmd/cal_gui.c' ! -path 'usr/src/cmd/disk_gui.c' ! -path 'usr/src/cmd/pref_gui.c' ! -path 'usr/src/lib/*' | sort); do
+for f in $(find m4sh usr/src/cmd -name '*.c' -type f ! -path 'm4sh/login/*' ! -path 'usr/src/cmd/mdm.c' ! -path 'usr/src/cmd/mdm_mini.c' ! -path 'usr/src/cmd/flip_test.c' ! -path 'usr/src/cmd/heaptest.c' ! -path 'usr/src/cmd/copland.c' ! -path 'usr/src/cmd/cptest.c' ! -path 'usr/src/cmd/terminal.c' ! -path 'usr/src/cmd/fm.c' ! -path 'usr/src/cmd/altr.c' ! -path 'usr/src/cmd/altr/*' ! -path 'usr/src/cmd/calc_gui.c' ! -path 'usr/src/cmd/clock_gui.c' ! -path 'usr/src/cmd/logview.c' ! -path 'usr/src/cmd/info_gui.c' ! -path 'usr/src/cmd/sysmon.c' ! -path 'usr/src/cmd/mpl4yer.c' ! -path 'usr/src/cmd/cal_gui.c' ! -path 'usr/src/cmd/disk_gui.c' ! -path 'usr/src/cmd/pref_gui.c' ! -path 'usr/src/lib/*' | sort); do
     o="${f%.c}.t.o"
     $UCC $M4SH_CFLAGS -DM4SH_NO_LOGIN_GATE -c "$f" -o "$o"
     OBJS_T="$OBJS_T $o"
@@ -505,6 +505,15 @@ $LD -m elf_i386 -T usr/src/tools/pcc/pcc.ld -nostdlib -z max-page-size=0x1000 \
     usr/src/lib/m4k_libc/stdlib_pcc.o usr/src/lib/m4k_libc/unistd_pcc.o \
     usr/src/lib/m4k_libc/errno_pcc.o $PCC_RUNTIME
 echo "   PCC ELF: usr/src/tools/pcc/pcc.elf ($(stat -c%s usr/src/tools/pcc/pcc.elf) bytes)"
+
+echo "=== Building heaptest (libc allocator regression) ELF ==="
+$UCC $M4SH_CFLAGS -c usr/src/cmd/heaptest.c -o usr/src/cmd/heaptest.o
+$LD -m elf_i386 -T usr/src/cmd/heaptest.ld -nostdlib -z max-page-size=0x1000 \
+    -o usr/src/cmd/heaptest.elf usr/src/lib/m4k_libc/crt0.o usr/src/cmd/heaptest.o \
+    usr/src/lib/m4k_libc/stdio_pcc.o usr/src/lib/m4k_libc/string_pcc.o \
+    usr/src/lib/m4k_libc/stdlib_pcc.o usr/src/lib/m4k_libc/unistd_pcc.o \
+    usr/src/lib/m4k_libc/errno_pcc.o $PCC_RUNTIME
+echo "   heaptest ELF: usr/src/cmd/heaptest.elf ($(stat -c%s usr/src/cmd/heaptest.elf) bytes)"
 fi
 
 echo "=== Building init ELF ==="
@@ -638,6 +647,11 @@ xxd -i usr/src/tools/pcc/pcc.elf > init/pcc_elf_.c
 sed 's/usr_src_tools_pcc_pcc_elf/pcc_init_elf/g' init/pcc_elf_.c > init/pcc_elf.c
 rm -f init/pcc_elf_.c
 echo "   Generated init/pcc_elf.c"
+
+xxd -i usr/src/cmd/heaptest.elf > init/heaptest_elf_.c
+sed 's/usr_src_cmd_heaptest_elf/heaptest_init_elf/g; s/usr_src_cmd_heaptest_elf_len/heaptest_init_elf_len/g' init/heaptest_elf_.c > init/heaptest_elf.c
+rm -f init/heaptest_elf_.c
+echo "   Generated init/heaptest_elf.c"
 fi
 
 if [ "$NEED_RECOVERY" = 1 ]; then
@@ -690,6 +704,7 @@ cp -f usr/src/cmd/disk_gui.elf ./usr/bin/disk
 cp -f usr/src/cmd/pref_gui.elf ./usr/bin/pref
 cp -f usr/src/tools/pcc/pcc.elf ./usr/bin/pcc
 cp -f usr/src/tools/pcc/pcc.elf ./usr/bin/cc
+cp -f usr/src/cmd/heaptest.elf ./usr/bin/heaptest
 fi
 if [ "$NEED_RECOVERY" = 1 ]; then
 if [ -f usr/src/tools/recovery/fsck.elf ]; then
@@ -742,6 +757,7 @@ $KCC $CFLAGS -c init/disk_elf.c -o $OBJDIR/disk_elf.o
 $KCC $CFLAGS -c init/pref_elf.c -o $OBJDIR/pref_elf.o
 $KCC $CFLAGS -c init/sprach_stack_elf.c -o $OBJDIR/sprach_stack_elf.o
 $KCC $CFLAGS -c init/pcc_elf.c -o $OBJDIR/pcc_elf.o
+$KCC $CFLAGS -c init/heaptest_elf.c -o $OBJDIR/heaptest_elf.o
 fi
 $KCC $CFLAGS -c init/man_pages.c -o $OBJDIR/man_pages.o
 if [ "$NEED_RECOVERY" = 1 ]; then
@@ -829,7 +845,8 @@ if [ "$NEED_GRAPHICS" = 1 ]; then
     $OBJDIR/pref_elf.o \
     $OBJDIR/fm_elf.o \
     $OBJDIR/sprach_stack_elf.o \
-    $OBJDIR/pcc_elf.o"
+    $OBJDIR/pcc_elf.o \
+    $OBJDIR/heaptest_elf.o"
 fi
 if [ "$NEED_USER" = 1 ]; then
     KRN_OBJS="$KRN_OBJS $OBJDIR/init_elf.o \

@@ -91,6 +91,8 @@ extern unsigned char sprach_stack_init_elf[];
 extern unsigned int sprach_stack_init_elf_len;
 extern unsigned char pcc_init_elf[];
 extern unsigned int pcc_init_elf_len;
+extern unsigned char heaptest_init_elf[];
+extern unsigned int heaptest_init_elf_len;
 #endif
 #ifdef M4K_RECOVERY
 extern unsigned char fsck_init_elf[];
@@ -681,6 +683,20 @@ void mkrn_main(multiboot_info_t *mb_info, u32 magic)
             mkrn_console_write(" bytes)\n");
         } else {
             mkrn_console_write("   WARNING: failed to create /bin/cc\n");
+        }
+    }
+    {
+        int fd = mkrn_vfs_open("/bin/heaptest",
+            M4K_O_CREAT | M4K_O_WRONLY);
+        if (fd >= 0) {
+            int n = mkrn_vfs_write(fd, heaptest_init_elf,
+                heaptest_init_elf_len);
+            mkrn_vfs_close(fd);
+            mkrn_console_write("   /bin/heaptest written (");
+            mkrn_console_write_dec(n);
+            mkrn_console_write(" bytes)\n");
+        } else {
+            mkrn_console_write("   WARNING: failed to create /bin/heaptest\n");
         }
     }
 #endif /* M4K_FULL */

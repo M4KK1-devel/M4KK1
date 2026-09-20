@@ -42,6 +42,7 @@ ELFS = [
     ("mdm", "usr/src/cmd/mdm.elf", False),
     ("mdm_mini", "usr/src/cmd/mdm_mini.elf", False),
     ("pcc", "usr/src/tools/pcc/pcc.elf", False),
+    ("heaptest", "usr/src/cmd/heaptest.elf", False),
 ]
 
 USER_WIN_LO = 0x400000
