@@ -221,9 +221,19 @@ void
 mkrn_timer_wait(uint32_t u32Milliseconds)
 {
     uint32_t u32Start = u32TimerTicks;
+    /* Overflow-safe ms -> ticks, no 64-bit math (no libgcc in
+     * the kernel — u64 division would need __udivdi3).
+     * ms * freq overflows u32 before either factor hits its
+     * own limit: set_frequency clamps nothing and the PIT
+     * master clock allows up to ~1.19 MHz, so e.g.
+     * 10000 ms * 1193182 ≈ 1.19e10 > 2^32.  Split instead:
+     *   ms*f/1000 = (ms/1000)*f + (ms%1000)*f/1000
+     * whose partial products stay well inside u32. */
+    uint32_t u32Q = u32Milliseconds / 1000;
+    uint32_t u32R = u32Milliseconds % 1000;
     uint32_t u32TicksToWait =
-        u32Milliseconds * u32TimerFrequency
-        / 1000;
+        u32Q * u32TimerFrequency
+        + u32R * u32TimerFrequency / 1000;
 
     while ((u32TimerTicks - u32Start)
            < u32TicksToWait)

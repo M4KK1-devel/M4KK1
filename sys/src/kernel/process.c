@@ -612,8 +612,22 @@ void mkrn_process_sleep(uint32_t ms)
         u32 freq = mkrn_timer_get_frequency();
         if (freq == 0)
             freq = 1000;
+        /* Overflow-safe ms -> ticks conversion, no 64-bit math
+         * (the kernel is not linked against libgcc, so u64
+         * division drags in __udivdi3).  ms * freq overflows
+         * u32 before either factor hits its own limit — ms is
+         * clamped to 10000 here, but mkrn_timer_set_frequency
+         * applies no clamp and the PIT master clock allows up
+         * to ~1.19 MHz, so 10000 * 1193182 ≈ 1.19e10 > 2^32.
+         * Split instead:  ms*f/1000 = (ms/1000)*f + (ms%1000)*f/1000
+         * with ms <= 10000 the partial products max out at
+         * 10 * 1.19e6 and 999 * 1.19e6 ≈ 1.19e9 — both well
+         * inside u32.  The +500 rounding keeps a 1 ms request
+         * at least one tick at any supported rate (>= 100 Hz). */
+        u32 q = ms / 1000;
+        u32 r = ms % 1000;
         current->sleep_ticks =
-            (ms * freq + 500) / 1000;
+            q * freq + (r * freq + 500) / 1000;
         if (current->sleep_ticks == 0)
             current->sleep_ticks = 1;
     }

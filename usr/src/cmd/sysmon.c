@@ -251,6 +251,13 @@ static void sm_render(void)
     o = ga_strlen(b);
     APPEND("m procs ");
     strcat_num(b, o, n_procs);
+    o = ga_strlen(b);
+    /* timer_waiters: procs parked in m4k_sleep (S_SYSINFO tail
+     * field, kernel overwrites it).  Visible sanity check for
+     * the O(1) fast-skip counter — should be small and pulse
+     * when apps sleep/poll. */
+    APPEND(" sleep ");
+    strcat_num(b, o, (int)sinfo.timer_waiters);
     ga_rect(&app, 4, SM_H - 22, SM_W - 8, 18, 0x00D0D0D4);
     ga_str(&app, 8, SM_H - 17, b, 0x00202020);
 }
