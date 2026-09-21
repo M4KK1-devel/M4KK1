@@ -16,8 +16,12 @@ Assertions come from sprach.c ser_puts lines on the serial console.
 import os, re, socket, subprocess, time
 
 os.chdir("/mnt/f/M4KK1")
+# Prefer full-test.iso (has M4K_TEST_AUTOLOGIN — boots straight to the
+# desktop).  A plain -full.iso boots into the MDM login gate and the
+# probe times out; lexicographic sort would wrongly pick it
+# (-full.iso < full-test.iso), so match the full-test suffix ONLY.
 isos = sorted(f for f in os.listdir("output")
-             if f.endswith("full-test.iso") or f.endswith("-full.iso"))
+             if f.endswith("full-test.iso"))
 if not isos:
     print("[appmenu] no full-test ISO; run build_krn.sh --full-test first")
     raise SystemExit(1)
