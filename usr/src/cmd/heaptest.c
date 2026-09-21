@@ -184,6 +184,31 @@ static void test_recycle(void)
 	check("recycle", s1.live_blocks == 0 && s1.free_blocks == 1);
 }
 
+static void test_huge_size(void)
+{
+	/* align8 of a near-SIZE_MAX size must not wrap size_t — the
+	 * pre-fix allocator segfaulted here (canary wrote far away
+	 * via the giant req_size).  realloc with a huge size must
+	 * also fail while leaving the original block intact. */
+	char *p = malloc(32);
+	ht_strcpy(p, "guard-intact");
+	void *a = malloc((size_t)-1);
+	void *b = malloc((size_t)-7);
+	void *c = realloc(p, (size_t)-1);
+	check("hugesize", a == 0 && b == 0 && c == 0
+		&& p != 0 && ht_streq(p, "guard-intact"));
+	free(p);
+}
+
+static void test_realloc_wild(void)
+{
+	/* realloc of a pointer that is not a heap block: NULL, no
+	 * crash (matches free()'s wild-pointer policy). */
+	static int data_var = 0;
+	void *r = realloc(&data_var, 64);
+	check("reallocwild", r == 0);
+}
+
 int main(void)
 {
 	printf("[HEAP] heaptest starting\n");
@@ -196,6 +221,8 @@ int main(void)
 	test_realloc();
 	test_realloc_split();
 	test_recycle();
+	test_huge_size();
+	test_realloc_wild();
 	struct m4k_heap_stats s = heap_stats();
 	printf("[HEAP] stats: arena=%d top=%d used=%d free=%d bad=%d dbl=%d corr=%d\n",
 	       (int)s.heap_size, (int)s.top_off, (int)s.used_bytes,

@@ -7,7 +7,7 @@ runs `spawn /bin/heaptest`.  The heaptest ELF prints one
 "[HEAP] RESULT: <pass>/<total>".  Also greps the boot log for
 "/bin/heaptest written" (kernel-side YAFS install).
 
-PASS: all 9 checks OK + RESULT: 9/9 + written banner.
+PASS: all 12 checks OK + RESULT: 12/12 + written banner.
 """
 import subprocess, re, sys, time, select, glob, os
 
@@ -60,7 +60,9 @@ CHECKS = [
     ("realloc",   rb"\[HEAP\] realloc: OK"),
     ("reallocsplit", rb"\[HEAP\] reallocsplit: OK"),
     ("recycle",   rb"\[HEAP\] recycle: OK"),
-    ("summary",   rb"\[HEAP\] RESULT: 10/10"),
+    ("hugesize",  rb"\[HEAP\] hugesize: OK"),
+    ("reallocwild", rb"\[HEAP\] reallocwild: OK"),
+    ("summary",   rb"\[HEAP\] RESULT: 12/12"),
 ]
 
 try:

@@ -94,7 +94,14 @@ void *malloc(size_t size)
 
     /* Capacity = align8(request + 1): guarantees at least one pad
      * byte after the user area for the canary, so it can never
-     * spill into the next block's header. */
+     * spill into the next block's header.  The guard rejects
+     * sizes whose 8-alignment would wrap size_t: (size_t)-1 would
+     * otherwise align to 0, pass the arena check, then write the
+     * canary 4 GB away via req_size (host-reproduced segfault). */
+    if (size > HEAP_SIZE) {
+        errno = ENOMEM;
+        return NULL;
+    }
     size_t orig = size;
     size = (orig + 8) & ~(size_t)7;
     if (size > HEAP_SIZE) {
@@ -185,6 +192,12 @@ void *realloc(void *ptr, size_t size)
     if (block->magic != HEAP_MAGIC_USED) {
         errno = EINVAL;
         return NULL;    /* not a live allocation */
+    }
+    if (size > HEAP_SIZE) {
+        errno = ENOMEM;
+        return NULL;    /* would wrap in align8 below; original
+                         * block stays valid (POSIX: failed realloc
+                         * leaves the old allocation untouched) */
     }
     size_t want = (size + 8) & ~(size_t)7;
     if (block->size >= want) {

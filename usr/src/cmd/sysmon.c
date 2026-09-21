@@ -260,6 +260,11 @@ static void sm_render(void)
             APPEND("-");
         }
         o = ga_strlen(b);
+        APPEND(" top ");
+        strcat_num(b, o, (int)(hst.top_off / 1024));
+        o = ga_strlen(b);
+        APPEND("k");
+        o = ga_strlen(b);
         APPEND(" bad ");
         strcat_num(b, o, (int)(hst.bad_free + hst.double_free
                                + hst.corrupted));

@@ -146,6 +146,26 @@ int main(void)
 		struct m4k_heap_stats s = heap_stats();
 		check("recycle", s.live_blocks == 0 && s.free_blocks == 1);
 	}
+	/* 9. huge-size rejection: align8 must not wrap size_t — the
+	 * pre-fix allocator segfaulted on malloc((size_t)-1) because
+	 * the wrapped capacity bypassed the arena check while
+	 * req_size kept the giant value (canary wrote far out). */
+	{
+		char *p = malloc(32);
+		strcpy(p, "guard-intact");
+		void *a = malloc((size_t)-1);
+		void *b = malloc((size_t)-7);
+		void *c = realloc(p, (size_t)-1);
+		check("hugesize", a == NULL && b == NULL && c == NULL
+			&& p != NULL && strcmp(p, "guard-intact") == 0);
+		free(p);
+	}
+	/* 10. realloc of a foreign pointer must fail cleanly */
+	{
+		static int data_var = 0;
+		void *r = realloc(&data_var, 64);
+		check("reallocwild", r == NULL);
+	}
 	fprintf(stderr, "[HOSTHEAP] RESULT: %d/%d\n", pass, total);
 	return total - pass;
 }
