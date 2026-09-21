@@ -3026,6 +3026,7 @@ static void sprach_wmenu_toggle(struct sprach_ctx *ctx, int open)
         return;
     if (open) {
         ctx->rmenu_hover = -1;
+        ctx->rmenu_sel = -1;
         int h = WMENU_H;
         int x = ctx->rmenu_x, y = ctx->rmenu_y;
         if (x < 0)
@@ -3077,6 +3078,19 @@ static void sprach_draw_wmenu(struct sprach_ctx *ctx)
             ctx->mouse_x < (int)s->x + WMENU_W)
             sp_rect(wmenu_buf, WMENU_W, WMENU_H, 1, iy,
                     WMENU_W - 2, RMENU_ITEM_H, 0x00347BC2);
+        /* keyboard selection (Tab) paints a persistent outline so
+         * hover and kbd selection stay visually distinguishable */
+        if (i == ctx->rmenu_sel) {
+            sp_rect(wmenu_buf, WMENU_W, WMENU_H, 1, iy,
+                    WMENU_W - 2, 1, 0x001A5276);
+            sp_rect(wmenu_buf, WMENU_W, WMENU_H, 1,
+                    iy + RMENU_ITEM_H - 1, WMENU_W - 2, 1,
+                    0x001A5276);
+            sp_rect(wmenu_buf, WMENU_W, WMENU_H, 1, iy, 1,
+                    RMENU_ITEM_H, 0x001A5276);
+            sp_rect(wmenu_buf, WMENU_W, WMENU_H, WMENU_W - 2, iy,
+                    1, RMENU_ITEM_H, 0x001A5276);
+        }
         const char *lbl = (i == 1 && maximized)
             ? rmenu_win_restore : rmenu_win_labels[i];
         sp_draw_str(wmenu_buf, WMENU_W, WMENU_H,
@@ -3130,6 +3144,18 @@ static void sprach_draw_rmenu(struct sprach_ctx *ctx)
             ctx->mouse_x >= x && ctx->mouse_x < x + w)
             sp_rect(desk_buf, SCREEN_W, WORK_AREA_H, x + 1, iy,
                     w - 2, RMENU_ITEM_H, 0x00347BC2);
+        /* keyboard selection (Tab) paints a persistent outline so
+         * hover and kbd selection stay visually distinguishable */
+        if (i == ctx->rmenu_sel) {
+            sp_rect(desk_buf, SCREEN_W, WORK_AREA_H, x + 1, iy,
+                    w - 2, 1, 0x001A5276);
+            sp_rect(desk_buf, SCREEN_W, WORK_AREA_H, x + 1,
+                    iy + RMENU_ITEM_H - 1, w - 2, 1, 0x001A5276);
+            sp_rect(desk_buf, SCREEN_W, WORK_AREA_H, x + 1, iy, 1,
+                    RMENU_ITEM_H, 0x001A5276);
+            sp_rect(desk_buf, SCREEN_W, WORK_AREA_H, x + w - 2, iy,
+                    1, RMENU_ITEM_H, 0x001A5276);
+        }
         /* theme submenu: prefix the active theme with a marker so
          * the current selection is visible at a glance */
         if (i == cur)
@@ -3145,6 +3171,100 @@ static void sprach_draw_rmenu(struct sprach_ctx *ctx)
     ctx->shm->surfaces[desk_slot].dmg_w = SCREEN_W;
     ctx->shm->surfaces[desk_slot].dmg_h = WORK_AREA_H;
     ctx->shm->dirty = 1;
+}
+
+/* Keyboard navigation for the open context menu (all modes).
+ *   - 0x06 (kernel-translated Shift+Tab chord): cycle the kbd
+ *     selection backward with wrap-around
+ *   - Tab ('\t'): cycle forward with wrap-around
+ *   - Enter ('\n'): activate ctx->rmenu_sel through the SAME
+ *     mouse-position-based action path a click takes (the cursor
+ *     is parked on the item centre for the duration of the call,
+ *     then restored — the action helpers read ctx->mouse_x/y)
+ *   - Esc (0x1B): close the menu (modes 1-3 too — Esc used to be
+ *     mode-4-only by accident)
+ * Returns 1 if the key was consumed.  Arrows never arrive
+ * (scancodes without ASCII are dropped by the keymap). */
+static int sprach_desktop_click(struct sprach_ctx *ctx);
+static int sprach_rmenu_activate(struct sprach_ctx *ctx);
+
+static int sprach_rmenu_key_nav(struct sprach_ctx *ctx, char ch)
+{
+    if (!ctx->rmenu_mode)
+        return ch == 0x06;   /* orphan chord: swallow, never leak */
+    int n = ctx->rmenu_items;
+    if (n <= 0)
+        return 0;
+    if (ch == 0x06 || ch == '\t') {
+        int sel = ctx->rmenu_sel;
+        if (ch == '\t')
+            sel = (sel + 1) % n;
+        else
+            sel = sel <= 0 ? n - 1 : sel - 1;
+        ctx->rmenu_sel = sel;
+        if (ctx->rmenu_mode == 4)
+            sprach_draw_wmenu(ctx);
+        else
+            sprach_desktop_paint(ctx);
+        ser_puts("[SPRACH] rmenu ksel ");
+        ser_putc('0' + (char)sel);
+        ser_puts("\n");
+        return 1;
+    }
+    if (ch == '\n') {
+        int item = ctx->rmenu_sel;
+        if (item < 0 || item >= n)
+            return 1;   /* Enter without a selection: swallow */
+        /* Park the cursor on the item centre so the shared
+         * mouse-geometry action path picks exactly this item. */
+        int omx = ctx->mouse_x, omy = ctx->mouse_y;
+        if (ctx->rmenu_mode == 4 && ctx->wmenu_slot >= 0) {
+            struct copland_surface *s =
+                &ctx->shm->surfaces[ctx->wmenu_slot];
+            ctx->mouse_x = (int)s->x + WMENU_W / 2;
+            ctx->mouse_y = (int)s->y + RMENU_PAD
+                           + item * RMENU_ITEM_H + RMENU_ITEM_H / 2;
+        } else {
+            int x = ctx->rmenu_x, y = ctx->rmenu_y - MENUBAR_H;
+            int w = RMENU_ITEM_W;
+            int h = n * RMENU_ITEM_H + RMENU_PAD * 2;
+            if (x + w > SCREEN_W)
+                x = SCREEN_W - w;
+            if (y + h > WORK_AREA_H)
+                y = WORK_AREA_H - h;
+            if (x < 0)
+                x = 0;
+            if (y < 0)
+                y = 0;
+            ctx->mouse_x = x + w / 2;
+            ctx->mouse_y = y + MENUBAR_H + RMENU_PAD
+                           + item * RMENU_ITEM_H + RMENU_ITEM_H / 2;
+        }
+        ctx->rmenu_sel = -1;
+        ser_puts("[SPRACH] rmenu kact ");
+        ser_putc('0' + (char)item);
+        ser_puts("\n");
+        sprach_rmenu_activate(ctx);
+        ctx->mouse_x = omx;
+        ctx->mouse_y = omy;
+        return 1;
+    }
+    if (ch == 0x1B) {
+        ctx->rmenu_sel = -1;
+        if (ctx->rmenu_mode == 4) {
+            sprach_wmenu_toggle(ctx, 0);
+            ctx->rmenu_mode = 0;
+            ctx->rmenu_win = -1;
+            ctx->rmenu_is_term = 0;
+        } else {
+            ctx->rmenu_mode = 0;
+            ctx->rmenu_sel_icon = -1;
+            sprach_desktop_paint(ctx);
+        }
+        ser_puts("[SPRACH] rmenu kbd close\n");
+        return 1;
+    }
+    return 0;
 }
 
 /* Right-button press: dispatch to the menu matching the click
@@ -3164,6 +3284,7 @@ static void sprach_handle_rclick(struct sprach_ctx *ctx)
     if (ctx->rmenu_mode == 4)
         sprach_wmenu_toggle(ctx, 0);
     ctx->rmenu_mode = 0;
+    ctx->rmenu_sel = -1;
     ctx->rmenu_sel_icon = -1;
     ctx->rmenu_win = -1;
     ctx->rmenu_is_term = 0;
@@ -3340,10 +3461,25 @@ static int sprach_rmenu_activate(struct sprach_ctx *ctx)
         return 1;   /* miss = close, swallow */
     if (mode == 2) {
         if (item == 0) {
-            /* Open = same path as a normal icon click */
-            ctx->mouse_y = ctx->mouse_y;   /* unchanged */
+            /* Open = same path as a normal icon click.  Aim at the
+             * rmenu_sel_icon CELL centre, not the menu-item cursor
+             * position: the menu is 150px wide but a desktop cell
+             * only 76px, so a click near the item's right edge (and
+             * every keyboard activation) would otherwise miss the
+             * icon hit-test. */
+            int omx = ctx->mouse_x, omy = ctx->mouse_y;
+            if (icon >= 0 && icon < desk_count) {
+                ctx->mouse_x = DESK_GRID_X
+                    + (icon % DESK_ICON_COLS) * DESK_CELL_W
+                    + DESK_CELL_W / 2;
+                ctx->mouse_y = DESK_GRID_Y
+                    + (icon / DESK_ICON_COLS) * DESK_CELL_H
+                    + DESK_CELL_H / 2;
+            }
             if (sprach_desktop_click(ctx))
                 ser_puts("[SPRACH] rmenu: open\n");
+            ctx->mouse_x = omx;
+            ctx->mouse_y = omy;
         } else {
             ser_puts("[SPRACH] rmenu: properties -> ");
             if (icon >= 0 && icon < desk_count)
@@ -3367,6 +3503,7 @@ static int sprach_rmenu_activate(struct sprach_ctx *ctx)
              * instead of blind-cycling. */
             ctx->rmenu_mode = 3;
             ctx->rmenu_items = 6;
+            ctx->rmenu_sel = -1;
             ctx->rmenu_x = ctx->mouse_x;
             ctx->rmenu_y = ctx->mouse_y;
             sprach_desktop_paint(ctx);
@@ -5216,6 +5353,7 @@ void _start(void)
     ctx.rmenu_win = -1;
     ctx.rmenu_is_term = 0;
     ctx.rmenu_hover = -1;
+    ctx.rmenu_sel = -1;
     ctx.wmenu_slot = -1;
     ctx.btn2_was_down = 0;
     ctx.drag_win = -1;
@@ -5567,6 +5705,13 @@ void _start(void)
              * close.  Must run BEFORE the bare-Esc handler below
              * and before any terminal/FM forwarding. */
             if (ctx.lp_open && sprach_launchpad_key(&ctx, ev.ascii_char))
+                continue;
+
+            /* Open context menu owns the keyboard first: Tab /
+             * Shift+Tab cycle items, Enter activates, Esc closes
+             * (must run BEFORE the launchpad / Esc chrome handler
+             * and before any terminal/FM forwarding). */
+            if (sprach_rmenu_key_nav(&ctx, (char)ev.ascii_char))
                 continue;
 
             /* Esc → close launchpad / app menu / app panel /

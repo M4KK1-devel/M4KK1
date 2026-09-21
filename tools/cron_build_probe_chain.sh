@@ -31,10 +31,14 @@ python3 tools/build/wmenu_term_probe.py
 wtrc=$?
 echo "WMENU_TERM_PROBE rc=$wtrc"
 
+python3 tools/build/wmenu_kbd_probe.py
+wkrc=$?
+echo "WMENU_KBD_PROBE rc=$wkrc"
+
 python3 tools/build/sysmon_probe.py 2>/dev/null
 src=$?
 echo "SYSMON_PROBE rc=$src"
 
 # host unit tests
 make test 2>&1 | tail -4
-exit $(( hrc | src | wrc | wtrc ))
+exit $(( hrc | src | wrc | wtrc | wkrc ))

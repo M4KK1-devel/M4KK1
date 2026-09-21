@@ -243,6 +243,12 @@ struct sprach_ctx {
      * Tracked so the highlight repaint fires only on change and
      * the serial telemetry lets QEMU probes assert live hover. */
     int rmenu_hover;
+    /* Keyboard-selected item of the open menu (any mode), -1 = no
+     * selection.  Tab/0x06 cycles it forward/backward, Enter
+     * activates it (same action path as a mouse click), Esc closes
+     * the menu.  Arrows never arrive (scancodes without ASCII are
+     * dropped by the keymap — same launchpad constraint). */
+    int rmenu_sel;
     /* Dedicated floating menu surface for mode 4 (created hidden at
      * boot, raised above windows while open, like the app menu). */
     int wmenu_slot;

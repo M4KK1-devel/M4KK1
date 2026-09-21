@@ -330,6 +330,11 @@ mkrn_keyboard_handler(void)
         if (keyboard_state.alt_pressed) {
             if (ch == '\t')
                 ch = 0x03;   /* Alt+Tab  → window cycle  */
+        } else if (keyboard_state.shift_pressed &&
+                   !keyboard_state.ctrl_pressed &&
+                   !keyboard_state.super_pressed) {
+            if (ch == '\t')
+                ch = 0x06;   /* Shift+Tab → rmenu kbd cycle back */
         } else if (keyboard_state.super_pressed &&
                    !keyboard_state.ctrl_pressed) {
             if (ch == 'd')
