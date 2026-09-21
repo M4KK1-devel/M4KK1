@@ -222,13 +222,26 @@ struct sprach_ctx {
 
     /* Context menu (right-click, conditional): rmenu_mode 0 = closed,
      * 1 = desktop wallpaper menu (New Terminal / Change Wallpaper /
-     * Launchpad), 2 = desktop-icon menu (Open / Properties).  Painted
+     * Launchpad), 2 = desktop-icon menu (Open / Properties),
+     * 3 = wallpaper theme submenu, 4 = window title-bar menu
+     * (Minimize / Maximize-Restore / Close — sprach windows AND the
+     * terminal window, one unified behaviour).  Modes 1-3 are painted
      * as an overlay on the desktop surface buffer at rmenu_x/rmenu_y
-     * (screen space, clamped on-screen), item height RMENU_ITEM_H. */
+     * (screen space, clamped on-screen), item height RMENU_ITEM_H;
+     * mode 4 paints into the dedicated wmenu_slot surface so it
+     * floats ABOVE client windows (the desktop overlay would be
+     * covered by the very window the menu acts on). */
     int rmenu_mode;
     int rmenu_x, rmenu_y;
     int rmenu_items;    /* item count of the open menu */
     int rmenu_sel_icon; /* icon index for mode 2, -1 otherwise */
+    /* mode 4 target: rmenu_win = wins[] index, rmenu_is_term = 1
+     * targets the terminal window instead (mutually exclusive). */
+    int rmenu_win;
+    int rmenu_is_term;
+    /* Dedicated floating menu surface for mode 4 (created hidden at
+     * boot, raised above windows while open, like the app menu). */
+    int wmenu_slot;
     /* Right-button edge tracking (btn2_was_down mirrors btn_was_down) */
     int btn2_was_down;
 
@@ -268,6 +281,7 @@ void sprach_spawn_terminal(struct sprach_ctx *ctx);
 void sprach_handle_mouse(struct sprach_ctx *ctx);
 void sprach_raise_window(struct sprach_ctx *ctx, int idx);
 void sprach_raise_surface(struct sprach_ctx *ctx, int slot);
+int sprach_slot_is_ours(struct sprach_ctx *ctx, int i);
 void sprach_spawn_terminal(struct sprach_ctx *ctx);
 void sprach_poll_terminal(struct sprach_ctx *ctx);
 void sprach_handle_terminal_click(struct sprach_ctx *ctx, int sx, int sy,

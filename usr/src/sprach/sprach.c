@@ -2785,15 +2785,177 @@ static int sprach_desktop_create(struct sprach_ctx *ctx)
     return -1;
 }
 
+/* ── Unified window actions ──
+ * One code path per action, shared by the title-bar buttons AND the
+ * right-click window menu (rmenu mode 4).  Extracted verbatim from
+ * the button handlers so the two entry points can never drift apart
+ * (that drift — close/min/max behaving differently depending on how
+ * you reach them — was the reason this framework exists). */
+
+static void sprach_win_close(struct sprach_ctx *ctx, int i)
+{
+    struct sprach_window *w = &ctx->wins[i];
+    if (w->slot < 0)
+        return;
+    w->btn_clicked = 1;
+    w->click_tick = ctx->tick;
+    ctx->shm->surfaces[w->slot].in_use = 0;
+    if (ctx->shm->surface_count > 0)
+        ctx->shm->surface_count--;
+    ctx->shm->dirty = 1;
+    w->slot = -1;
+    ser_puts("[SPRACH] CLOSE ");
+    print_u32((uint32_t)i);
+    ser_puts("\n");
+    if (ctx->active == i)
+        sprach_focus_fallback(ctx);
+}
+
+static void sprach_win_minimize(struct sprach_ctx *ctx, int i)
+{
+    struct sprach_window *w = &ctx->wins[i];
+    if (w->slot < 0)
+        return;
+    w->btn_clicked = 2;
+    w->click_tick = ctx->tick;
+    w->hidden = 1;
+    ctx->shm->surfaces[w->slot].flags &= ~COPLAND_SURF_VISIBLE;
+    ctx->shm->dirty = 1;
+    ser_puts("[SPRACH] MIN ");
+    print_u32((uint32_t)i);
+    ser_puts("\n");
+    /* Focus-policy fix (2026-09-19): minimizing the ACTIVE window
+     * must hand the focus to the next visible window — same rule as
+     * CLOSE, which already did this. */
+    if (ctx->active == i)
+        sprach_focus_fallback(ctx);
+}
+
+static void sprach_win_toggle_max(struct sprach_ctx *ctx, int i)
+{
+    struct sprach_window *w = &ctx->wins[i];
+    if (w->slot < 0)
+        return;
+    w->btn_clicked = 3;
+    w->click_tick = ctx->tick;
+    if (w->maximized) {
+        /* If the user resized beyond the static 256×192 backing
+         * store, keep painting in the full-screen buffer (restore
+         * must never point w->buf at a smaller array than
+         * w->w * w->h needs). */
+        w->buf = (w->normal_w <= SPRACH_WIN_W &&
+                  w->normal_h <= SPRACH_WIN_H)
+                     ? sprach_bufs[i]
+                     : maximize_bufs[i];
+        w->w = w->normal_w;
+        w->h = w->normal_h;
+        w->x = w->normal_x;
+        w->y = w->normal_y;
+        w->maximized = 0;
+        ser_puts("[SPRACH] RESTORE ");
+        print_u32((uint32_t)i);
+        ser_puts("\n");
+    } else {
+        w->normal_x = w->x;
+        w->normal_y = w->y;
+        w->normal_w = w->w;
+        w->normal_h = w->h;
+        w->buf = maximize_bufs[i];
+        w->w = SCREEN_W;
+        w->h = WORK_AREA_H;
+        w->x = 0;
+        w->y = WORK_AREA_Y;
+        w->maximized = 1;
+        ser_puts("[SPRACH] MAX ");
+        print_u32((uint32_t)i);
+        ser_puts("\n");
+    }
+    /* Keep the surface in sync: Copland blits from buffer_ptr with
+     * the surface geometry.  Paint into the (possibly brand-new)
+     * buffer NOW so a composite can never read unpainted memory. */
+    ctx->shm->surfaces[w->slot].buffer_ptr =
+        (uint32_t)(uintptr_t)w->buf;
+    ctx->shm->surfaces[w->slot].x = w->x;
+    ctx->shm->surfaces[w->slot].y = w->y;
+    ctx->shm->surfaces[w->slot].w = w->w;
+    ctx->shm->surfaces[w->slot].h = w->h;
+    sprach_paint_window(ctx, w);
+    ctx->shm->dirty = 1;
+}
+
+/* Terminal-window equivalents (the terminal is a Copland-surface
+ * client, not a ctx->wins entry — hence separate helpers, but the
+ * SAME unified action semantics as sprach windows). */
+
+static void sprach_term_close(struct sprach_ctx *ctx)
+{
+    if (ctx->term_slot < 0)
+        return;
+    ser_puts("[SPRACH] TERMINAL CLOSE\n");
+    ctx->shm->surfaces[ctx->term_slot].in_use = 0;
+    if (ctx->shm->surface_count > 0)
+        ctx->shm->surface_count--;
+    ctx->shm->dirty = 1;
+    if (ctx->term_pid > 0)
+        m4k_kill(ctx->term_pid, 2 /* SIGKILL */);
+    ctx->term_slot = -1;
+    ctx->term_pid = -1;
+    sprach_focus_fallback(ctx);
+}
+
+static void sprach_term_minimize(struct sprach_ctx *ctx)
+{
+    if (ctx->term_slot < 0)
+        return;
+    ser_puts("[SPRACH] TERMINAL MIN\n");
+    ctx->term_hidden = 1;
+    ctx->shm->surfaces[ctx->term_slot].flags &=
+        ~COPLAND_SURF_VISIBLE;
+    ctx->shm->dirty = 1;
+    if (ctx->active < 0)
+        sprach_focus_fallback(ctx);
+}
+
+static void sprach_term_toggle_max(struct sprach_ctx *ctx)
+{
+    if (ctx->term_slot < 0)
+        return;
+    struct copland_surface *ts = &ctx->shm->surfaces[ctx->term_slot];
+    if (ctx->term_maximized) {
+        ts->x = ctx->term_normal_x;
+        ts->y = ctx->term_normal_y;
+        ts->w = ctx->term_normal_w;
+        ts->h = ctx->term_normal_h;
+        ctx->term_maximized = 0;
+        ser_puts("[SPRACH] TERMINAL RESTORE\n");
+    } else {
+        ctx->term_normal_x = ts->x;
+        ctx->term_normal_y = ts->y;
+        ctx->term_normal_w = ts->w;
+        ctx->term_normal_h = ts->h;
+        ts->x = 0;
+        ts->y = WORK_AREA_Y;
+        ts->w = SCREEN_W;
+        ts->h = WORK_AREA_H;
+        ctx->term_maximized = 1;
+        ser_puts("[SPRACH] TERMINAL MAX\n");
+    }
+    ctx->shm->dirty = 1;
+}
+
 /* ── Conditional context menu (right-click) ──
  *
- * Two different menus depending on WHERE the right-click landed:
+ * Menus depending on WHERE the right-click landed:
  *   - on a desktop icon cell  → "Open" / "Properties" (mode 2)
  *   - on the bare wallpaper   → "New Terminal" / "Change Wallpaper" /
  *                               "Launchpad"          (mode 1)
- * The menu is painted as an overlay at the END of
- * sprach_desktop_paint(), so any desktop repaint refreshes it, and
- * hitting an item re-enters the normal sprach_handle_click path. */
+ *   - on a window title bar   → "Minimize" / "Maximize|Restore" /
+ *                               "Close"              (mode 4)
+ * Modes 1-3 are painted as an overlay at the END of
+ * sprach_desktop_paint(), so any desktop repaint refreshes them, and
+ * hitting an item re-enters the normal sprach_handle_click path.
+ * Mode 4 lives on the dedicated wmenu_slot surface so it floats
+ * ABOVE the very window it acts on. */
 
 static void sprach_draw_rmenu(struct sprach_ctx *ctx);
 
@@ -2813,12 +2975,125 @@ static const char *const rmenu_theme_labels[6] = {
     "Classic Blue", "Ocean", "Twilight",
     "Graphite", "Desert", "Forest",
 };
+/* mode 4 = window title-bar menu (sprach windows and the terminal
+ * alike).  Item 1's label is swapped to "Restore" at draw time when
+ * the target window is already maximized. */
+static const char *const rmenu_win_labels[3] = {
+    "Minimize", "Maximize", "Close",
+};
+static const char rmenu_win_restore[] = "Restore";
+
+/* Floating menu surface for mode 4 (window menus): RMENU_W x
+ * (3*RMENU_ITEM_H + 2*RMENU_PAD) backing store, sized for the
+ * largest menu it ever shows. */
+#define WMENU_W     RMENU_ITEM_W
+#define WMENU_H     (3 * RMENU_ITEM_H + RMENU_PAD * 2)
+static uint32_t wmenu_buf[WMENU_W * WMENU_H];
+
+static void sprach_draw_wmenu(struct sprach_ctx *ctx);
+
+int sprach_create_wmenu(struct sprach_ctx *ctx)
+{
+    if (ctx->wmenu_slot >= 0)
+        return 0;
+    for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
+        if (!ctx->shm->surfaces[i].in_use) {
+            struct copland_surface *s =
+                &ctx->shm->surfaces[i];
+            s->x = 0;
+            s->y = MENUBAR_H;
+            s->w = WMENU_W;
+            s->h = WMENU_H;
+            s->color = 0x00E8E8E8;
+            s->flags = 0 /* start hidden: no VISIBLE flag */;
+            s->dmg_w = 0;
+            s->buffer_ptr = (uint32_t)(uintptr_t)wmenu_buf;
+            s->in_use = 1;      /* publish LAST (same reason as
+                                 * sprach_create_app_menu) */
+            ctx->wmenu_slot = i;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* Show/hide the floating window-menu surface.  Show positions it at
+ * rmenu_x/rmenu_y (clamped inside the work area), raises it above
+ * every client window and paints the items. */
+static void sprach_wmenu_toggle(struct sprach_ctx *ctx, int open)
+{
+    if (ctx->wmenu_slot < 0)
+        return;
+    if (open) {
+        int h = WMENU_H;
+        int x = ctx->rmenu_x, y = ctx->rmenu_y;
+        if (x < 0)
+            x = 0;
+        if (x + WMENU_W > SCREEN_W)
+            x = SCREEN_W - WMENU_W;
+        if (y < MENUBAR_H)
+            y = MENUBAR_H;
+        if (y + h > SCREEN_H - TASKBAR_H)
+            y = SCREEN_H - TASKBAR_H - h;
+        struct copland_surface *s =
+            &ctx->shm->surfaces[ctx->wmenu_slot];
+        s->x = x;
+        s->y = y;
+        s->flags |= COPLAND_SURF_VISIBLE;
+        sprach_raise_surface(ctx, ctx->wmenu_slot);
+        sprach_draw_wmenu(ctx);
+        ctx->shm->dirty = 1;
+    } else {
+        ctx->shm->surfaces[ctx->wmenu_slot].flags &=
+            ~COPLAND_SURF_VISIBLE;
+        ctx->shm->dirty = 1;
+    }
+}
+
+/* Paint the mode-4 menu into the floating surface buffer.  Same
+ * visual language as the desktop overlay menu (panel, hover
+ * highlight, dark labels) so all right-click menus look native. */
+static void sprach_draw_wmenu(struct sprach_ctx *ctx)
+{
+    if (ctx->wmenu_slot < 0 || ctx->rmenu_mode != 4)
+        return;
+    struct copland_surface *s = &ctx->shm->surfaces[ctx->wmenu_slot];
+    sp_fill(wmenu_buf, WMENU_W * WMENU_H, 0x00E8E8EC);
+    sp_rect(wmenu_buf, WMENU_W, WMENU_H, 0, 0, WMENU_W, 1, 0x00FFFFFF);
+    sp_rect(wmenu_buf, WMENU_W, WMENU_H, 0, 0, 1, WMENU_H, 0x00FFFFFF);
+    sp_rect(wmenu_buf, WMENU_W, WMENU_H, WMENU_W - 1, 0, 1, WMENU_H,
+            0x00909098);
+    sp_rect(wmenu_buf, WMENU_W, WMENU_H, 0, WMENU_H - 1, WMENU_W, 1,
+            0x00909098);
+    int maximized = ctx->rmenu_is_term ? ctx->term_maximized
+        : (ctx->rmenu_win >= 0 && ctx->rmenu_win < SPRACH_WINDOW_COUNT
+               ? ctx->wins[ctx->rmenu_win].maximized : 0);
+    for (int i = 0; i < 3; i++) {
+        int iy = RMENU_PAD + i * RMENU_ITEM_H;
+        if (ctx->mouse_y >= (int)s->y + iy &&
+            ctx->mouse_y < (int)s->y + iy + RMENU_ITEM_H &&
+            ctx->mouse_x >= (int)s->x &&
+            ctx->mouse_x < (int)s->x + WMENU_W)
+            sp_rect(wmenu_buf, WMENU_W, WMENU_H, 1, iy,
+                    WMENU_W - 2, RMENU_ITEM_H, 0x00347BC2);
+        const char *lbl = (i == 1 && maximized)
+            ? rmenu_win_restore : rmenu_win_labels[i];
+        sp_draw_str(wmenu_buf, WMENU_W, WMENU_H,
+                    10, iy + (RMENU_ITEM_H - 8) / 2,
+                    lbl, 0x001A1A1A);
+    }
+    s->dmg_x = 0;
+    s->dmg_y = 0;
+    s->dmg_w = WMENU_W;
+    s->dmg_h = WMENU_H;
+    ctx->shm->dirty = 1;
+}
 
 /* Paint the open context menu into the desktop overlay buffer. */
 static void sprach_draw_rmenu(struct sprach_ctx *ctx)
 {
-    if (!ctx->rmenu_mode || desk_slot < 0)
-        return;
+    if (!ctx->rmenu_mode || ctx->rmenu_mode == 4 || desk_slot < 0)
+        return;   /* closed, or mode 4 lives on the floating surface */
     const char *const *labels = ctx->rmenu_mode == 2
         ? rmenu_icon_labels
         : (ctx->rmenu_mode == 3 ? rmenu_theme_labels
@@ -2871,15 +3146,103 @@ static void sprach_draw_rmenu(struct sprach_ctx *ctx)
     ctx->shm->dirty = 1;
 }
 
-/* Right-button press: open the menu appropriate for the click
- * target (icon cell vs bare wallpaper).  Falls through silently
- * outside the work area (menubar/dock keep their own behaviour). */
+/* Right-button press: dispatch to the menu matching the click
+ * target, ONE unified entry: window title bar (mode 4) → desktop
+ * icon cell (mode 2) → bare wallpaper (mode 1).  Falls through
+ * silently outside the work area (menubar/dock keep their own
+ * behaviour).  Title-bar targets are probed in the same top-most
+ * first order as sprach_handle_click so right- and left-click
+ * always agree on which window was hit. */
 static void sprach_handle_rclick(struct sprach_ctx *ctx)
 {
     if (ctx->mouse_y < MENUBAR_H ||
         ctx->mouse_y >= SCREEN_H - TASKBAR_H)
         return;
+    /* An already-open menu gets re-targeted by the new right-click
+     * (both overlay and floating variants close first). */
+    if (ctx->rmenu_mode == 4)
+        sprach_wmenu_toggle(ctx, 0);
+    ctx->rmenu_mode = 0;
     ctx->rmenu_sel_icon = -1;
+    ctx->rmenu_win = -1;
+    ctx->rmenu_is_term = 0;
+    /* window title bar?  terminal first (it is typically raised
+     * topmost), then sprach windows top-most first — mirroring
+     * sprach_handle_click's hit-test order. */
+    if (ctx->term_slot >= 0 && !ctx->term_hidden) {
+        struct copland_surface *ts =
+            &ctx->shm->surfaces[ctx->term_slot];
+        if (ctx->mouse_x >= ts->x &&
+            ctx->mouse_x < ts->x + ts->w &&
+            ctx->mouse_y >= ts->y &&
+            ctx->mouse_y < ts->y + TERM_TITLE_H) {
+            ctx->rmenu_mode = 4;
+            ctx->rmenu_items = 3;
+            ctx->rmenu_is_term = 1;
+            ctx->rmenu_x = ctx->mouse_x;
+            ctx->rmenu_y = ctx->mouse_y;
+            sprach_wmenu_toggle(ctx, 1);
+            ser_puts("[SPRACH] rmenu: term window menu\n");
+            return;
+        }
+    }
+    for (int i = SPRACH_WINDOW_COUNT - 1; i >= 0; i--) {
+        struct sprach_window *w = &ctx->wins[i];
+        if (w->slot < 0 || w->hidden)
+            continue;
+        int cw = w->maximized ? SCREEN_W : w->w;
+        if (ctx->mouse_x >= w->x && ctx->mouse_x < w->x + cw &&
+            ctx->mouse_y >= w->y &&
+            ctx->mouse_y < w->y + SPRACH_TITLE_H) {
+            ctx->rmenu_mode = 4;
+            ctx->rmenu_items = 3;
+            ctx->rmenu_win = i;
+            ctx->rmenu_x = ctx->mouse_x;
+            ctx->rmenu_y = ctx->mouse_y;
+            sprach_wmenu_toggle(ctx, 1);
+            ser_puts("[SPRACH] rmenu: window menu\n");
+            return;
+        }
+    }
+    /* Right-click on a window CLIENT area (anything below the title
+     * bar) opens nothing: the menu would be painted on the desktop
+     * layer and hidden underneath the very window — and an open but
+     * invisible menu would then swallow the next left click.  Right
+     * buttons inside a client belong to the client, not the WM. */
+    if (ctx->term_slot >= 0 && !ctx->term_hidden) {
+        struct copland_surface *ts =
+            &ctx->shm->surfaces[ctx->term_slot];
+        if (ctx->mouse_x >= ts->x &&
+            ctx->mouse_x < ts->x + ts->w &&
+            ctx->mouse_y >= ts->y + TERM_TITLE_H &&
+            ctx->mouse_y < ts->y + ts->h)
+            return;
+    }
+    for (int i = SPRACH_WINDOW_COUNT - 1; i >= 0; i--) {
+        struct sprach_window *w = &ctx->wins[i];
+        if (w->slot < 0 || w->hidden)
+            continue;
+        int cw = w->maximized ? SCREEN_W : w->w;
+        int ch = w->maximized ? WORK_AREA_H : w->h;
+        if (ctx->mouse_x >= w->x && ctx->mouse_x < w->x + cw &&
+            ctx->mouse_y >= w->y + SPRACH_TITLE_H &&
+            ctx->mouse_y < w->y + ch)
+            return;
+    }
+    for (int i = 0; i < COPLAND_MAX_SURFACES; i++) {
+        if (!ctx->shm->surfaces[i].in_use ||
+            sprach_slot_is_ours(ctx, i))
+            continue;
+        struct copland_surface *fs = &ctx->shm->surfaces[i];
+        if (fs->w < 50 || fs->h < 50)
+            continue;   /* transient half-created surface */
+        if (fs->flags & COPLAND_SURF_VISIBLE &&
+            ctx->mouse_x >= (int)fs->x &&
+            ctx->mouse_x < (int)fs->x + (int)fs->w &&
+            ctx->mouse_y >= (int)fs->y &&
+            ctx->mouse_y < (int)fs->y + (int)fs->h)
+            return;
+    }
     /* icon cell? */
     for (int a = 0; a < desk_count && a < DESK_ICON_MAX; a++) {
         int cx = DESK_GRID_X + (a % DESK_ICON_COLS) * DESK_CELL_W;
@@ -2911,6 +3274,49 @@ static int sprach_rmenu_activate(struct sprach_ctx *ctx)
 {
     if (!ctx->rmenu_mode)
         return 0;
+    int mode = ctx->rmenu_mode;
+    int item = -1;
+    if (mode == 4) {
+        /* Floating surface: hit-test against the surface's ACTUAL
+         * on-screen rect (clamped position, screen coords). */
+        if (ctx->wmenu_slot >= 0) {
+            struct copland_surface *s =
+                &ctx->shm->surfaces[ctx->wmenu_slot];
+            if (ctx->mouse_x >= (int)s->x &&
+                ctx->mouse_x < (int)s->x + WMENU_W &&
+                ctx->mouse_y >= (int)s->y &&
+                ctx->mouse_y < (int)s->y + WMENU_H)
+                item = (ctx->mouse_y - (int)s->y - RMENU_PAD)
+                       / RMENU_ITEM_H;
+        }
+        int rwin = ctx->rmenu_win;
+        int rterm = ctx->rmenu_is_term;
+        sprach_wmenu_toggle(ctx, 0);
+        ctx->rmenu_mode = 0;
+        ctx->rmenu_win = -1;
+        ctx->rmenu_is_term = 0;
+        if (item < 0 || item >= 3)
+            return 1;   /* miss = close, swallow */
+        /* Unified window actions — the same helpers the title-bar
+         * buttons call, so menu and buttons can never drift. */
+        if (rterm) {
+            if (item == 0)
+                sprach_term_minimize(ctx);
+            else if (item == 1)
+                sprach_term_toggle_max(ctx);
+            else
+                sprach_term_close(ctx);
+        } else if (rwin >= 0 && rwin < SPRACH_WINDOW_COUNT &&
+                   ctx->wins[rwin].slot >= 0) {
+            if (item == 0)
+                sprach_win_minimize(ctx, rwin);
+            else if (item == 1)
+                sprach_win_toggle_max(ctx, rwin);
+            else
+                sprach_win_close(ctx, rwin);
+        }
+        return 1;
+    }
     int x = ctx->rmenu_x, y = ctx->rmenu_y - MENUBAR_H;
     int w = RMENU_ITEM_W;
     int h = ctx->rmenu_items * RMENU_ITEM_H + RMENU_PAD * 2;
@@ -2918,13 +3324,11 @@ static int sprach_rmenu_activate(struct sprach_ctx *ctx)
         x = SCREEN_W - w;
     if (y + h > WORK_AREA_H)
         y = WORK_AREA_H - h;
-    int item = -1;
     if (ctx->mouse_x >= x && ctx->mouse_x < x + w &&
         ctx->mouse_y - MENUBAR_H >= y &&
         ctx->mouse_y - MENUBAR_H < y + h)
         item = (ctx->mouse_y - MENUBAR_H - y - RMENU_PAD)
                / RMENU_ITEM_H;
-    int mode = ctx->rmenu_mode;
     int icon = ctx->rmenu_sel_icon;
     ctx->rmenu_mode = 0;
     ctx->rmenu_sel_icon = -1;
@@ -3322,11 +3726,13 @@ void sprach_raise_surface(struct sprach_ctx *ctx, int slot)
         ctx->clock_slot = (ctx->clock_slot == top) ? slot
                          : ctx->clock_slot;
         ctx->menu_slot = (ctx->menu_slot == top) ? slot
-                        : ctx->menu_slot;
+                            : ctx->menu_slot;
         ctx->lp_slot = (ctx->lp_slot == top) ? slot
-                      : ctx->lp_slot;
+                          : ctx->lp_slot;
         ctx->panel_slot = (ctx->panel_slot == top) ? slot
-                         : ctx->panel_slot;
+                             : ctx->panel_slot;
+        ctx->wmenu_slot = (ctx->wmenu_slot == top) ? slot
+                             : ctx->wmenu_slot;
         if (slot < 32)
             focus_seen_mask |= (1u << slot);   /* client relocated */
     }
@@ -3341,6 +3747,7 @@ void sprach_raise_surface(struct sprach_ctx *ctx, int slot)
     ctx->menu_slot = (ctx->menu_slot == slot) ? f : ctx->menu_slot;
     ctx->lp_slot = (ctx->lp_slot == slot) ? f : ctx->lp_slot;
     ctx->panel_slot = (ctx->panel_slot == slot) ? f : ctx->panel_slot;
+    ctx->wmenu_slot = (ctx->wmenu_slot == slot) ? f : ctx->wmenu_slot;
     if (f < 32)
         focus_seen_mask |= (1u << f);
 }
@@ -3785,7 +4192,8 @@ int sprach_slot_is_ours(struct sprach_ctx *ctx, int i)
     if (i == ctx->taskbar_slot || i == ctx->menubar_slot ||
         i == desk_slot || i == ctx->clock_slot ||
         i == ctx->menu_slot || i == ctx->lp_slot ||
-        i == ctx->panel_slot || i == ctx->term_slot)
+        i == ctx->panel_slot || i == ctx->wmenu_slot ||
+        i == ctx->term_slot)
         return 1;
     for (int j = 0; j < SPRACH_WINDOW_COUNT; j++)
         if (ctx->wins[j].slot == i)
@@ -4169,56 +4577,21 @@ void sprach_handle_terminal_click(struct sprach_ctx *ctx, int sx, int sy,
     /* Close: tear down the surface and kill the terminal process */
     if (ly >= CTRL_Y && ly < CTRL_Y + CTRL_SIZE &&
         lx >= CTRL_CLOSE_X && lx < CTRL_CLOSE_X + CTRL_SIZE) {
-        ser_puts("[SPRACH] TERMINAL CLOSE\n");
-        ctx->shm->surfaces[ctx->term_slot].in_use = 0;
-        if (ctx->shm->surface_count > 0)
-            ctx->shm->surface_count--;
-        ctx->shm->dirty = 1;
-        if (ctx->term_pid > 0)
-            m4k_kill(ctx->term_pid, 2 /* SIGKILL */);
-        ctx->term_slot = -1;
-        ctx->term_pid = -1;
-        sprach_focus_fallback(ctx);
+        sprach_term_close(ctx);
         return;
     }
 
     /* Minimize: hide the surface, keep the taskbar button */
     if (ly >= CTRL_Y && ly < CTRL_Y + CTRL_SIZE &&
         lx >= CTRL_MIN_X && lx < CTRL_MIN_X + CTRL_SIZE) {
-        ser_puts("[SPRACH] TERMINAL MIN\n");
-        ctx->term_hidden = 1;
-        ctx->shm->surfaces[ctx->term_slot].flags &=
-            ~COPLAND_SURF_VISIBLE;
-        ctx->shm->dirty = 1;
-        if (ctx->active < 0)
-            sprach_focus_fallback(ctx);
+        sprach_term_minimize(ctx);
         return;
     }
 
     /* Maximize / restore: span the whole work area */
     if (ly >= CTRL_Y && ly < CTRL_Y + CTRL_SIZE &&
         lx >= CTRL_MAX_X && lx < CTRL_MAX_X + CTRL_SIZE) {
-        struct copland_surface *ts = &ctx->shm->surfaces[ctx->term_slot];
-        if (ctx->term_maximized) {
-            ts->x = ctx->term_normal_x;
-            ts->y = ctx->term_normal_y;
-            ts->w = ctx->term_normal_w;
-            ts->h = ctx->term_normal_h;
-            ctx->term_maximized = 0;
-            ser_puts("[SPRACH] TERMINAL RESTORE\n");
-        } else {
-            ctx->term_normal_x = ts->x;
-            ctx->term_normal_y = ts->y;
-            ctx->term_normal_w = ts->w;
-            ctx->term_normal_h = ts->h;
-            ts->x = 0;
-            ts->y = WORK_AREA_Y;
-            ts->w = SCREEN_W;
-            ts->h = WORK_AREA_H;
-            ctx->term_maximized = 1;
-            ser_puts("[SPRACH] TERMINAL MAX\n");
-        }
-        ctx->shm->dirty = 1;
+        sprach_term_toggle_max(ctx);
         return;
     }
 
@@ -4551,93 +4924,21 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                         /* Close */
                         if (ly >= CTRL_Y && ly < CTRL_Y + CTRL_SIZE &&
                             lx >= CTRL_CLOSE_X && lx < CTRL_CLOSE_X + CTRL_SIZE) {
-                            w->btn_clicked = 1;
-                            w->click_tick = ctx->tick;
-                            ctx->shm->surfaces[w->slot].in_use = 0;
-                            if (ctx->shm->surface_count > 0)
-                                ctx->shm->surface_count--;
-                            ctx->shm->dirty = 1;
-                            w->slot = -1;
-                            ser_puts("[SPRACH] CLOSE ");
-                            print_u32((uint32_t)i);
-                            ser_puts("\n");
-                            if (ctx->active == i)
-                                sprach_focus_fallback(ctx);
+                            sprach_win_close(ctx, i);
                             hit = 1;
                             break;
                         }
                         /* Minimize */
                         if (ly >= CTRL_Y && ly < CTRL_Y + CTRL_SIZE &&
                             lx >= CTRL_MIN_X && lx < CTRL_MIN_X + CTRL_SIZE) {
-                            w->btn_clicked = 2;
-                            w->click_tick = ctx->tick;
-                            w->hidden = 1;
-                            ctx->shm->surfaces[w->slot].flags &= ~COPLAND_SURF_VISIBLE;
-                            ctx->shm->dirty = 1;
-                            ser_puts("[SPRACH] MIN ");
-                            print_u32((uint32_t)i);
-                            ser_puts("\n");
-                            /* Focus-policy fix (2026-09-19): minimizing
-                             * the ACTIVE window must hand the focus to
-                             * the next visible window — same rule as
-                             * CLOSE, which already did this. */
-                            if (ctx->active == i)
-                                sprach_focus_fallback(ctx);
+                            sprach_win_minimize(ctx, i);
                             hit = 1;
                             break;
                         }
                         /* Maximize / Restore */
                         if (ly >= CTRL_Y && ly < CTRL_Y + CTRL_SIZE &&
                             lx >= CTRL_MAX_X && lx < CTRL_MAX_X + CTRL_SIZE) {
-                            w->btn_clicked = 3;
-                            w->click_tick = ctx->tick;
-                            if (w->maximized) {
-                                int idx = (int)(w - ctx->wins);
-                                /* If the user resized beyond the static
-                                 * 256×192 backing store, keep painting in
-                                 * the full-screen buffer (restore must
-                                 * never point w->buf at a smaller array
-                                 * than w->w * w->h needs). */
-                                w->buf = (w->normal_w <= SPRACH_WIN_W &&
-                                          w->normal_h <= SPRACH_WIN_H)
-                                             ? sprach_bufs[idx]
-                                             : maximize_bufs[idx];
-                                w->w = w->normal_w;
-                                w->h = w->normal_h;
-                                w->x = w->normal_x;
-                                w->y = w->normal_y;
-                                w->maximized = 0;
-                                ser_puts("[SPRACH] RESTORE ");
-                                print_u32((uint32_t)i);
-                                ser_puts("\n");
-                            } else {
-                                int idx = (int)(w - ctx->wins);
-                                w->normal_x = w->x;
-                                w->normal_y = w->y;
-                                w->normal_w = w->w;
-                                w->normal_h = w->h;
-                                w->buf = maximize_bufs[idx];
-                                w->w = SCREEN_W;
-                                w->h = WORK_AREA_H;
-                                w->x = 0;
-                                w->y = WORK_AREA_Y;
-                                w->maximized = 1;
-                                ser_puts("[SPRACH] MAX ");
-                                print_u32((uint32_t)i);
-                                ser_puts("\n");
-                            }
-                            /* Keep the surface in sync: Copland blits from
-                             * buffer_ptr with the surface geometry.  Paint
-                             * into the (possibly brand-new) buffer NOW so a
-                             * composite can never read unpainted memory. */
-                            ctx->shm->surfaces[w->slot].buffer_ptr =
-                                (uint32_t)(uintptr_t)w->buf;
-                            ctx->shm->surfaces[w->slot].x = w->x;
-                            ctx->shm->surfaces[w->slot].y = w->y;
-                            ctx->shm->surfaces[w->slot].w = w->w;
-                            ctx->shm->surfaces[w->slot].h = w->h;
-                            sprach_paint_window(ctx, w);
-                            ctx->shm->dirty = 1;
+                            sprach_win_toggle_max(ctx, i);
                             hit = 1;
                             break;
                         }
@@ -4876,6 +5177,9 @@ void _start(void)
     ctx.rmenu_y = 0;
     ctx.rmenu_items = 0;
     ctx.rmenu_sel_icon = -1;
+    ctx.rmenu_win = -1;
+    ctx.rmenu_is_term = 0;
+    ctx.wmenu_slot = -1;
     ctx.btn2_was_down = 0;
     ctx.drag_win = -1;
     ctx.drag_dx = 0;
@@ -4932,6 +5236,8 @@ void _start(void)
         ser_puts("[SPRACH] warning: clock popup creation failed\n");
     if (sprach_create_app_menu(&ctx) != 0)
         ser_puts("[SPRACH] warning: app menu creation failed\n");
+    if (sprach_create_wmenu(&ctx) != 0)
+        ser_puts("[SPRACH] warning: window menu creation failed\n");
     if (sprach_create_launchpad(&ctx) != 0)
         ser_puts("[SPRACH] warning: launchpad creation failed\n");
 
@@ -5226,13 +5532,19 @@ void _start(void)
             if (ctx.lp_open && sprach_launchpad_key(&ctx, ev.ascii_char))
                 continue;
 
-            /* Esc → close launchpad / app menu / app panel */
+            /* Esc → close launchpad / app menu / app panel /
+             * window context menu */
             if (ev.ascii_char == 0x1B) {
                 if (ctx.lp_open)
                     sprach_launchpad_toggle(&ctx, 0);
                 else if (ctx.menu_open)
                     sprach_app_menu_toggle(&ctx, 0);
-                else if (ctx.panel_open)
+                else if (ctx.rmenu_mode == 4) {
+                    sprach_wmenu_toggle(&ctx, 0);
+                    ctx.rmenu_mode = 0;
+                    ctx.rmenu_win = -1;
+                    ctx.rmenu_is_term = 0;
+                } else if (ctx.panel_open)
                     sprach_app_panel_toggle(&ctx, 0, 0);
                 else if (sprach_ga_key(&ctx, 0x1B,
                                        ev.modifiers))
