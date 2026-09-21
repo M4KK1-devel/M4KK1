@@ -239,6 +239,10 @@ struct sprach_ctx {
      * targets the terminal window instead (mutually exclusive). */
     int rmenu_win;
     int rmenu_is_term;
+    /* Live hovered item of the open mode-4 menu (-1 = none).
+     * Tracked so the highlight repaint fires only on change and
+     * the serial telemetry lets QEMU probes assert live hover. */
+    int rmenu_hover;
     /* Dedicated floating menu surface for mode 4 (created hidden at
      * boot, raised above windows while open, like the app menu). */
     int wmenu_slot;

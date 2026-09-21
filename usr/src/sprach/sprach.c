@@ -3025,6 +3025,7 @@ static void sprach_wmenu_toggle(struct sprach_ctx *ctx, int open)
     if (ctx->wmenu_slot < 0)
         return;
     if (open) {
+        ctx->rmenu_hover = -1;
         int h = WMENU_H;
         int x = ctx->rmenu_x, y = ctx->rmenu_y;
         if (x < 0)
@@ -3240,8 +3241,10 @@ static void sprach_handle_rclick(struct sprach_ctx *ctx)
             ctx->mouse_x >= (int)fs->x &&
             ctx->mouse_x < (int)fs->x + (int)fs->w &&
             ctx->mouse_y >= (int)fs->y &&
-            ctx->mouse_y < (int)fs->y + (int)fs->h)
+            ctx->mouse_y < (int)fs->y + (int)fs->h) {
+            ser_puts("[SPRACH] rmenu: foreign window swallowed\n");
             return;
+        }
     }
     /* icon cell? */
     for (int a = 0; a < desk_count && a < DESK_ICON_MAX; a++) {
@@ -3911,6 +3914,39 @@ void sprach_handle_mouse(struct sprach_ctx *ctx)
      * absolute cursor position against the dock icons every time the
      * cursor moved.  sprach_taskbar_dirty() picks up the change and
      * schedules a taskbar repaint (highlight plate + title tooltip). */
+    /* While a context menu is open the hover highlight must track
+     * the cursor live (menus used to paint the hovered item only
+     * once at open, so moving the mouse never refreshed it).  Both
+     * variants repaint on cursor move while open: mode 4 via its
+     * floating surface, 1-3 via the desktop overlay. */
+    if (cursor_moved && ctx->rmenu_mode == 4 &&
+        ctx->wmenu_slot >= 0) {
+        struct copland_surface *ms =
+            &ctx->shm->surfaces[ctx->wmenu_slot];
+        int hv = -1;
+        if (ctx->mouse_x >= (int)ms->x &&
+            ctx->mouse_x < (int)ms->x + WMENU_W &&
+            ctx->mouse_y >= (int)ms->y &&
+            ctx->mouse_y < (int)ms->y + WMENU_H)
+            hv = (ctx->mouse_y - (int)ms->y - RMENU_PAD)
+                 / RMENU_ITEM_H;
+        if (hv >= 3)
+            hv = -1;
+        if (hv != ctx->rmenu_hover) {
+            ctx->rmenu_hover = hv;
+            sprach_draw_wmenu(ctx);
+            ser_puts("[SPRACH] wmenu hover ");
+            if (hv < 0) {
+                ser_puts("none\n");
+            } else {
+                ser_putc('0' + (char)hv);
+                ser_puts("\n");
+            }
+        }
+    } else if (cursor_moved && ctx->rmenu_mode) {
+        sprach_desktop_paint(ctx);
+    }
+
     if (cursor_moved) {
         int hv = sprach_dock_hit(ctx, ctx->mouse_x, ctx->mouse_y);
         if (hv != ctx->dock_hover) {
@@ -5179,6 +5215,7 @@ void _start(void)
     ctx.rmenu_sel_icon = -1;
     ctx.rmenu_win = -1;
     ctx.rmenu_is_term = 0;
+    ctx.rmenu_hover = -1;
     ctx.wmenu_slot = -1;
     ctx.btn2_was_down = 0;
     ctx.drag_win = -1;

@@ -23,10 +23,18 @@ python3 tools/build/heap_probe.py
 hrc=$?
 echo "HEAP_PROBE rc=$hrc"
 
+python3 tools/build/wmenu_repro.py
+wrc=$?
+echo "WMENU_PROBE rc=$wrc"
+
+python3 tools/build/wmenu_term_probe.py
+wtrc=$?
+echo "WMENU_TERM_PROBE rc=$wtrc"
+
 python3 tools/build/sysmon_probe.py 2>/dev/null
 src=$?
 echo "SYSMON_PROBE rc=$src"
 
 # host unit tests
 make test 2>&1 | tail -4
-exit $(( hrc | src ))
+exit $(( hrc | src | wrc | wtrc ))
