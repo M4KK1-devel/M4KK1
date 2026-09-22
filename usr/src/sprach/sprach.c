@@ -3267,6 +3267,32 @@ static int sprach_rmenu_key_nav(struct sprach_ctx *ctx, char ch)
     return 0;
 }
 
+/* Opening a context menu suspends any in-flight geometry
+ * interaction (title-bar drag / corner resize / terminal drag).
+ * The button that started the interaction is typically still held
+ * (L+R chord), and the drag/resize tracking blocks run AFTER the
+ * event loop in sprach_handle_mouse — without this, the very
+ * frame that opens the menu would also apply one more geometry
+ * update underneath it, so the geometry the menu was opened
+ * against silently changes.  The interaction is gone for good,
+ * not paused: the next left press is consumed by the menu itself,
+ * so there is no "resume" path to protect. */
+static void sprach_rmenu_suspend_geometry(struct sprach_ctx *ctx)
+{
+	if (ctx->drag_win >= 0) {
+		ctx->drag_win = -1;
+		ser_puts("[SPRACH] DRAG SUSPEND (menu open)\n");
+	}
+	if (ctx->resize_win >= 0) {
+		ctx->resize_win = -1;
+		ser_puts("[SPRACH] RESIZE SUSPEND (menu open)\n");
+	}
+	if (ctx->term_drag) {
+		ctx->term_drag = 0;
+		ser_puts("[SPRACH] TERM DRAG SUSPEND (menu open)\n");
+	}
+}
+
 /* Right-button press: dispatch to the menu matching the click
  * target, ONE unified entry: window title bar (mode 4) → desktop
  * icon cell (mode 2) → bare wallpaper (mode 1).  Falls through
@@ -3303,6 +3329,7 @@ static void sprach_handle_rclick(struct sprach_ctx *ctx)
             ctx->rmenu_is_term = 1;
             ctx->rmenu_x = ctx->mouse_x;
             ctx->rmenu_y = ctx->mouse_y;
+            sprach_rmenu_suspend_geometry(ctx);
             sprach_wmenu_toggle(ctx, 1);
             ser_puts("[SPRACH] rmenu: term window menu\n");
             return;
@@ -3321,6 +3348,7 @@ static void sprach_handle_rclick(struct sprach_ctx *ctx)
             ctx->rmenu_win = i;
             ctx->rmenu_x = ctx->mouse_x;
             ctx->rmenu_y = ctx->mouse_y;
+            sprach_rmenu_suspend_geometry(ctx);
             sprach_wmenu_toggle(ctx, 1);
             ser_puts("[SPRACH] rmenu: window menu\n");
             return;
@@ -3378,6 +3406,7 @@ static void sprach_handle_rclick(struct sprach_ctx *ctx)
             ctx->rmenu_sel_icon = a;
             ctx->rmenu_x = ctx->mouse_x;
             ctx->rmenu_y = ctx->mouse_y;
+            sprach_rmenu_suspend_geometry(ctx);
             sprach_desktop_paint(ctx);   /* repaint incl. menu overlay */
             ser_puts("[SPRACH] rmenu: icon menu\n");
             return;
@@ -3388,6 +3417,7 @@ static void sprach_handle_rclick(struct sprach_ctx *ctx)
     ctx->rmenu_items = 3;
     ctx->rmenu_x = ctx->mouse_x;
     ctx->rmenu_y = ctx->mouse_y;
+    sprach_rmenu_suspend_geometry(ctx);
     sprach_desktop_paint(ctx);
     ser_puts("[SPRACH] rmenu: desktop menu\n");
 }
@@ -4106,8 +4136,11 @@ void sprach_handle_mouse(struct sprach_ctx *ctx)
      * title bar, every cursor move re-positions that window so the
      * grab offset stays constant.  The surface follows directly
      * (x/y only — buffer and size don't change) plus a MOVE command
-     * so Copland recomposites. */
-    if (cursor_moved && ctx->drag_win >= 0) {
+     * so Copland recomposites.  Skipped while a context menu is
+     * open (sprach_rmenu_suspend_geometry already killed the
+     * interaction; this belt-and-braces check keeps geometry frozen
+     * even if a future menu path forgets to call it). */
+    if (cursor_moved && !ctx->rmenu_mode && ctx->drag_win >= 0) {
         struct sprach_window *dw = &ctx->wins[ctx->drag_win];
         if (dw->slot >= 0 && !dw->hidden) {
             int nx = ctx->mouse_x - ctx->drag_dx;
@@ -4152,7 +4185,7 @@ void sprach_handle_mouse(struct sprach_ctx *ctx)
      * each geometry change keeps the buffer consistent (the
      * maximize backing store is full-screen sized, so any
      * user-reachable geometry fits). */
-    if (cursor_moved && ctx->resize_win >= 0) {
+    if (cursor_moved && !ctx->rmenu_mode && ctx->resize_win >= 0) {
         struct sprach_window *rw = &ctx->wins[ctx->resize_win];
         if (rw->slot >= 0 && !rw->hidden && !rw->maximized) {
             int nw = ctx->mouse_x - rw->x + ctx->resize_dw;
@@ -4187,7 +4220,8 @@ void sprach_handle_mouse(struct sprach_ctx *ctx)
     }
 
     /* Terminal drag: same tracking, but on the Copland surface. */
-    if (cursor_moved && ctx->term_drag && ctx->term_slot >= 0) {
+    if (cursor_moved && !ctx->rmenu_mode && ctx->term_drag &&
+        ctx->term_slot >= 0) {
         struct copland_surface *ts =
             &ctx->shm->surfaces[ctx->term_slot];
         if (ts->in_use && !ctx->term_maximized) {
