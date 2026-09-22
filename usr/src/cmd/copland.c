@@ -76,11 +76,18 @@ static void copland_render_surface(const struct copland_surface *s)
         return;
 
     /* Client-rendered window content (Sprach model): blit the
-     * surface's pixel buffer.  Otherwise fall back to a flat fill. */
-    if (s->buffer_ptr)
-        m4k_gfx_blit(s->x, s->y, sw, sh,
-                     (const void *)(uintptr_t)s->buffer_ptr);
-    else
+     * surface's pixel buffer.  Otherwise fall back to a flat fill.
+     * buffer_stride (terminal: 800-px store under a 680-px window)
+     * selects the stride-aware blit — see the incremental path. */
+    if (s->buffer_ptr) {
+        if (s->buffer_stride && s->buffer_stride != (uint32_t)sw)
+            m4k_gfx_blit_stride(s->x, s->y, sw, sh,
+                (const void *)(uintptr_t)s->buffer_ptr,
+                s->buffer_stride);
+        else
+            m4k_gfx_blit(s->x, s->y, sw, sh,
+                         (const void *)(uintptr_t)s->buffer_ptr);
+    } else
         gui_draw_rect(s->x, s->y, sw, sh, s->color);
 
     /* 3D-ish border: light top/left, dark bottom/right */
@@ -142,17 +149,28 @@ static void copland_composite_region(struct copland_shm *shm,
             continue;
         if (s->buffer_ptr) {
             /* STRIDE CONTRACT (see m4kk1-graphics-stack skill): the
-             * kernel derives the source row stride from the PASSED w.
-             * Passing the clipped sub-rect width made it read the
-             * client buffer with the wrong pitch (skewed/torn rows
-             * for any partially off-screen surface).  Pass the FULL
-             * surface rect from its origin instead — the kernel clips
-             * to the screen itself, keeping the source stride equal
-             * to s->w.  Overdraw past the damage region is bounded
-             * by the surface size and composited in slot order, so
-             * occlusion stays correct. */
-            m4k_gfx_blit(s->x, s->y, s->w, s->h,
-                         (const void *)(uintptr_t)s->buffer_ptr);
+             * kernel derives the source row stride from the PASSED w
+             * unless told otherwise.  Passing the clipped sub-rect
+             * width made it read the client buffer with the wrong
+             * pitch (skewed/torn rows for any partially off-screen
+             * surface).  Pass the FULL surface rect from its origin
+             * instead — the kernel clips to the screen itself,
+             * keeping the source stride equal to s->w.  Overdraw
+             * past the damage region is bounded by the surface size
+             * and composited in slot order, so occlusion stays
+             * correct.  Surfaces announcing buffer_stride (terminal:
+             * 800-px backing store under a 680-px window) go through
+             * the stride blit so the source is sampled with its true
+             * pitch — the legacy path sheared it by (stride-w) px
+             * per row (observed: 40-px-periodic 1-px ghost slivers
+             * of SGR background colours on colour-bearing rows). */
+            if (s->buffer_stride && s->buffer_stride != (uint32_t)s->w)
+                m4k_gfx_blit_stride(s->x, s->y, s->w, s->h,
+                    (const void *)(uintptr_t)s->buffer_ptr,
+                    s->buffer_stride);
+            else
+                m4k_gfx_blit(s->x, s->y, s->w, s->h,
+                             (const void *)(uintptr_t)s->buffer_ptr);
         } else {
             gui_draw_rect(isect.left, isect.top,
                           isect.right - isect.left,

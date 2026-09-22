@@ -194,6 +194,7 @@ const char *m4k_syscall_get_name(uint32_t num)
         case M4K_SYS_DRAW_TEXT: return "m4k_draw_text";
         case M4K_SYS_GET_KEYBOARD_EVENT: return "m4k_get_keyboard_event";
         case M4K_SYS_GFX_BLIT: return "m4k_gfx_blit";
+        case M4K_SYS_GFX_BLIT_STRIDE: return "m4k_gfx_blit_stride";
         case M4K_SYS_FILL_GRADIENT: return "m4k_fill_gradient";
         case M4K_SYS_BEEP: return "m4k_beep";
         case M4K_SYS_PLAY_PCM: return "m4k_play_pcm";
@@ -709,6 +710,7 @@ void m4k_syscall_init_handlers(void)
     m4k_syscall_register(M4K_SYS_DRAW_RECT, m4k_syscall_draw_rect_impl);
     m4k_syscall_register(M4K_SYS_DRAW_TEXT, m4k_syscall_draw_text_impl);
     m4k_syscall_register(M4K_SYS_GFX_BLIT, m4k_syscall_gfx_blit_impl);
+    m4k_syscall_register(M4K_SYS_GFX_BLIT_STRIDE, m4k_syscall_gfx_blit_stride_impl);
     m4k_syscall_register(M4K_SYS_FILL_GRADIENT, m4k_syscall_fill_gradient_impl);
 #endif
     m4k_syscall_register(M4K_SYS_GET_MOUSE_EVENT, m4k_syscall_mouse_event_impl);

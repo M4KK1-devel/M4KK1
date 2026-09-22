@@ -48,6 +48,7 @@ struct m4k_framebuffer_info {
 #define M4K_SYS_DRAW_TEXT             0x4D000055
 #define M4K_SYS_GET_KEYBOARD_EVENT    0x4D000056
 #define M4K_SYS_GFX_BLIT              0x4D000057
+#define M4K_SYS_GFX_BLIT_STRIDE       0x4D00005F
 
 /* ── Mouse event (kernel→userspace) ── */
 struct m4k_mouse_event {
@@ -95,6 +96,16 @@ uint32_t m4k_syscall_draw_text_impl(
     uint32_t arg1, uint32_t arg2, uint32_t arg3,
     uint32_t arg4, uint32_t arg5);
 uint32_t m4k_syscall_gfx_blit_impl(
+    uint32_t arg1, uint32_t arg2, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5);
+/* Blit with an EXPLICIT source row stride (pixels), for client
+ * buffers whose backing store is wider than the visible surface
+ * (e.g. the terminal keeps an 800-px stride so the same buffer
+ * serves the 680-px normal and 800-px maximized geometries).
+ * arg5 points at struct m4k_blit_stride_params in the caller's
+ * memory; stride==0 or <w falls back to stride==w (legacy
+ * m4k_gfx_blit semantics). */
+uint32_t m4k_syscall_gfx_blit_stride_impl(
     uint32_t arg1, uint32_t arg2, uint32_t arg3,
     uint32_t arg4, uint32_t arg5);
 /* Fill a rect in back_buffer with a vertical gradient (kernel-side

@@ -68,6 +68,7 @@
 #define M4K_SYS_FLIP                  0x4D000053
 #define M4K_SYS_GET_KEYBOARD_EVENT    0x4D000056
 #define M4K_SYS_GFX_BLIT              0x4D000057
+#define M4K_SYS_GFX_BLIT_STRIDE       0x4D00005F
 #define M4K_SYS_FLIP_RECT             0x4D000058
 #define M4K_SYS_UPDATE_CURSOR         0x4D000059
 #define M4K_SYS_BEEP                  0x4D00005A

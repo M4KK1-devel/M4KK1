@@ -514,6 +514,7 @@ static inline int m4k_getrlimit(int r, struct m4k_rlimit *l) { return (int)m4k_s
 #define M4K_SYS_DRAW_TEXT            0x4D000055
 #define M4K_SYS_GET_KEYBOARD_EVENT   0x4D000056
 #define M4K_SYS_GFX_BLIT             0x4D000057
+#define M4K_SYS_GFX_BLIT_STRIDE      0x4D00005F
 #define M4K_SYS_FLIP_RECT            0x4D000058
 #define M4K_SYS_UPDATE_CURSOR        0x4D000059
 #define M4K_SYS_BEEP                  0x4D00005A
@@ -598,6 +599,21 @@ static inline int m4k_get_mouse_pos(int32_t *x, int32_t *y) {
 }
 static inline int m4k_gfx_blit(int x, int y, int w, int h, const void *src) {
     return (int)m4k_sc5(M4K_SYS_GFX_BLIT, (uint32_t)x, (uint32_t)y, (uint32_t)w, (uint32_t)h, (uint32_t)src);
+}
+/* Blit with an explicit source row stride (pixels) — for client
+ * buffers wider than the visible surface (terminal 800-px stride
+ * serving both 680-px normal and 800-px maximized geometries).
+ * stride 0 or <w falls back to stride==w inside the kernel. */
+static inline int m4k_gfx_blit_stride(int x, int y, int w, int h,
+                                      const void *src, uint32_t stride) {
+    struct m4k_blit_stride_params_packed {
+        const void *src;
+        uint32_t stride;
+    } p;
+    p.src = src;
+    p.stride = stride;
+    return (int)m4k_sc5(M4K_SYS_GFX_BLIT_STRIDE, (uint32_t)x, (uint32_t)y,
+                        (uint32_t)w, (uint32_t)h, (uint32_t)&p);
 }
 /* Kernel-side vertical gradient fill: one syscall replaces the
  * per-scanline m4k_draw_rect loop (which paid a syscall + scheduler

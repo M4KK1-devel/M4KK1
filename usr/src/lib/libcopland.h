@@ -79,6 +79,14 @@ struct copland_surface {
      * means no pending damage. */
     int32_t  dmg_x, dmg_y;
     int32_t  dmg_w, dmg_h;
+    /* Source row stride of buffer_ptr in PIXELS.  0 = legacy
+     * semantics (stride == w, correct for every client whose backing
+     * array is exactly w*h).  The terminal is the exception: its
+     * buffer keeps an 800-px stride so one allocation serves both
+     * the 680-px normal and 800-px maximized geometries — Copland
+     * must blit it with m4k_gfx_blit_stride.  Appended at the
+     * struct tail to keep every existing offset stable. */
+    uint32_t buffer_stride;
 };
 
 /* ── IPC commands ── */

@@ -808,12 +808,47 @@ uint32_t m4k_syscall_draw_text_impl(
     return 0;
 }
 
-/* ── Syscall: blit a client pixel buffer into the back buffer ──
- * Copies a w*h run of 32-bit pixels from the client's memory (flat
- * address space, so any address is directly readable) into the
- * back buffer at (x, y), clipped to the screen.  This is the
- * primitive Copland uses to composite client-rendered window
- * surfaces (the Sprach model). */
+/* ── Syscall: blit a client pixel buffer into the back buffer ── */
+/* Shared blit core: copies a w*h pixel block from src into the back
+ * buffer at (x, y) with an explicit source row stride (in pixels),
+ * clipped to the screen.  stride == w gives the legacy
+ * m4k_gfx_blit semantics. */
+static uint32_t vesa_blit_core(
+    int x, int y, int w, int h,
+    const uint32_t *src, int stride)
+{
+    if (!fb_info.initialized || !back_buffer || !src)
+        return (uint32_t)-1;
+    if (w <= 0 || h <= 0)
+        return 0;
+    if (stride < w)
+        stride = w;      /* defensive: never sample past a row */
+
+    int scr_w = (int)fb_info.width;
+    int scr_h = (int)fb_info.height;
+
+    /* Clip source/dest to the visible region */
+    if (x < 0) { w += x; src += (uint32_t)(-x); x = 0; }
+    if (y < 0) { h += y; src += (uint32_t)(-y) * (uint32_t)stride; y = 0; }
+    if (x + w > scr_w) w = scr_w - x;
+    if (y + h > scr_h) h = scr_h - y;
+    if (w <= 0 || h <= 0)
+        return 0;
+
+    uint32_t *dst = back_buffer + (uint32_t)y * (uint32_t)scr_w + (uint32_t)x;
+
+    for (int row = 0; row < h; row++) {
+        const uint32_t *s = src + (uint32_t)row * (uint32_t)stride;
+        uint32_t *d = dst + (uint32_t)row * (uint32_t)scr_w;
+        uint32_t cnt = (uint32_t)w;
+        __asm__ volatile("cld; rep movsl"
+            : "+c"(cnt), "+D"(d), "+S"(s)
+            :
+            : "memory");
+    }
+    return 0;
+}
+
 uint32_t m4k_syscall_gfx_blit_impl(
     uint32_t arg1, uint32_t arg2, uint32_t arg3,
     uint32_t arg4, uint32_t arg5)
@@ -824,38 +859,26 @@ uint32_t m4k_syscall_gfx_blit_impl(
     int h = (int)arg4;
     const uint32_t *src = (const uint32_t *)arg5;
 
-    if (!fb_info.initialized || !back_buffer || !src)
+    /* The client's source buffer has one row of w pixels; clipping
+     * shrinks the copied width but the row stride stays w. */
+    return vesa_blit_core(x, y, w, h, src, w);
+}
+
+uint32_t m4k_syscall_gfx_blit_stride_impl(
+    uint32_t arg1, uint32_t arg2, uint32_t arg3,
+    uint32_t arg4, uint32_t arg5)
+{
+    struct m4k_blit_stride_params {
+        const uint32_t *src;
+        uint32_t stride;        /* source row stride in pixels */
+    };
+    const struct m4k_blit_stride_params *bp =
+        (const struct m4k_blit_stride_params *)arg5;
+
+    if (!bp)
         return (uint32_t)-1;
-    if (w <= 0 || h <= 0)
-        return 0;
-
-    int scr_w = (int)fb_info.width;
-    int scr_h = (int)fb_info.height;
-
-    /* The client's source buffer has one row of orig_w pixels; clipping
-     * shrinks the copied width but the row stride stays orig_w. */
-    int orig_w = w;
-
-    /* Clip source/dest to the visible region */
-    if (x < 0) { w += x; src += (uint32_t)(-x); x = 0; }
-    if (y < 0) { h += y; src += (uint32_t)(-y) * (uint32_t)orig_w; y = 0; }
-    if (x + w > scr_w) w = scr_w - x;
-    if (y + h > scr_h) h = scr_h - y;
-    if (w <= 0 || h <= 0)
-        return 0;
-
-    uint32_t *dst = back_buffer + (uint32_t)y * (uint32_t)scr_w + (uint32_t)x;
-
-    for (int row = 0; row < h; row++) {
-        const uint32_t *s = src + (uint32_t)row * (uint32_t)orig_w;
-        uint32_t *d = dst + (uint32_t)row * (uint32_t)scr_w;
-        uint32_t cnt = (uint32_t)w;
-        __asm__ volatile("cld; rep movsl"
-            : "+c"(cnt), "+D"(d), "+S"(s)
-            :
-            : "memory");
-    }
-    return 0;
+    return vesa_blit_core((int)arg1, (int)arg2, (int)arg3,
+                          (int)arg4, bp->src, (int)bp->stride);
 }
 
 /* ── Syscall: fill a rect with a vertical gradient ──

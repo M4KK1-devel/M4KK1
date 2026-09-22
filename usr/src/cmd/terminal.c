@@ -74,6 +74,11 @@ char cwd[256] = "/";
 /* ── Pixel buffer (BSS; Copland blits this via surface->buffer_ptr) ──
  * Maximized work area under the 24px bar + 48px dock = 800x528. */
 
+/* Client pixel buffer.  Stride is TERM_BUF_W (800), NOT TERM_W (680):
+ * the extra headroom serves the maximized geometry (800x528 work
+ * area, set by Sprach's sprach_term_toggle_max).  The buffer stride
+ * is announced to Copland via copland_surface.buffer_stride — see
+ * the blit path in copland.c and m4k_gfx_blit_stride(). */
 #define TERM_BUF_W      800
 #define TERM_BUF_H      546
 
@@ -369,6 +374,7 @@ static int ansi_state = ANS_NORMAL;
 static int ansi_params[24];   /* collected SGR parameters (see below) */
 static int ansi_nparams;
 static int ansi_cur;          /* parameter under construction */
+static int ansi_utf8_left;    /* UTF-8 continuation bytes still owed */
 
 /* Current SGR colors applied to incoming text (screen-space). */
 static uint16_t sgr_fg = ATTR_TEXT;   /* ATTR_* or ATTR_256|idx */
@@ -471,21 +477,31 @@ static void csi_evidence(const char *tag, uint32_t v)
     ser_puts("\n");
 }
 
-/* ED — erase in display.  0: cursor→end, 1: start→cursor,
- * 2: whole screen (cursor stays put; clear sends [H separately). */
+/* ED — erase in display.  xterm semantics INCLUDING the cursor-line
+ * partial-erase rules: mode 0 erases from the cursor (inclusive,
+ * cursor column to end of that row) to the end of the screen; mode 1
+ * erases from the start of the screen to the cursor INCLUSIVE
+ * (columns 0..cursor of the cursor row); mode 2 clears everything.
+ * The cursor stays put in all modes (clear sends [H separately). */
 static void csi_erase_display(const int *p, int np)
 {
     int mode = csi_param(p, np, 0);
     if (mode < 0 || mode > 2)
         return;
     int lo = 0, hi = TERM_ROWS - 1;
-    if (mode == 0)
+    int lo_c = 0, hi_c = TERM_COLS - 1;
+    if (mode == 0) {
         lo = term_row;
-    else if (mode == 1)
+        lo_c = term_col;
+    } else if (mode == 1) {
         hi = term_row;
+        hi_c = term_col;
+    }
     for (int r = lo; r <= hi; r++) {
         term_cell_t *rowp = term_lines[term_top + r];
-        for (int c = 0; c < TERM_COLS; c++) {
+        int c0 = (r == lo) ? lo_c : 0;
+        int c1 = (r == hi) ? hi_c : TERM_COLS - 1;
+        for (int c = c0; c <= c1; c++) {
             rowp[c].ch = ' ';
             rowp[c].attr = ATTR_TEXT;
             rowp[c].bg = ATTR_TEXT;
@@ -673,6 +689,29 @@ static void term_ansi_filter(char ch)
     }
     if (ch == 0x1B) {
         ansi_state = ANS_ESC;
+        ansi_utf8_left = 0;   /* escape aborts any pending sequence */
+        return;
+    }
+    /* UTF-8 folding: multi-byte sequences (>0x7F lead bytes) have no
+     * glyphs in the 7-bit font.  Consume the whole sequence and emit
+     * ONE '?' cell so CJK/emoji text keeps a 1-cell-per-character
+     * grid layout instead of spraying 2-4 '?' cells per character
+     * (each continuation byte 0x80-0xBF also landed in the grid as
+     * garbage before).  Sequence length by lead byte (RFC 3629);
+     * stray continuation bytes without a lead fold to one '?'. */
+    if ((unsigned char)ch >= 0xC0) {
+        int cont = (unsigned char)ch >= 0xF0 ? 3
+                 : (unsigned char)ch >= 0xE0 ? 2 : 1;
+        ansi_utf8_left = cont;
+        term_putc_attr('?', sgr_fg, sgr_bg);
+        return;
+    }
+    if ((unsigned char)ch >= 0x80) {
+        if (ansi_utf8_left > 0) {
+            ansi_utf8_left--;   /* continuation byte: swallowed */
+            return;
+        }
+        term_putc_attr('?', sgr_fg, sgr_bg);   /* stray: one cell */
         return;
     }
     term_putc_attr(ch, sgr_fg, sgr_bg);
@@ -911,6 +950,12 @@ void _start(void)
 
     /* Own the buffer: Sprach never repaints this surface */
     shm->surfaces[my_slot].buffer_ptr = (uint32_t)(uintptr_t)term_buf;
+    /* Announce the backing-store row stride: term_buf is 800 px wide
+     * (serves the maximized geometry too), the window is 680 px.
+     * Copland's blit path samples the source with this pitch;
+     * without it every composite sheared the image by 120 px/row
+     * (ghost sliver bands on SGR-coloured rows). */
+    shm->surfaces[my_slot].buffer_stride = TERM_BUF_W;
 
     /* Announce our geometry so Sprach's poll adopts THIS surface,
      * not some boot demo window that happens to be ≥50x50. */
