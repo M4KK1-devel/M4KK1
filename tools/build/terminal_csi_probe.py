@@ -411,6 +411,171 @@ s = buf.decode("latin1")
 check("C16 UTF-8 fold: no CSI-ign/OSC noise from raw high bytes",
       ("CSI-ign" not in s) and ("OSC end" not in s))
 
+# ── A/S groups: ghost cursor + maximized scroll x stride-blit ──
+
+def right_click():
+    hmp("mouse_button 2")
+    mdrain(0.3)
+    hmp("mouse_button 0")
+    mdrain(0.3)
+
+def count_rgb(w, pix, x0, x1, y0, y1, rgb):
+    n = 0
+    for y in range(y0, y1):
+        for x in range(max(0, x0), min(w, x1)):
+            off = (y * w + x) * 3
+            if (pix[off], pix[off + 1], pix[off + 2]) == rgb:
+                n += 1
+    return n
+
+def solid_in_band(w, pix, y0, y1, rgb):
+    """Solid (>=90% fill) rgb blocks >=7x14 inside rows y0..y1.
+    Text glyphs share the colour but strokes are sparse (<40% fill),
+    so density separates a real cursor block from echoed text."""
+    cl = find_clusters(w, y1 - y0 + 64, pix, rgb)
+    out = []
+    for (cx0, cy0, cx1, cy1) in cl:
+        if cy0 < y0 or cy1 >= y1 + 16:
+            continue
+        bw, bh = cx1 - cx0 + 1, cy1 - cy0 + 1
+        if bw < 7 or bh < 14:
+            continue
+        n = 0
+        for y in range(cy0, cy1 + 1):
+            for x in range(cx0, cx1 + 1):
+                off = (y * w + x) * 3
+                if (pix[off], pix[off + 1], pix[off + 2]) == rgb:
+                    n += 1
+        if n * 10 >= bw * bh * 9:
+            out.append((cx0, cy0, cx1, cy1))
+    return out
+
+def menu_item_y(base_y, idx):
+    return base_y + 2 + idx * 22 + 11
+
+# A-group.  Marker at (row19,col4); after the command the prompt sits
+# on row 20 and the cursor at its end.  The NEXT command's output
+# CUP-jumps from row 21 (post-ENTER newline, still blank) to row 7 —
+# the abandoned row 21 must be re-rendered without the cursor block
+# (pre-fix: only the destination row was damaged -> a solid 8x16
+# TCOL_TEXT block stayed on the blank row forever).
+buf.clear()
+type_cmd("echo '\\033[20;5H\\033[48;5;46m \\033[0m'\n")
+pump(4)
+w4, h4, pix4 = dump("/tmp/tcsi4.ppm")
+cl4 = [c for c in find_clusters(w4, h4, pix4, (0, 255, 0))
+       if (c[2] - c[0] + 1) >= 7 and (c[3] - c[1] + 1) >= 14]
+mark = max(cl4, key=lambda c: c[1]) if cl4 else None
+mx, my = (mark[0], mark[1]) if mark else (0, 0)
+check("A0 marker located at row19 (lowest solid green cell)",
+      mark is not None)
+
+buf.clear()
+type_cmd("echo '\\033[8;5H\\033[0m'\n")
+pump(4)
+check("A1 serial CUP 7,4 (jump away from bottom)",
+      b"[TERM] CUP 7,4" in buf)
+try:
+    w5, h5, pix5 = dump("/tmp/tcsi5.ppm")
+    # row-21 band = my+32 .. my+48 (marker row19 +2 rows).  Echoed
+    # command text is also TCOL_TEXT-coloured, so assert on SOLID
+    # blocks only (glyph strokes are <40% fill, a cursor block ~100%).
+    ghosts = solid_in_band(w5, pix5, my + 32, my + 48,
+                           (216, 216, 216))
+    check("A2 no ghost cursor block on the abandoned row 21 "
+          "(solid 216-blocks: %d)" % len(ghosts), len(ghosts) == 0)
+except Exception as e:
+    check("A2 screendump parse", False)
+    print("screendump error:", e)
+
+# S-group.  A dedicated MAGENTA marker (48;5;201 = 255,0,255 — the
+# only pure magenta on screen, immune to green-marker confusion with
+# m4sh's prompt/painted leftovers).  Grid rows shift by small
+# unpredictable amounts as m4sh repaints its prompt line, so the
+# asserts are SELF-CALIBRATED: the marker is located in a pre-dump
+# and then must move by the EXACT geometry deltas — maximize
+# (origin (60,40)->(0,24): -60,-16), scroll 5 rows (0,-80), restore
+# (+60,+16) — proving scroll x stride/plain blit in both modes.
+MAG = (255, 0, 255)
+
+def mag_marker(w, pix):
+    cl = [c for c in find_clusters(w, 600, pix, MAG)
+          if (c[2] - c[0] + 1) >= 7 and (c[3] - c[1] + 1) >= 14]
+    return (cl[0][0], cl[0][1]) if cl else None
+
+def has_solid_at(w, pix, x, y, rgb):
+    cl = [c for c in find_clusters(w, 600, pix, rgb)
+          if (c[2] - c[0] + 1) >= 7 and (c[3] - c[1] + 1) >= 14]
+    return any(abs(c[0] - x) <= 2 and abs(c[1] - y) <= 2 for c in cl)
+
+buf.clear()
+type_cmd("echo '\\033[20;41H\\033[48;5;201m \\033[0m'\n")
+pump(4)
+try:
+    w5b, h5b, pix5b = dump("/tmp/tcsi5b.ppm")
+    p0 = mag_marker(w5b, pix5b)
+    check("S0 magenta marker placed (restored window)",
+          p0 is not None)
+except Exception as e:
+    check("S0 screendump parse", False)
+    print("screendump error:", e)
+    p0 = None
+
+move_to(160, 49)          # terminal title bar, clear of the buttons
+right_click()
+move_to(200, menu_item_y(49, 1))   # "Maximize"
+left_click()
+check("S1 serial [SPRACH] TERMINAL MAX", wait_for("[SPRACH] TERMINAL MAX", 15))
+pump(2)
+p6 = None
+try:
+    w6, h6, pix6 = dump("/tmp/tcsi6.ppm")
+    p6 = mag_marker(w6, pix6)
+    check("S2 marker intact after maximize, moved exactly "
+          "(-60,-16) to %s (plain-blit path clean)" % str(p6),
+          p0 is not None and p6 is not None and
+          abs(p6[0] - (p0[0] - 60)) <= 2 and
+          abs(p6[1] - (p0[1] - 16)) <= 2)
+
+    # scroll exactly 5 rows: CUP to the bottom row first, then five
+    # newlines (-n suppresses echo's own trailing newline)
+    buf.clear()
+    type_cmd("echo -n '\\033[25;1H\\n\\n\\n\\n\\n'\n")
+    pump(4)
+    check("S3 serial exactly 5x [TERM] SCR 1 (bottom-row scrolls), "
+          "got %d" % buf.count(b"[TERM] SCR 1"),
+          buf.count(b"[TERM] SCR 1") == 5)
+    w7, h7, pix7 = dump("/tmp/tcsi7.ppm")
+    p7 = mag_marker(w7, pix7)
+    check("S4 scrolled marker at exact -80px/5 rows from S2: %s"
+          % str(p7),
+          p6 is not None and p7 is not None and
+          abs(p7[0] - p6[0]) <= 2 and
+          abs(p7[1] - (p6[1] - 80)) <= 2)
+except Exception as e:
+    check("S2 screendump parse", False)
+    print("screendump error:", e)
+
+buf.clear()
+move_to(400, 32)          # maximized title bar
+right_click()
+move_to(440, menu_item_y(32, 1))   # "Restore"
+left_click()
+check("S5 serial [SPRACH] TERMINAL RESTORE",
+      wait_for("[SPRACH] TERMINAL RESTORE", 15))
+pump(2)
+try:
+    w8, h8, pix8 = dump("/tmp/tcsi8.ppm")
+    p8 = mag_marker(w8, pix8)
+    check("S6 restored marker at S4 + (+60,+16) origin shift: %s "
+          "(scroll kept, stride-blit clean)" % str(p8),
+          p6 is not None and p8 is not None and
+          abs(p8[0] - (p7[0] + 60)) <= 2 and
+          abs(p8[1] - (p7[1] + 16)) <= 2)
+except Exception as e:
+    check("S6 screendump parse", False)
+    print("screendump error:", e)
+
 m.sendall(b"quit\n")
 time.sleep(0.5)
 try:

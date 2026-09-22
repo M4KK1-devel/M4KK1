@@ -162,7 +162,8 @@ typedef struct {
 #define ATTR_256    0x8000  /* OR'ed with palette index 0..255 */
 
 static term_cell_t term_lines[TERM_ROWS + TERM_SCROLLBACK][TERM_COLS];
-static int term_top = TERM_SCROLLBACK;   /* index of first visible row */
+static int term_top = 0;   /* first visible row; history accumulates
+                            * ABOVE it as term_top grows */
 static int term_row = 0;                 /* cursor row (screen space) */
 static int term_col = 0;                 /* cursor column */
 static int term_scrollback = 0;          /* >0: viewport raised rows */
@@ -188,6 +189,11 @@ static void dmg_all_rows(void)
     dmg_lo = 0;
     dmg_hi = TERM_ROWS - 1;
 }
+
+/* Defined further down (debug evidence section) but needed by
+ * term_newline for the scroll probe telemetry — forward declare,
+ * PCC treats implicit declarations as fatal. */
+static void csi_evidence(const char *tag, uint32_t v);
 
 /* ── Child shell state ── */
 
@@ -257,24 +263,10 @@ static void term_clear_screen(void)
             term_lines[r][c].attr = ATTR_TEXT;
             term_lines[r][c].bg = ATTR_TEXT;
         }
-    term_top = TERM_SCROLLBACK;
+    term_top = 0;
     term_row = 0;
     term_col = 0;
     term_scrollback = 0;
-}
-
-static void term_scroll_up(void)
-{
-    if (term_top <= 0)
-        return;
-    for (int c = 0; c < TERM_COLS; c++) {
-        term_lines[term_top - 1][c].ch = ' ';
-        term_lines[term_top - 1][c].attr = ATTR_TEXT;
-        term_lines[term_top - 1][c].bg = ATTR_TEXT;
-    }
-    term_top--;
-    if (term_row > 0)
-        term_row--;
 }
 
 /* Move cursor to next line; scroll the buffer when at the bottom */
@@ -287,9 +279,18 @@ static void term_newline(void)
         dmg_row(term_row);
         return;
     }
-    /* Bottom: push everything up one row in the scrollback window */
-    if (term_top > 0) {
-        term_top--;
+    /* Bottom: slide the viewport DOWN one row — the oldest visible
+     * row becomes history at zero copy cost (it stays valid in the
+     * grid, just above the new viewport).  Only when the grid is
+     * exhausted (term_top == TERM_SCROLLBACK) do we memmove the
+     * whole array up one row — and then the content really moves
+     * up, matching this branch.  (The OLD pre-mirror code decremented
+     * term_top here, which visually scrolled content DOWN, destroyed
+     * the bottom row's data and contradicted the exhausted branch.)
+     */
+    int was_top = term_top;
+    if (term_top < TERM_SCROLLBACK) {
+        term_top++;
     } else {
         /* Scrollback exhausted: shift the whole array up.
          * Single overlap-safe block move (whole-array memmove,
@@ -310,6 +311,9 @@ static void term_newline(void)
     }
     /* Scroll shifted every viewport row: whole body is damaged */
     dmg_all_rows();
+    /* Scroll-probe telemetry: 1 = viewport slid down (term_top++),
+     * 2 = grid exhausted, whole array shifted. */
+    csi_evidence("SCR ", (uint32_t)(was_top < term_top ? 1 : 2));
 }
 
 static void term_putc_attr(char ch, uint16_t attr, uint16_t bg)
@@ -546,6 +550,10 @@ static void csi_cursor_pos(const int *p, int np)
         c = 1;
     if (c > TERM_COLS)
         c = TERM_COLS;
+    /* Damage the OLD row too: the cursor block painted there must be
+     * re-rendered, otherwise a jump leaves a ghost cursor behind
+     * (only the destination row was marked before). */
+    dmg_row(term_row);
     term_row = r - 1;
     term_col = c - 1;
     dmg_row(term_row);
@@ -800,8 +808,9 @@ static void term_render(void)
     term_rect(0, TERM_TITLE_H, TERM_BUF_W,
               TERM_BUF_H - TERM_TITLE_H, TCOL_BODY);
 
-    /* Visible rows: term_top + term_scrollback .. + TERM_ROWS */
-    int first = term_top + term_scrollback;
+    /* Visible rows: term_scrollback raises the viewport INTO the
+     * history that lives above term_top. */
+    int first = term_top - term_scrollback;
     for (int r = 0; r < TERM_ROWS; r++) {
         int src = first + r;
         int y = TERM_ORIGIN_Y + r * TERM_CHAR_H;
@@ -873,7 +882,7 @@ static void term_forward_key(unsigned char ch)
 static void term_handle_key(unsigned char ch)
 {
     if (ch == 0x01) {           /* PageUp: scroll up one page */
-        int max_sb = TERM_SCROLLBACK > term_top ? term_top : TERM_SCROLLBACK;
+        int max_sb = term_top;   /* history rows above the viewport */
         if (term_scrollback < max_sb) {
             term_scrollback += TERM_ROWS;
             if (term_scrollback > max_sb)
