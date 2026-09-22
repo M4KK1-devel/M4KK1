@@ -43,6 +43,10 @@ python3 tools/build/sysmon_probe.py 2>/dev/null
 src=$?
 echo "SYSMON_PROBE rc=$src"
 
+python3 tools/build/terminal_csi_probe.py
+tcrc=$?
+echo "TERM_CSI_PROBE rc=$tcrc"
+
 # host unit tests
 make test 2>&1 | tail -4
-exit $(( hrc | src | wrc | wtrc | wkrc | wdrc ))
+exit $(( hrc | src | wrc | wtrc | wkrc | wdrc | tcrc ))

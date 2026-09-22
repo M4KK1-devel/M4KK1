@@ -450,6 +450,125 @@ static void sgr_report(void)
     ser_puts(b);
 }
 
+/* ── Cursor / erase CSI handlers (ED / EL / CUP / CUU-D) ──
+ * Until now every non-SGR CSI was swallowed, which made `clear`
+ * (ESC[2J ESC[H) a no-op on the GUI terminal.  These handlers work
+ * in screen space (term_row/term_col) and are clamped to the grid. */
+
+/* SGR-style parameter fetch: p[i] when present else def (0). */
+static int csi_param(const int *p, int np, int i)
+{
+    return i < np ? p[i] : 0;
+}
+
+/* Debug evidence for probes: "[TERM] <tag> <u32>\n" (print_u32 from
+ * m4sh.h writes straight to COM1, never into the grid). */
+static void csi_evidence(const char *tag, uint32_t v)
+{
+    ser_puts("[TERM] ");
+    ser_puts(tag);
+    print_u32(v);
+    ser_puts("\n");
+}
+
+/* ED — erase in display.  0: cursor→end, 1: start→cursor,
+ * 2: whole screen (cursor stays put; clear sends [H separately). */
+static void csi_erase_display(const int *p, int np)
+{
+    int mode = csi_param(p, np, 0);
+    if (mode < 0 || mode > 2)
+        return;
+    int lo = 0, hi = TERM_ROWS - 1;
+    if (mode == 0)
+        lo = term_row;
+    else if (mode == 1)
+        hi = term_row;
+    for (int r = lo; r <= hi; r++) {
+        term_cell_t *rowp = term_lines[term_top + r];
+        for (int c = 0; c < TERM_COLS; c++) {
+            rowp[c].ch = ' ';
+            rowp[c].attr = ATTR_TEXT;
+            rowp[c].bg = ATTR_TEXT;
+        }
+    }
+    dmg_row(lo);
+    dmg_row(hi);
+    csi_evidence("ED ", (uint32_t)mode);
+}
+
+/* EL — erase in line on the cursor row. */
+static void csi_erase_line(const int *p, int np)
+{
+    int mode = csi_param(p, np, 0);
+    if (mode < 0 || mode > 2)
+        return;
+    term_cell_t *rowp = term_lines[term_top + term_row];
+    int lo = 0, hi = TERM_COLS - 1;
+    if (mode == 0)
+        lo = term_col;
+    else if (mode == 1)
+        hi = term_col;
+    for (int c = lo; c <= hi; c++) {
+        rowp[c].ch = ' ';
+        rowp[c].attr = ATTR_TEXT;
+        rowp[c].bg = ATTR_TEXT;
+    }
+    dmg_row(term_row);
+    csi_evidence("EL ", (uint32_t)mode);
+}
+
+/* CUP / HVP — absolute cursor position, 1-based row;col, defaults 1;1. */
+static void csi_cursor_pos(const int *p, int np)
+{
+    int r = csi_param(p, np, 0);
+    int c = csi_param(p, np, 1);
+    if (r < 1)
+        r = 1;
+    if (r > TERM_ROWS)
+        r = TERM_ROWS;
+    if (c < 1)
+        c = 1;
+    if (c > TERM_COLS)
+        c = TERM_COLS;
+    term_row = r - 1;
+    term_col = c - 1;
+    dmg_row(term_row);
+    ser_puts("[TERM] CUP ");
+    print_u32((uint32_t)term_row);
+    ser_puts(",");
+    print_u32((uint32_t)term_col);
+    ser_puts("\n");
+}
+
+/* CUU/CUD/CUF/CUB — relative cursor movement, count default 1 (0→1). */
+static void csi_cursor_move(char ch, const int *p, int np)
+{
+    int n = csi_param(p, np, 0);
+    if (n < 1)
+        n = 1;
+    int old_row = term_row;
+    if (ch == 'A') {                    /* up */
+        term_row -= n;
+        if (term_row < 0)
+            term_row = 0;
+    } else if (ch == 'B') {             /* down */
+        term_row += n;
+        if (term_row > TERM_ROWS - 1)
+            term_row = TERM_ROWS - 1;
+    } else if (ch == 'C') {             /* right */
+        term_col += n;
+        if (term_col > TERM_COLS - 1)
+            term_col = TERM_COLS - 1;
+    } else {                            /* 'D' left */
+        term_col -= n;
+        if (term_col < 0)
+            term_col = 0;
+    }
+    dmg_row(old_row);
+    dmg_row(term_row);
+    csi_evidence("CUM ", (uint32_t)(unsigned char)ch);
+}
+
 /* Apply one parsed SGR sequence to the current colors. */
 static void sgr_apply(const int *p, int np)
 {
@@ -540,7 +659,17 @@ static void term_ansi_filter(char ch)
             ansi_params[ansi_nparams++] = ansi_cur;
         if (ch == 'm')
             sgr_apply(ansi_params, ansi_nparams);
-        return;              /* non-SGR CSI: swallowed */
+        else if (ch == 'J')
+            csi_erase_display(ansi_params, ansi_nparams);
+        else if (ch == 'K')
+            csi_erase_line(ansi_params, ansi_nparams);
+        else if (ch == 'H' || ch == 'f')
+            csi_cursor_pos(ansi_params, ansi_nparams);
+        else if (ch >= 'A' && ch <= 'D')
+            csi_cursor_move(ch, ansi_params, ansi_nparams);
+        else
+            ser_puts("[TERM] CSI-ign\n");  /* probe evidence */
+        return;
     }
     if (ch == 0x1B) {
         ansi_state = ANS_ESC;
@@ -668,11 +797,28 @@ static void term_render(void)
                        ind[i], TCOL_PROMPT);
     }
 
-    /* Cursor block (only when viewport is at the live bottom) */
+    /* Cursor block, drawn only when the viewport is at the live bottom.
+     * Clamp: term_col can legitimately equal TERM_COLS in the
+     * wrap-pending transient right after filling the last column —
+     * indexing [80] would read past the row (real out-of-bounds on
+     * the [TERM_ROWS+1][TERM_COLS] grid). */
     if (term_scrollback == 0) {
-        term_rect(TERM_ORIGIN_X + term_col * TERM_CHAR_W,
-                  TERM_ORIGIN_Y + term_row * TERM_CHAR_H,
-                  FONT_W, FONT_H, TCOL_TEXT);
+        int ccur = term_col;
+        if (ccur > TERM_COLS - 1)
+            ccur = TERM_COLS - 1;
+        int cx = TERM_ORIGIN_X + ccur * TERM_CHAR_W;
+        int cy = TERM_ORIGIN_Y + term_row * TERM_CHAR_H;
+        /* If a glyph sits under the cursor, draw the cell inverted
+         * (light block + dark glyph) so the character stays readable
+         * instead of being fully covered by the solid block. */
+        term_cell_t *cell =
+            &term_lines[term_top + term_row][ccur];
+        if (cell->ch != ' ') {
+            term_rect(cx, cy, FONT_W, FONT_H, TCOL_TEXT);
+            term_glyph(cx, cy, cell->ch, TCOL_BODY);
+        } else {
+            term_rect(cx, cy, FONT_W, TERM_CHAR_H, TCOL_TEXT);
+        }
     }
 }
 
