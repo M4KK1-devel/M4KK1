@@ -981,5 +981,6 @@ int  musr_pos_param(int n, char *out, int osize);
 void musr_cmd_eval(int ac, char **av);
 void musr_cmd_shift(int ac, char **av);
 void musr_cmd_trap(int ac, char **av);
+void musr_cmd_scrstress(int ac, char **av);
 void musr_trap_fire(const char *name);
 void musr_trap_on_exit(void);

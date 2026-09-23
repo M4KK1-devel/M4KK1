@@ -576,6 +576,102 @@ except Exception as e:
     check("S6 screendump parse", False)
     print("screendump error:", e)
 
+# ── P-group: scrollback exhaustion (SCR 2 memmove) + PageUp/PageDown ──
+# scrstress prints 600 rows (a solid magenta cell every 20th row) plus
+# a magenta END row.  >500 rows exhausts the mirror buffer
+# (term_top == TERM_SCROLLBACK): every further bottom newline takes the
+# memmove branch -> serial [TERM] SCR 2.  Then:
+#   pgup  -> viewport rises 25 rows into history; some mid-run ROW
+#            marker (survived ~450 memmoves) must be visible — the
+#            data-integrity proof — and the "-25 up" indicator
+#            (TCOL_PROMPT 0,224,96, top-right) must appear: it used to
+#            be drawn at buffer x=792, i.e. OFF the 680-px window.
+#   pgdn  -> back to the live bottom: the END marker returns to its
+#            pre-pgup pixel position and the indicator disappears.
+KEYMAP['/'] = 'slash'
+
+PROM = (0, 224, 96)     # TCOL_PROMPT rgb(0,224,96)
+
+def mag_all(w, pix):
+    cl = [c for c in find_clusters(w, 600, pix, MAG)
+          if (c[2] - c[0] + 1) >= 7 and (c[3] - c[1] + 1) >= 14]
+    return sorted(cl, key=lambda c: c[1])
+
+def indicator_clusters(w, pix):
+    """Prompt-coloured glyphs in the window's top-right corner
+    (screen x 660..750, y 50..90 — window at (60,40), indicator at
+    window (632..680, 22..38)).  The shell prompt lives at col 0-9
+    (screen x < 150), so it can never bleed into this region."""
+    cl = find_clusters(w, 600, pix, PROM)
+    return [c for c in cl if 660 <= c[0] <= 750 and 50 <= c[1] <= 90]
+
+buf.clear()
+type_cmd("scrstress\n")
+
+# 600 rows scroll one-by-one (each renders) — wait until the SCR 2
+# count stops growing.
+def scr2_count():
+    return buf.count(b"[TERM] SCR 2")
+
+last, stable = -1, 0
+t_end = time.time() + 120
+while time.time() < t_end and stable < 3:
+    pump(1.0)
+    n = scr2_count()
+    if n == last:
+        stable += 1
+    else:
+        stable = 0
+        last = n
+check("P0 serial SCR 2 (exhausted memmove branch) fired %dx" % last,
+      last >= 50)
+
+pump(2)
+end0 = None
+try:
+    w9, h9, pix9 = dump("/tmp/tcsi9.ppm")
+    marks0 = mag_all(w9, pix9)
+    print("P live-bottom magenta clusters:", marks0, flush=True)
+    check("P0b live bottom shows ROW markers + END (>=2 solid)", len(marks0) >= 2)
+    if marks0:
+        end0 = marks0[-1]
+except Exception as e:
+    check("P0b screendump parse", False)
+    print("screendump error:", e)
+
+sendkey("pgup")
+pump(3)
+try:
+    w10, h10, pix10 = dump("/tmp/tcsi10.ppm")
+    marks1 = mag_all(w10, pix10)
+    print("P pgup magenta clusters:", marks1, flush=True)
+    check("P1 pgup: history ROW marker survived ~450 memmoves "
+          "(%d visible)" % len(marks1), len(marks1) >= 1)
+    ind = indicator_clusters(w10, pix10)
+    print("P pgup indicator clusters:", ind, flush=True)
+    check("P2 pgup: scrollback indicator visible in-window "
+          "(x<=750; was off-screen at x=792 pre-fix)", len(ind) >= 1)
+except Exception as e:
+    check("P1 screendump parse", False)
+    print("screendump error:", e)
+
+sendkey("pgdn")
+pump(3)
+try:
+    w11, h11, pix11 = dump("/tmp/tcsi11.ppm")
+    marks2 = mag_all(w11, pix11)
+    ind2 = indicator_clusters(w11, pix11)
+    okpos = (end0 is not None and marks2 and
+             abs(marks2[-1][0] - end0[0]) <= 2 and
+             abs(marks2[-1][1] - end0[1]) <= 2)
+    check("P3 pgdn: END marker back at pre-pgup position %s vs %s"
+          % (marks2[-1] if marks2 else None, end0), okpos)
+    check("P4 pgdn: scrollback indicator gone (%d clusters)"
+          % len(ind2), len(ind2) == 0)
+except Exception as e:
+    check("P3 screendump parse", False)
+    print("screendump error:", e)
+
 m.sendall(b"quit\n")
 time.sleep(0.5)
 try:

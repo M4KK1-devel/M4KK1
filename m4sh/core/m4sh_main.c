@@ -48,6 +48,7 @@ musr_cmd_t musr_cmd_table[] = {
     {"automission", musr_cmd_automission, "List automissions"},
     {"backup", musr_cmd_backup, "Back up /export"},
     {"spawn",  musr_cmd_spawn,  "Run /bin/<prog> (GUI apps)"},
+    {"scrstress", musr_cmd_scrstress, "Scroll-stress rows (probe)"},
     {"calc",   musr_cmd_calc,   "Full bc-replacement calculator"},
     {"blkid",  musr_cmd_blkid,  "Block device info"},
     {"dd",     musr_cmd_dd,     "Copy raw data (if=/of=/bs=/count=)"},

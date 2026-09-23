@@ -840,8 +840,12 @@ static void term_render(void)
         ind[n++] = 'u';
         ind[n++] = 'p';
         ind[n] = '\0';
+        /* Draw at the WINDOW's right edge (TERM_W), not the buffer's
+         * (TERM_BUF_W = 800 for the maximize geometry): at the normal
+         * 680-px window width x=792 is off-screen and the indicator
+         * was invisible outside maximize mode. */
         for (int i = 0; ind[i]; i++)
-            term_glyph(TERM_BUF_W - 8 - i * FONT_W, TERM_TITLE_H + 4,
+            term_glyph(TERM_W - 8 - i * FONT_W, TERM_TITLE_H + 4,
                        ind[i], TCOL_PROMPT);
     }
 
