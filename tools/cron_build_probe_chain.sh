@@ -47,6 +47,10 @@ python3 tools/build/terminal_csi_probe.py
 tcrc=$?
 echo "TERM_CSI_PROBE rc=$tcrc"
 
+python3 tools/build/anim_probe.py
+arc=$?
+echo "ANIM_PROBE rc=$arc"
+
 # host unit tests
 make test 2>&1 | tail -4
-exit $(( hrc | src | wrc | wtrc | wkrc | wdrc | tcrc ))
+exit $(( hrc | src | wrc | wtrc | wkrc | wdrc | tcrc | arc ))

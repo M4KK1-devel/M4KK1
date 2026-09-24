@@ -89,6 +89,10 @@ class QMP:
         self.f = self.s.makefile('rw')
         self.f.readline()
         self.cmd('qmp_capabilities')
+        # Boot-time guest cursor assumption: screen centre (400,300) —
+        # same assumption the proven wmenu_term_probe makes.  All
+        # positioning is HMP mouse_move in 8px steps from there.
+        self.cur = (400, 300)
 
     def cmd(self, execute, arguments=None):
         o = {'execute': execute}
@@ -113,12 +117,36 @@ class QMP:
         self.ev([{'type': 'rel', 'data': {'axis': 'x', 'value': dx}}])
         self.ev([{'type': 'rel', 'data': {'axis': 'y', 'value': dy}}])
 
+    def hmp(self, cmd):
+        return self.cmd('human-monitor-command', {'command-line': cmd})
+
+    def move_to(self, tx, ty, step=8):
+        """HMP-stepped absolute move (same as wmenu_term_probe): QMP
+        input-send-event rel with large deltas gets dropped by the
+        kernel PS/2 packet path, HMP mouse_move in small steps does
+        not (proven pattern from the 2026-09 window-menu round)."""
+        x, y = self.cur
+        while x != tx or y != ty:
+            dx = max(-step, min(step, tx - x))
+            dy = max(-step, min(step, ty - y))
+            self.hmp(f'mouse_move {dx} {dy}')
+            x += dx
+            y += dy
+        self.cur = (x, y)
+
     def click(self):
-        self.ev([{'type': 'btn',
-                  'data': {'down': True, 'button': 'left'}}])
-        time.sleep(0.12)
-        self.ev([{'type': 'btn',
-                  'data': {'down': False, 'button': 'left'}}])
+        self.hmp('mouse_button 1')
+        time.sleep(0.3)
+        self.hmp('mouse_button 0')
+        time.sleep(0.3)
+
+    def click_at(self, x, y):
+        """Move (stepped, absolute) then click — QMP rel with large
+        deltas gets dropped by the kernel PS/2 packet path (proven
+        pattern: wmenu_term_probe uses HMP mouse_move in 8px steps)."""
+        self.move_to(x, y)
+        time.sleep(0.3)
+        self.click()
 
 
 def main():
@@ -171,12 +199,13 @@ def main():
         print('P1 new-window focus: PASS')
 
         # info window is created at (60,60), 380x240; title band rows
-        # 60..77.  Title-bar centre ≈ (250,68); red close box ≈ (431,69).
+        # 60..77.  Click point (200,65): inside the title band, clear
+        # of the desktop-icon hit zones ((250,68) gets swallowed by
+        # the desktop-icon branch — no serial output, verified
+        # empirically 2026-09-24).  Red close box ≈ (431,69).
         # ── P2: click the non-client area (title bar) → focus+raise ──
         base_click = ser.count('[SPRACH] FOCUS CLICK app')
-        q.rel(250, 68)          # rel move: 1:1 at speed 1
-        time.sleep(0.4)
-        q.click()
+        q.click_at(200, 65)     # HMP stepped move + click (reliable)
         if not ser.wait('[SPRACH] FOCUS CLICK app', 10,
                         min_count=base_click + 1):
             print('FAIL P2: no FOCUS CLICK app after title-bar click')
@@ -186,8 +215,8 @@ def main():
         # ── P3: close the foreground client → focus fallback ──
         base_close = ser.count('[SPRACH] APP CLOSE')
         base_fb = ser.count('[SPRACH] FOCUS FALLBACK')
-        q.rel(431 - 250, 0)     # onto the red close box
-        time.sleep(0.4)
+        q.move_to(431, 69)      # onto the red close box
+        time.sleep(0.3)
         q.click()
         if not ser.wait('[SPRACH] APP CLOSE', 10,
                         min_count=base_close + 1):
@@ -224,7 +253,7 @@ def main():
         # at (268,99) is covered by Win1 only → FOCUS CLICK window 0;
         # its MIN box sits at (167,99).
         base_min = ser.count('[SPRACH] FOCUS CLICK window')
-        q.rel(268, 99)
+        q.move_to(268, 99)
         time.sleep(0.4)
         q.click()
         if not ser.wait('[SPRACH] FOCUS CLICK window', 10,
@@ -232,7 +261,7 @@ def main():
             print('FAIL P5: could not activate Win1')
             return 1
         base_minfb = ser.count('[SPRACH] FOCUS FALLBACK')
-        q.rel(167 - 268, 0)     # onto Win1's MIN box
+        q.move_to(167, 99)      # onto Win1's MIN box
         time.sleep(0.4)
         q.click()
         if not ser.wait('[SPRACH] MIN 0', 10):

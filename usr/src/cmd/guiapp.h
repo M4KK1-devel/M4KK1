@@ -101,6 +101,10 @@ struct ga_app {
  */
 static int ga_init(struct ga_app *pApp)
 {
+    if (!pApp->buf)
+        return -1;   /* no pixel buffer: the surface would publish
+                      * buffer_ptr=0 and be invisible + skipped by
+                      * the WM new-client focus poll */
     pApp->shm = copland_shm_get();
     if (!pApp->shm || pApp->shm->magic != COPLAND_SHM_MAGIC)
         return -1;

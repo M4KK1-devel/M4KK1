@@ -70,6 +70,9 @@ static void ser_alarm(const char *tag, int hh, int mm)
 void _start(void)
 {
     ser_puts("[CLOCK] starting\n");
+    app.buf = clk_buf;    /* required: ga_init publishes it as the
+                           * surface buffer_ptr (focus poll keys
+                           * on a non-zero value) */
     if (ga_init(&app) != 0) {
         ser_puts("[CLOCK] copland not ready\n");
         m4k_exit(1);

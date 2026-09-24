@@ -480,6 +480,11 @@ fi
 if [ "${SPRACH_FPS_DIAG:-0}" = "1" ]; then
     UCC_FLAGS_ZIG="$UCC_FLAGS_ZIG -DSPRACH_FPS_DIAG"
 fi
+# Focus-policy debug build: SPRACH_FOCUS_DEBUG=1 adds one-shot
+# [DBG] poll lines from sprach_poll_new_clients (serial).
+if [ "${SPRACH_FOCUS_DEBUG:-0}" = "1" ]; then
+    UCC_FLAGS_ZIG="$UCC_FLAGS_ZIG -DSPRACH_FOCUS_DEBUG"
+fi
 $UCC $M4SH_CFLAGS $UCC_FLAGS_ZIG -c usr/src/sprach/sprach.c -o usr/src/sprach/sprach.o
 for m in stack; do
     $UCC $M4SH_CFLAGS -c "usr/src/sprach/sprach_mode_${m}.c" -o "usr/src/sprach/sprach_mode_${m}.o"

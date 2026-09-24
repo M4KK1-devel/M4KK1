@@ -777,6 +777,8 @@ void sprach_commit_layout(struct sprach_ctx *ctx)
         struct sprach_window *w = &ctx->wins[i];
         if (w->slot < 0 || w->hidden)
             continue;
+        if (ctx->anim_win == i)
+            continue;   /* gliding: anim_tick owns the position */
         copland_cmd_push(ctx->shm, COPLAND_CMD_MOVE_SURFACE,
                          w->slot, w->x, w->y, 0, 0, 0);
     }
@@ -2785,6 +2787,222 @@ static int sprach_desktop_create(struct sprach_ctx *ctx)
     return -1;
 }
 
+/* ── Motion interpolation (open/close window glide) ──
+ *
+ * One animated window at a time, driven by the main-loop tick
+ * (sprach_anim_tick, ~5 ms cadence).  Minimize glides the surface to
+ * its dock icon and hides it on the final frame -- the MODEL is
+ * already hidden (hit-tests use w->hidden / term_hidden), so the
+ * gliding window is inert.  Restore glides it back out.  Drag and
+ * resize tracking write surface positions directly, so anim_tick
+ * yields the moment the user grabs the animated window.
+ *
+ * Move-only by design: the surface keeps its size, so the blit path
+ * (stride contract) is untouched and tearing stays prevented by the
+ * existing vblank-bound flip. */
+#define SPRACH_ANIM_DUR 60   /* main-loop ticks.  The loop runs at
+ * m4k_sleep(5) ~= 5 ms/tick, so 60 ticks ~= 300 ms glide: visible to
+ * a human, yet short enough that probe click trains (which settle
+ * for ~0.3 s after each click) stay deterministic.  The original 20
+ * (~100 ms) was indistinguishable from a teleport -- the anim_probe
+ * mid-flight pixel sample caught it (samples all 0 red px). */
+
+static int sprach_dock_icon_cx(int entry)
+{
+    return DOCK_PAD + DOCK_ICON_PITCH * (entry + 1)
+           + DOCK_ICON_SIZE / 2;
+}
+
+static int sprach_dock_icon_cy(void)
+{
+    return SCREEN_H - TASKBAR_H + (TASKBAR_H - DOCK_ICON_SIZE) / 2
+           + DOCK_ICON_SIZE / 2;
+}
+
+static int sprach_dock_entry_for_win(struct sprach_ctx *ctx, int idx)
+{
+    int e = 0;
+    int i;
+    for (i = 0; i < SPRACH_WINDOW_COUNT; i++) {
+        if (ctx->wins[i].slot < 0)
+            continue;
+        if (i == idx)
+            return e;
+        e++;
+    }
+    return -1;
+}
+
+static int sprach_dock_entry_for_term(struct sprach_ctx *ctx)
+{
+    int e = 0;
+    int i;
+    for (i = 0; i < SPRACH_WINDOW_COUNT; i++)
+        if (ctx->wins[i].slot >= 0)
+            e++;
+    return e;   /* terminal icon sits right after the window icons */
+}
+
+static void sprach_anim_start(struct sprach_ctx *ctx, int win, int kind,
+                              int to_x, int to_y);
+
+/* Finish any in-flight glide NOW.  A half-minimized window hides
+ * immediately; a half-restored one is simply left where it is (the
+ * next drag/composite snaps it back to the model position). */
+static void sprach_anim_cancel(struct sprach_ctx *ctx)
+{
+    int slot;
+    if (ctx->anim_win == -1)
+        return;
+    slot = (ctx->anim_win == -2) ? ctx->term_slot
+                                 : ctx->wins[ctx->anim_win].slot;
+    if (ctx->anim_kind == 1 && slot >= 0 && slot < COPLAND_MAX_SURFACES)
+        ctx->shm->surfaces[slot].flags &= ~COPLAND_SURF_VISIBLE;
+    ctx->anim_home_valid = 0;
+    ctx->anim_win = -1;
+    ctx->shm->dirty = 1;
+    ser_puts("[SPRACH] ANIM CANCEL\n");
+}
+
+static void sprach_anim_start(struct sprach_ctx *ctx, int win, int kind,
+                              int to_x, int to_y)
+{
+    int slot = (win == -2) ? ctx->term_slot : ctx->wins[win].slot;
+    if (slot < 0 || slot >= COPLAND_MAX_SURFACES)
+        return;
+    if (ctx->anim_win != -1)
+        sprach_anim_cancel(ctx);
+    /* nothing to glide (already at the target) */
+    if (ctx->shm->surfaces[slot].x == to_x &&
+        ctx->shm->surfaces[slot].y == to_y)
+        return;
+    if (win == -2 && kind == 1) {
+        /* remember where the terminal lived: its surface IS its
+         * only position store, and the glide overwrites it */
+        ctx->anim_home_x = ctx->shm->surfaces[slot].x;
+        ctx->anim_home_y = ctx->shm->surfaces[slot].y;
+        ctx->anim_home_valid = 1;
+    }
+    ctx->anim_win = win;
+    ctx->anim_kind = kind;
+    ctx->anim_start = ctx->tick;
+    ctx->anim_from_x = ctx->shm->surfaces[slot].x;
+    ctx->anim_from_y = ctx->shm->surfaces[slot].y;
+    ctx->anim_to_x = to_x;
+    ctx->anim_to_y = to_y;
+    ctx->shm->dirty = 1;
+    ser_puts(kind == 1 ? "[SPRACH] ANIM MIN " : "[SPRACH] ANIM SHOW ");
+    if (win == -2)
+        ser_puts("TERM\n");
+    else {
+        print_u32((uint32_t)win);
+        ser_puts("\n");
+    }
+}
+
+/* Restore glide for a demo window: dock icon -> model position.  The
+ * (already re-shown) surface teleports to the dock icon, then eases
+ * out to w->x/w->y -- uniform even when the window was hidden without
+ * an animation (Super+D bulk hide). */
+static void sprach_anim_restore_win(struct sprach_ctx *ctx, int i)
+{
+    struct sprach_window *w = &ctx->wins[i];
+    int entry = sprach_dock_entry_for_win(ctx, i);
+    if (w->slot < 0 || entry < 0)
+        return;
+    ctx->shm->surfaces[w->slot].x =
+        sprach_dock_icon_cx(entry) - w->w / 2;
+    ctx->shm->surfaces[w->slot].y =
+        sprach_dock_icon_cy() - w->h / 2;
+    sprach_anim_start(ctx, i, 2, w->x, w->y);
+}
+
+/* Restore glide for the terminal: dock icon -> recorded home (where
+ * it lived before minimize).  Without a recorded home (Super+D bulk
+ * hide) the surface never moved, so the start no-op check skips. */
+static void sprach_anim_restore_term(struct sprach_ctx *ctx)
+{
+    struct copland_surface *ts;
+    int entry, hx, hy;
+    if (ctx->term_slot < 0)
+        return;
+    ts = &ctx->shm->surfaces[ctx->term_slot];
+    hx = ts->x;
+    hy = ts->y;
+    if (ctx->anim_home_valid && ctx->anim_win == -1) {
+        hx = ctx->anim_home_x;
+        hy = ctx->anim_home_y;
+    }
+    entry = sprach_dock_entry_for_term(ctx);
+    ts->x = sprach_dock_icon_cx(entry) - ts->w / 2;
+    ts->y = sprach_dock_icon_cy() - ts->h / 2;
+    sprach_anim_start(ctx, -2, 2, hx, hy);
+}
+
+/* Advance the glide one frame.  Called once per main-loop tick. */
+static void sprach_anim_tick(struct sprach_ctx *ctx)
+{
+    struct copland_surface *s;
+    uint32_t k, d, e;
+    int slot, nx, ny;
+    if (ctx->anim_win == -1)
+        return;
+    slot = (ctx->anim_win == -2) ? ctx->term_slot
+                                 : ctx->wins[ctx->anim_win].slot;
+    if (slot < 0 || slot >= COPLAND_MAX_SURFACES ||
+        !ctx->shm->surfaces[slot].in_use) {
+        ctx->anim_win = -1;   /* surface vanished mid-flight */
+        return;
+    }
+    /* The user grabbed the animated window: the drag/resize tracking
+     * that runs in sprach_handle_mouse owns the geometry from here
+     * on -- stop animating before the two writers fight. */
+    if ((ctx->anim_win >= 0 &&
+         (ctx->drag_win == ctx->anim_win ||
+          ctx->resize_win == ctx->anim_win)) ||
+        (ctx->anim_win == -2 && ctx->term_drag)) {
+        sprach_anim_cancel(ctx);
+        return;
+    }
+    s = &ctx->shm->surfaces[slot];
+    d = SPRACH_ANIM_DUR;
+    k = ctx->tick - ctx->anim_start;
+    if (k >= d) {
+        /* final frame: arrive, then finish */
+        if (ctx->anim_kind == 1)
+            s->flags &= ~COPLAND_SURF_VISIBLE;
+        else {
+            s->x = ctx->anim_to_x;
+            s->y = ctx->anim_to_y;
+        }
+        /* Keep anim_home after a MIN glide: the restore glide needs
+         * it to know where the window lived (the surface itself now
+         * sits at the dock).  Only a completed SHOW (or cancel)
+         * invalidates the record. */
+        if (ctx->anim_kind == 2)
+            ctx->anim_home_valid = 0;
+        ctx->anim_win = -1;
+        ctx->shm->dirty = 1;
+        ser_puts("[SPRACH] ANIM END\n");
+        return;
+    }
+    /* ease-out quadratic progress: 0 -> 256 over the glide.
+     * p = 256 - 256*((d-k)/d)^2: starts fast (big steps), settles
+     * into the target.  The complement formula was the bug the
+     * anim_probe pixel evidence caught: taking the REMAINING
+     * fraction as the progress teleported the window 96% of the
+     * way on the first tick (probe saw the minimize vanish into
+     * the dock instantly instead of gliding). */
+    e = 256u - ((d - k) * (d - k) * 256u) / (d * d);
+    nx = ctx->anim_from_x +
+         ((ctx->anim_to_x - ctx->anim_from_x) * (int)e) / 256;
+    ny = ctx->anim_from_y +
+         ((ctx->anim_to_y - ctx->anim_from_y) * (int)e) / 256;
+    s->x = nx;
+    s->y = ny;
+    ctx->shm->dirty = 1;
+}
+
 /* ── Unified window actions ──
  * One code path per action, shared by the title-bar buttons AND the
  * right-click window menu (rmenu mode 4).  Extracted verbatim from
@@ -2819,7 +3037,23 @@ static void sprach_win_minimize(struct sprach_ctx *ctx, int i)
     w->btn_clicked = 2;
     w->click_tick = ctx->tick;
     w->hidden = 1;
-    ctx->shm->surfaces[w->slot].flags &= ~COPLAND_SURF_VISIBLE;
+    {
+        /* Motion interpolation: keep the surface VISIBLE while it
+         * glides into its dock icon (the model is already hidden, so
+         * hit-tests ignore it); the final anim frame hides it.  A
+         * running drag must never leave a half-animated window:
+         * sprach_anim_start cancels any in-flight glide first, and a
+         * glide whose window the user grabs self-cancels. */
+        int entry = sprach_dock_entry_for_win(ctx, i);
+        if (entry >= 0) {
+            sprach_anim_start(ctx, i, 1,
+                              sprach_dock_icon_cx(entry) - w->w / 2,
+                              sprach_dock_icon_cy() - w->h / 2);
+        } else {
+            ctx->shm->surfaces[w->slot].flags &=
+                ~COPLAND_SURF_VISIBLE;
+        }
+    }
     ctx->shm->dirty = 1;
     ser_puts("[SPRACH] MIN ");
     print_u32((uint32_t)i);
@@ -2909,8 +3143,19 @@ static void sprach_term_minimize(struct sprach_ctx *ctx)
         return;
     ser_puts("[SPRACH] TERMINAL MIN\n");
     ctx->term_hidden = 1;
-    ctx->shm->surfaces[ctx->term_slot].flags &=
-        ~COPLAND_SURF_VISIBLE;
+    {
+        int entry = sprach_dock_entry_for_term(ctx);
+        if (entry >= 0) {
+            struct copland_surface *ts =
+                &ctx->shm->surfaces[ctx->term_slot];
+            sprach_anim_start(ctx, -2, 1,
+                              sprach_dock_icon_cx(entry) - ts->w / 2,
+                              sprach_dock_icon_cy() - ts->h / 2);
+        } else {
+            ctx->shm->surfaces[ctx->term_slot].flags &=
+                ~COPLAND_SURF_VISIBLE;
+        }
+    }
     ctx->shm->dirty = 1;
     if (ctx->active < 0)
         sprach_focus_fallback(ctx);
@@ -4248,6 +4493,10 @@ void sprach_handle_mouse(struct sprach_ctx *ctx)
         }
     }
 
+    /* Advance the open/close glide (every call = every main-loop
+     * tick, ~5 ms; self-cancels if the user grabbed the window). */
+    sprach_anim_tick(ctx);
+
     if (cursor_moved)
         m4k_update_cursor();
 }
@@ -5026,6 +5275,8 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                                 ctx->wins[i].hidden = 0;
                                 ctx->shm->surfaces[ctx->wins[i].slot].flags |=
                                     COPLAND_SURF_VISIBLE;
+                                /* glide out of the dock icon */
+                                sprach_anim_restore_win(ctx, i);
                             }
                             ctx->active = i;
                             sprach_raise_window(ctx, i);
@@ -5046,6 +5297,7 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                             ctx->term_hidden = 0;
                             ctx->shm->surfaces[ctx->term_slot].flags |=
                                 COPLAND_SURF_VISIBLE;
+                            sprach_anim_restore_term(ctx);
                         }
                         ctx->active = -1;
                         sprach_raise_surface(ctx, ctx->term_slot);
@@ -5066,6 +5318,7 @@ static void sprach_handle_click(struct sprach_ctx *ctx)
                                     ctx->term_hidden = 0;
                                     ctx->shm->surfaces[ctx->term_slot].flags |=
                                         COPLAND_SURF_VISIBLE;
+                                    sprach_anim_restore_term(ctx);
                                 }
                                 ctx->active = -1;
                                 sprach_raise_surface(ctx, ctx->term_slot);
@@ -5396,6 +5649,10 @@ void _start(void)
     ctx.term_drag = 0;
     ctx.term_drag_dx = 0;
     ctx.term_drag_dy = 0;
+    ctx.anim_win = -1;
+    ctx.anim_kind = 0;
+    ctx.anim_start = 0;
+    ctx.anim_home_valid = 0;
 
     /* Restore persisted desktop settings (theme/vol/bt) AFTER the
      * defaults above so a saved value wins, but BEFORE the first

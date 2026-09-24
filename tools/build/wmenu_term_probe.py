@@ -15,7 +15,7 @@ Drives QEMU via HMP mouse events against the full-test ISO:
      swallowed" and NO wallpaper menu opens behind it
 Assertions come from sprach.c ser_puts lines on the serial console.
 """
-import os, re, socket, subprocess, time
+import os, re, socket, subprocess, sys, time
 
 os.chdir("/mnt/f/M4KK1")
 isos = [f for f in os.listdir("output") if f.endswith("full-test.iso")]
@@ -154,7 +154,11 @@ drain(1.5)
 move_to(200, 576)
 drain(0.3)
 left_click()
-drain(2.0)
+# wait for the restore glide (ANIM END) AND settle: the window flies
+# home from the dock icon for ~650 ms; clicking the title bar
+# mid-flight misses it (the surface is still near the dock).
+wait_token("[SPRACH] ANIM END", 10)
+drain(1.0)
 
 # 5) Maximize via menu
 move_to(TBX, TBY)
@@ -234,3 +238,4 @@ ok = all(checks.values())
 print("RESULT:", "PASS" if ok else "FAIL")
 
 qemu.kill()
+sys.exit(0 if ok else 1)

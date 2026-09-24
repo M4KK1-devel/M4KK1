@@ -209,6 +209,9 @@ void _start(void)
 {
 	ser_puts("[LOGVIEW] starting\n");
 	lv_load();
+	app.buf = lv_buf;    /* required: ga_init publishes it as the
+	                      * surface buffer_ptr (focus poll keys
+	                      * on a non-zero value) */
 	if (ga_init(&app) != 0) {
 		ser_puts("[LOGVIEW] copland not ready\n");
 		m4k_exit(1);

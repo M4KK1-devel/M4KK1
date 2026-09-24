@@ -253,6 +253,10 @@ static void inf_render(void)
 void _start(void)
 {
     ser_puts("[INFO] starting\n");
+    app.buf = inf_buf;    /* guiapp requires the app pixel buffer;
+                           * without it ga_init publishes
+                           * buffer_ptr=0 and Sprach's new-client
+                           * focus poll skips the surface forever */
     if (ga_init(&app) != 0) {
         ser_puts("[INFO] copland not ready\n");
         m4k_exit(1);

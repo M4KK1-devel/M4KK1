@@ -266,6 +266,21 @@ struct sprach_ctx {
      * window is shm->surfaces[term_slot], not a ctx->wins entry. */
     int term_drag;
     int term_drag_dx, term_drag_dy;
+
+    /* Motion interpolation (window open/close glide): anim_win is
+     * -1 = none, a ctx->wins index, or -2 for the terminal
+     * surface.  anim_kind 1 = minimize (glide INTO the dock
+     * icon; the surface hides on the final frame), 2 = restore
+     * (glide OUT of it).  anim_from/to are surface-space
+     * anchors; anim_home_* remember where a minimized TERMINAL
+     * lived (its only position store IS the surface). */
+    int anim_win;
+    int anim_kind;
+    uint32_t anim_start;
+    int anim_from_x, anim_from_y;
+    int anim_to_x, anim_to_y;
+    int anim_home_x, anim_home_y;
+    int anim_home_valid;
 };
 
 /* Core services (sprach.c) */
